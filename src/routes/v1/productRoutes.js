@@ -14,12 +14,11 @@ import { createProductSchema, updateProductSchema, updateStockSchema } from '../
 const router = express.Router();
 
 router.use(protect);
-
 router.get('/', staffOrOwner, getProducts);
 router.get('/:id', staffOrOwner, getProductById);
 router.post('/', ownerOnly, validate(createProductSchema), createProduct);
 router.put('/:id', ownerOnly, validate(updateProductSchema), updateProduct);
 router.delete('/:id', ownerOnly, deleteProduct);
-router.patch('/:id/stock', ownerOnly, validate(updateStockSchema), updateStock);
+router.patch('/:id/stock', staffOrOwner, validate(updateStockSchema), updateStock); // stock update allowed for staff with permission
 
 export default router;

@@ -8,7 +8,7 @@ export const createProductSchema = Joi.object({
   costPrice: Joi.number().positive().required(),
   quantity: Joi.number().min(0).default(0),
   lowStockAlert: Joi.number().min(0).default(5),
-});
+}).unknown(false);
 
 export const updateProductSchema = Joi.object({
   name: Joi.string().trim(),
@@ -18,8 +18,8 @@ export const updateProductSchema = Joi.object({
   costPrice: Joi.number().positive(),
   quantity: Joi.number().min(0),
   lowStockAlert: Joi.number().min(0),
-});
+}).unknown(false);
 
 export const updateStockSchema = Joi.object({
   quantity: Joi.number().min(0).required(),
-});
+}).unknown(false);

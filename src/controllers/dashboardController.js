@@ -8,54 +8,32 @@ export const getOwnerDashboard = async (req, res) => {
   endOfDay.setHours(23, 59, 59, 999);
 
   const todaySales = await Sale.aggregate([
-    {
-      $match: {
-        createdAt: { $gte: startOfDay, $lte: endOfDay },
-      },
-    },
-    {
-      $group: {
+    { $match: { shop: req.user.shop._id, createdAt: { $gte: startOfDay, $lte: endOfDay } } },
+    { $group: {
         _id: null,
         total: { $sum: '$totalAmount' },
-        cashTotal: {
-          $sum: {
-            $cond: [{ $eq: ['$paymentMethod', 'cash'] }, '$totalAmount', 0],
-          },
-        },
-        mpesaTotal: {
-          $sum: {
-            $cond: [{ $eq: ['$paymentMethod', 'mpesa'] }, '$totalAmount', 0],
-          },
-        },
+        cashTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'cash'] }, '$totalAmount', 0] } },
+        mpesaTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'mpesa'] }, '$totalAmount', 0] } },
         transactionCount: { $sum: 1 },
-      },
-    },
+      }
+    }
   ]);
 
-  const todayStats = todaySales[0] || {
-    total: 0,
-    cashTotal: 0,
-    mpesaTotal: 0,
-    transactionCount: 0,
-  };
-
-  const totalProducts = await Product.countDocuments();
+  const todayStats = todaySales[0] || { total: 0, cashTotal: 0, mpesaTotal: 0, transactionCount: 0 };
+  const totalProducts = await Product.countDocuments({ shop: req.user.shop._id });
 
   const stockValueAgg = await Product.aggregate([
-    {
-      $group: {
-        _id: null,
-        totalValue: { $sum: { $multiply: ['$quantity', '$costPrice'] } },
-      },
-    },
+    { $match: { shop: req.user.shop._id } },
+    { $group: { _id: null, totalValue: { $sum: { $multiply: ['$quantity', '$costPrice'] } } } }
   ]);
   const currentStockValue = stockValueAgg[0]?.totalValue || 0;
 
   const lowStockItems = await Product.find({
+    shop: req.user.shop._id,
     $expr: { $lte: ['$quantity', '$lowStockAlert'] },
   }).limit(10);
 
-  const recentTransactions = await Sale.find()
+  const recentTransactions = await Sale.find({ shop: req.user.shop._id })
     .populate('staff', 'name')
     .sort({ createdAt: -1 })
     .limit(10);
@@ -82,39 +60,19 @@ export const getStaffDashboard = async (req, res) => {
   endOfDay.setHours(23, 59, 59, 999);
 
   const todaySales = await Sale.aggregate([
-    {
-      $match: {
-        staff: req.user._id,
-        createdAt: { $gte: startOfDay, $lte: endOfDay },
-      },
-    },
-    {
-      $group: {
+    { $match: { shop: req.user.shop._id, staff: req.user._id, createdAt: { $gte: startOfDay, $lte: endOfDay } } },
+    { $group: {
         _id: null,
         total: { $sum: '$totalAmount' },
-        cashTotal: {
-          $sum: {
-            $cond: [{ $eq: ['$paymentMethod', 'cash'] }, '$totalAmount', 0],
-          },
-        },
-        mpesaTotal: {
-          $sum: {
-            $cond: [{ $eq: ['$paymentMethod', 'mpesa'] }, '$totalAmount', 0],
-          },
-        },
+        cashTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'cash'] }, '$totalAmount', 0] } },
+        mpesaTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'mpesa'] }, '$totalAmount', 0] } },
         transactionCount: { $sum: 1 },
-      },
-    },
+      }
+    }
   ]);
 
-  const todayStats = todaySales[0] || {
-    total: 0,
-    cashTotal: 0,
-    mpesaTotal: 0,
-    transactionCount: 0,
-  };
-
-  const recentSales = await Sale.find({ staff: req.user._id })
+  const todayStats = todaySales[0] || { total: 0, cashTotal: 0, mpesaTotal: 0, transactionCount: 0 };
+  const recentSales = await Sale.find({ shop: req.user.shop._id, staff: req.user._id })
     .sort({ createdAt: -1 })
     .limit(10);
 

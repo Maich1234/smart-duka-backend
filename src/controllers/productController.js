@@ -2,7 +2,7 @@ import Product from '../models/Product.js';
 
 export const getProducts = async (req, res) => {
   const { search, category, page = 1, limit = 20 } = req.query;
-  const query = {};
+  const query = { shop: req.user.shop._id };
 
   if (search) {
     query.$or = [
@@ -16,12 +16,7 @@ export const getProducts = async (req, res) => {
   }
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
-
-  const products = await Product.find(query)
-    .skip(skip)
-    .limit(parseInt(limit))
-    .sort({ createdAt: -1 });
-
+  const products = await Product.find(query).skip(skip).limit(parseInt(limit)).sort({ createdAt: -1 });
   const total = await Product.countDocuments(query);
 
   const sanitizedProducts = products.map((product) => {
@@ -45,7 +40,7 @@ export const getProducts = async (req, res) => {
 };
 
 export const getProductById = async (req, res) => {
-  const product = await Product.findById(req.params.id);
+  const product = await Product.findOne({ _id: req.params.id, shop: req.user.shop._id });
   if (!product) {
     return res.status(404).json({ success: false, message: 'Product not found' });
   }
@@ -54,43 +49,46 @@ export const getProductById = async (req, res) => {
   if (req.user.role === 'staff') {
     delete productObj.costPrice;
   }
-
   res.json({ success: true, data: productObj });
 };
 
 export const createProduct = async (req, res) => {
-  const product = await Product.create(req.body);
+  if (req.user.role !== 'owner' && !req.user.permissions?.includes('create_product')) {
+    return res.status(403).json({ success: false, message: 'Permission denied' });
+  }
+
+  const product = await Product.create({ ...req.body, shop: req.user.shop._id });
   res.status(201).json({ success: true, data: product });
 };
 
 export const updateProduct = async (req, res) => {
-  const product = await Product.findById(req.params.id);
+  if (req.user.role !== 'owner' && !req.user.permissions?.includes('edit_product')) {
+    return res.status(403).json({ success: false, message: 'Permission denied' });
+  }
+
+  const product = await Product.findOne({ _id: req.params.id, shop: req.user.shop._id });
   if (!product) {
     return res.status(404).json({ success: false, message: 'Product not found' });
   }
 
-  const updatedProduct = await Product.findByIdAndUpdate(
-    req.params.id,
-    req.body,
-    { new: true, runValidators: true }
-  );
-
+  const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
   res.json({ success: true, data: updatedProduct });
 };
 
 export const deleteProduct = async (req, res) => {
-  const product = await Product.findById(req.params.id);
+  if (req.user.role !== 'owner' && !req.user.permissions?.includes('delete_product')) {
+    return res.status(403).json({ success: false, message: 'Permission denied' });
+  }
+
+  const product = await Product.findOne({ _id: req.params.id, shop: req.user.shop._id });
   if (!product) {
     return res.status(404).json({ success: false, message: 'Product not found' });
   }
 
-  const Sale = (await import('../models/Sale.js')).default;
-  const hasSales = await Sale.findOne({ 'items.productId': product._id });
+  const Sale = await import('../models/Sale.js').then(m => m.default);
+  const hasSales = await Sale.findOne({ 'items.productId': product._id, shop: req.user.shop._id });
   if (hasSales) {
-    return res.status(400).json({
-      success: false,
-      message: 'Cannot delete product with existing sales history',
-    });
+    return res.status(400).json({ success: false, message: 'Cannot delete product with existing sales history' });
   }
 
   await product.deleteOne();
@@ -99,13 +97,16 @@ export const deleteProduct = async (req, res) => {
 
 export const updateStock = async (req, res) => {
   const { quantity } = req.body;
-  const product = await Product.findById(req.params.id);
+  const product = await Product.findOne({ _id: req.params.id, shop: req.user.shop._id });
   if (!product) {
     return res.status(404).json({ success: false, message: 'Product not found' });
   }
 
+  if (req.user.role !== 'owner' && !req.user.permissions?.includes('edit_product_stock')) {
+    return res.status(403).json({ success: false, message: 'Permission denied' });
+  }
+
   product.quantity = quantity;
   await product.save();
-
   res.json({ success: true, data: product });
 };

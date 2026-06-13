@@ -5,7 +5,6 @@ import { protect, ownerOnly, staffOrOwner } from '../../middlewares/auth.js';
 const router = express.Router();
 
 router.use(protect);
-
 router.get('/owner', ownerOnly, getOwnerDashboard);
 router.get('/staff', staffOrOwner, getStaffDashboard);
 

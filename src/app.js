@@ -10,23 +10,18 @@ dotenv.config();
 
 const app = express();
 
-// Connect to MongoDB
 connectDB();
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// API Routes
 app.use('/api/v1', routes);
 
-// Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', message: 'Smart Duka API is running' });
 });
 
-// Error handling middleware (should be last)
 app.use(errorHandler);
 
 export default app;
