@@ -1,442 +1,728 @@
-# Smart Duka Backend
 
-Backend API for Smart Duka, a simple inventory and sales management system designed for small shops in Kenya.
+# Smart Duka API
 
-## Overview
-
-Smart Duka helps shop owners digitize inventory tracking and sales recording. The first version focuses on two core business operations:
-
-* Inventory Management
-* Sales Management
-
-The system supports two user roles:
-
-* Owner (Admin)
-* Staff (Attendant)
-
-Owners have full control over products, staff, and business records, while staff can record sales and view limited information required for daily operations.
-
----
+A production-ready REST API for the Smart Duka Point‑of‑Sale system. Built with Node.js, Express, MongoDB, and JWT authentication.
 
 ## Features
 
-### Authentication & Authorization
-
-* Owner registration
-* User login
-* JWT authentication
-* Role-based access control
-* Password hashing with bcrypt
-* Account activation/deactivation
-
-### Inventory Management
-
-* Add products
-* Edit products
-* Archive products
-* Update stock quantities
-* View product details
-* Search products
-* Filter products by category
-* Low stock monitoring
-
-### Sales Management
-
-* Record sales
-* Support multiple products per sale
-* Cash transactions
-* M-Pesa transactions
-* Automatic stock deduction
-* Sales history
-* Personal sales history for staff
-* Sales filtering by date and payment method
-
-### Dashboard
-
-#### Owner Dashboard
-
-* Today's sales
-* Cash sales total
-* M-Pesa sales total
-* Total products
-* Current stock value
-* Low stock products
-* Recent transactions
-
-#### Staff Dashboard
-
-* Today's sales
-* Cash sales total
-* M-Pesa sales total
-* Number of transactions
-* Recent personal sales
-
-### Staff Management
-
-* Add staff
-* Edit staff information
-* Activate/deactivate staff accounts
-* Reset staff passwords
-
-### Profile Management
-
-* View profile
-* Update profile
-* Change password
-
-### Shop Management
-
-* Manage shop information
-* Shop name
-* Phone number
-* Location
-* Currency settings
-
----
-
-## Technology Stack
-
-* Node.js
-* Express.js
-* MongoDB
-* Mongoose
-* JWT Authentication
-* Bcrypt
-* Joi Validation
-
----
-
-## Project Structure
-
-```text
-src/
-│
-├── config/
-│   └── db.js
-│
-├── controllers/
-│   ├── auth.controller.js
-│   ├── dashboard.controller.js
-│   ├── product.controller.js
-│   ├── sales.controller.js
-│   ├── staff.controller.js
-│   ├── profile.controller.js
-│   └── shop.controller.js
-│
-├── middleware/
-│   ├── auth.middleware.js
-│   ├── role.middleware.js
-│   ├── validation.middleware.js
-│   └── error.middleware.js
-│
-├── models/
-│   ├── User.js
-│   ├── Product.js
-│   ├── Sale.js
-│   └── Shop.js
-│
-├── routes/
-│   ├── auth.routes.js
-│   ├── dashboard.routes.js
-│   ├── product.routes.js
-│   ├── sales.routes.js
-│   ├── staff.routes.js
-│   ├── profile.routes.js
-│   └── shop.routes.js
-│
-├── services/
-│   ├── auth.service.js
-│   ├── dashboard.service.js
-│   ├── product.service.js
-│   ├── sales.service.js
-│   └── staff.service.js
-│
-├── validations/
-│   ├── auth.validation.js
-│   ├── product.validation.js
-│   ├── sales.validation.js
-│   └── staff.validation.js
-│
-├── utils/
-│   ├── generateToken.js
-│   └── constants.js
-│
-├── app.js
-└── server.js
-```
-
----
-
-## User Roles
-
-### Owner
-
-Permissions:
-
-* Full system access
-* Manage products
-* Manage stock
-* Manage staff
-* View all sales
-* View dashboard analytics
-* Manage shop settings
-
-### Staff
-
-Permissions:
-
-* Record sales
-* View available products
-* View stock levels
-* View personal sales history
-* View daily sales summary
-
-Restrictions:
-
-* Cannot manage products
-* Cannot manage staff
-* Cannot access business analytics
-* Cannot view product cost prices
-
----
-
-## API Endpoints
-
-### Authentication
-
-```http
-POST /api/auth/register
-POST /api/auth/login
-```
-
----
-
-### Dashboard
-
-```http
-GET /api/dashboard
-```
-
-Returns dashboard data based on the authenticated user's role.
-
----
-
-### Shop
-
-```http
-GET /api/shop
-PUT /api/shop
-```
-
----
-
-### Staff Management (Owner Only)
-
-```http
-GET /api/staff
-POST /api/staff
-PUT /api/staff/:id
-POST /api/staff/:id/reset-password
-```
-
----
-
-### Products
-
-```http
-GET /api/products
-GET /api/products/:id
-POST /api/products
-PUT /api/products/:id
-PATCH /api/products/:id/stock
-PATCH /api/products/:id/archive
-```
-
----
-
-### Sales
-
-```http
-POST /api/sales
-GET /api/sales
-GET /api/sales/:id
-GET /api/sales/me
-```
-
----
-
-### Profile
-
-```http
-GET /api/profile
-PUT /api/profile
-POST /api/profile/change-password
-```
-
----
-
-## Database Models
-
-### User
-
-```javascript
-{
-  name: String,
-  phone: String,
-  password: String,
-  role: "owner" | "staff",
-  isActive: Boolean
-}
-```
-
-### Product
-
-```javascript
-{
-  name: String,
-  category: String,
-  costPrice: Number,
-  sellingPrice: Number,
-  quantity: Number,
-  lowStockAlert: Number,
-  isArchived: Boolean
-}
-```
-
-### Sale
-
-```javascript
-{
-  saleNumber: String,
-  recordedBy: ObjectId,
-  paymentMethod: "cash" | "mpesa",
-  totalAmount: Number,
-  items: [
-    {
-      productId: ObjectId,
-      productName: String,
-      quantity: Number,
-      unitPrice: Number,
-      subtotal: Number
-    }
-  ]
-}
-```
-
-### Shop
-
-```javascript
-{
-  shopName: String,
-  phone: String,
-  location: String,
-  currency: String
-}
-```
-
----
-
-## Environment Variables
-
-Create a `.env` file in the project root.
-
-```env
-PORT=5000
-
-MONGO_URI=mongodb://localhost:27017/smart-duka
-
-JWT_SECRET=your_super_secret_key
-```
-
----
-
-## Installation
-
-### Clone Repository
-
+- Multi‑shop architecture – each shop has its own owner, staff, inventory, and sales.
+- Role‑based access control (Owner / Staff) with granular permissions.
+- Full CRUD for products, staff, and sales.
+- Email verification for owners (6‑digit OTP).
+- Password reset via OTP (6‑digit code sent by email).
+- Sales are recorded atomically (transactions) to maintain stock integrity.
+- Dashboard endpoints with aggregated data (sales, low stock alerts, stock value).
+- Input validation with Joi – rejects unknown fields.
+- Global error handling and async wrapper.
+
+## Tech Stack
+
+- Node.js (20+)
+- Express.js
+- MongoDB + Mongoose
+- JWT (JSON Web Tokens)
+- bcryptjs for password hashing
+- Nodemailer for emails
+- Joi for validation
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 20+
+- MongoDB (local or Atlas)
+- SMTP account (e.g., Gmail, SendGrid) for sending OTP & verification emails
+
+### Installation
+
+1. Clone the repository
 ```bash
-git clone <repository-url>
-cd smart-duka-backend
+git clone https://github.com/yourusername/smart-duka-api.git
+cd smart-duka-api
 ```
 
-### Install Dependencies
-
+2. Install dependencies
 ```bash
 npm install
 ```
 
-### Configure Environment
-
-Create a `.env` file using the example above.
-
-### Start Development Server
-
+3. Copy the environment variables file
 ```bash
-npm run dev
+cp .env.example .env
 ```
 
-### Start Production Server
+4. Edit `.env` with your own values (see below).
 
+5. Start the server
 ```bash
-npm start
+npm run dev       # development (nodemon)
+npm start         # production
 ```
 
----
+The server will run on `http://localhost:5000` by default.
 
-## Business Rules
+### Environment Variables
 
-### Recording Sales
+| Variable | Description | Example |
+|----------|-------------|---------|
+| PORT | Server port | 5000 |
+| MONGO_URI | MongoDB connection string | `mongodb://localhost:27017/smart_duka` |
+| JWT_SECRET | Secret for signing JWTs | `your_super_secret_key` |
+| JWT_EXPIRES_IN | JWT expiration time | `7d` |
+| BCRYPT_ROUNDS | Salt rounds for bcrypt | `10` |
+| SMTP_HOST | SMTP server host | `smtp.gmail.com` |
+| SMTP_PORT | SMTP port | `587` |
+| SMTP_SECURE | Use TLS/SSL? (`true` for 465) | `false` |
+| SMTP_USER | SMTP username | `your-email@gmail.com` |
+| SMTP_PASS | SMTP password or app password | `xxxx xxxx xxxx xxxx` |
+| SMTP_FROM | Sender email address | `"Smart Duka" <noreply@smartduka.com>` |
 
-When a sale is recorded:
+## Authentication
 
-1. Validate products exist.
-2. Validate stock availability.
-3. Deduct stock quantities.
-4. Create sale record.
-5. Save transaction atomically.
+All endpoints except `/auth/login`, `/auth/register`, and the password reset endpoints require a **Bearer token** in the `Authorization` header.
 
-### Staff Restrictions
-
-Staff users:
-
-* Cannot edit inventory
-* Cannot delete products
-* Cannot manage staff
-* Cannot access owner analytics
-* Cannot view product cost prices
-
-### Low Stock Alert
-
-A product is considered low in stock when:
-
-```text
-quantity <= lowStockAlert
+```
+Authorization: Bearer <jwt_token>
 ```
 
----
+The JWT payload contains the user’s `id`. The server attaches the full user object (including role, shop, permissions) to `req.user` after verifying the token.
 
-## Future Improvements
+## API Endpoints
 
-* Expense Management
-* Profit Tracking
-* Supplier Management
-* Customer Management
-* M-Pesa Daraja Integration
-* PDF Reports
-* Excel Export
-* Offline Support
-* Multi-Branch Support
-* Barcode Scanning
-* Notifications
+### Base URL
 
----
+```
+http://localhost:5000/api/v1
+```
+
+### Auth
+
+#### Register a new owner (with shop)
+
+```
+POST /auth/register
+```
+
+**Request body:**
+```json
+{
+  "name": "John Doe",
+  "email": "john@example.com",
+  "password": "secure123",
+  "shopName": "John's Duka",
+  "address": "Nairobi, Kenya",      // optional
+  "phone": "+254712345678"          // optional
+}
+```
+
+**Response (201 Created):**
+```json
+{
+  "success": true,
+  "message": "Registration successful. Please check your email to verify your account."
+}
+```
+
+> The owner receives a 6‑digit verification code by email. They must verify before logging in.
+
+#### Login
+
+```
+POST /auth/login
+```
+
+**Request body:**
+```json
+{
+  "email": "john@example.com",
+  "password": "secure123"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "_id": "65b8...",
+    "name": "John Doe",
+    "email": "john@example.com",
+    "role": "owner",
+    "shop": { "_id": "...", "name": "John's Duka" },
+    "token": "eyJhbGci..."
+  }
+}
+```
+
+#### Resend verification email
+
+```
+POST /auth/resend-verification
+```
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Verification code sent. Please check your email."
+}
+```
+
+#### Verify email
+
+```
+POST /auth/verify-email
+```
+
+**Request body:**
+```json
+{
+  "email": "john@example.com",
+  "code": "123456"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Email verified successfully. You can now log in."
+}
+```
+
+#### Forgot password – request OTP
+
+```
+POST /auth/forgot-password
+```
+
+**Request body:**
+```json
+{
+  "email": "john@example.com"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "OTP sent to your email"
+}
+```
+
+#### Verify OTP
+
+```
+POST /auth/verify-otp
+```
+
+**Request body:**
+```json
+{
+  "email": "john@example.com",
+  "otp": "654321"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "OTP verified"
+}
+```
+
+#### Reset password
+
+```
+POST /auth/reset-password
+```
+
+**Request body:**
+```json
+{
+  "email": "john@example.com",
+  "otp": "654321",
+  "newPassword": "newSecure123"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Password reset successfully"
+}
+```
+
+#### Get current user profile
+
+```
+GET /auth/profile
+```
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "_id": "...",
+    "name": "John Doe",
+    "email": "john@example.com",
+    "role": "owner",
+    "shop": { "_id": "...", "name": "John's Duka", "address": "...", "phone": "..." }
+  }
+}
+```
+
+#### Update profile
+
+```
+PUT /auth/profile
+```
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request body:**
+```json
+{
+  "name": "John Updated",
+  "email": "newemail@example.com",
+  "phone": "+254700000001"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": { ... }
+}
+```
+
+#### Change password (authenticated)
+
+```
+POST /auth/change-password
+```
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request body:**
+```json
+{
+  "currentPassword": "secure123",
+  "newPassword": "newSecure456"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Password changed successfully"
+}
+```
+
+### Products
+
+All endpoints are scoped to the authenticated user’s shop.
+
+#### Get all products (with pagination, search, filter)
+
+```
+GET /products?search=maize&category=grains&page=1&limit=20
+```
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": [ ... ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 45,
+    "pages": 3
+  }
+}
+```
+
+> Staff users do **not** see `costPrice`.
+
+#### Get single product
+
+```
+GET /products/:id
+```
+
+**Headers:** `Authorization: Bearer <token>`
+
+#### Create product (Owner only or staff with `create_product` permission)
+
+```
+POST /products
+```
+
+**Request body:**
+```json
+{
+  "name": "Maize Flour 2kg",
+  "category": "grains",
+  "sellingPrice": 250,
+  "costPrice": 220,
+  "quantity": 50,
+  "lowStockAlert": 5
+}
+```
+
+#### Update product (Owner only or staff with `edit_product` permission)
+
+```
+PUT /products/:id
+```
+
+#### Delete product (Owner only or staff with `delete_product` permission)
+
+```
+DELETE /products/:id
+```
+
+#### Update stock quantity (Owner only or staff with `edit_product_stock` permission)
+
+```
+PATCH /products/:id/stock
+```
+
+**Request body:**
+```json
+{
+  "quantity": 30
+}
+```
+
+### Sales
+
+#### Record a sale
+
+```
+POST /sales
+```
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request body:**
+```json
+{
+  "items": [
+    { "productId": "65b8...", "quantity": 2 },
+    { "productId": "65b9...", "quantity": 1 }
+  ],
+  "paymentMethod": "cash"
+}
+```
+
+**Response (201 Created):**
+```json
+{
+  "success": true,
+  "data": { "invoiceNumber": "INV-2506-00001", ... },
+  "message": "Sale recorded successfully"
+}
+```
+
+- Stock is reduced atomically (MongoDB transaction).
+- Invoice number is auto‑generated.
+
+#### Get sales (with filters, pagination)
+
+```
+GET /sales?startDate=2025-01-01&endDate=2025-01-31&staffId=...&paymentMethod=cash&page=1&limit=20
+```
+
+**Headers:** `Authorization: Bearer <token>`
+
+- Owner sees all sales (can filter by staff).
+- Staff sees only their own sales, unless granted `view_all_sales` permission.
+
+#### Get my sales (staff personal sales)
+
+```
+GET /sales/me
+```
+
+**Headers:** `Authorization: Bearer <token>`
+
+#### Get sale by ID
+
+```
+GET /sales/:id
+```
+
+**Headers:** `Authorization: Bearer <token>`
+
+### Staff Management (Owner only)
+
+#### Get all staff of the shop
+
+```
+GET /staff?search=john
+```
+
+**Headers:** `Authorization: Bearer <token>`
+
+#### Get single staff
+
+```
+GET /staff/:id
+```
+
+#### Create staff
+
+```
+POST /staff
+```
+
+**Request body:**
+```json
+{
+  "name": "Jane Staff",
+  "email": "jane@example.com",
+  "password": "staff123",
+  "phone": "+254711223344"
+}
+```
+
+#### Update staff
+
+```
+PUT /staff/:id
+```
+
+**Request body (any fields allowed):**
+```json
+{
+  "name": "Jane Updated",
+  "isActive": true,
+  "phone": "+254700000000"
+}
+```
+
+#### Reset staff password
+
+```
+POST /staff/:id/reset-password
+```
+
+**Request body:**
+```json
+{
+  "newPassword": "newPass456"
+}
+```
+
+#### Delete staff
+
+```
+DELETE /staff/:id
+```
+
+#### Get staff’s sales
+
+```
+GET /staff/:id/sales?startDate=...&endDate=...
+```
+
+#### Update staff permissions
+
+```
+PUT /staff/:id/permissions
+```
+
+**Request body:**
+```json
+{
+  "permissions": ["view_products", "record_sale", "view_sales"]
+}
+```
+
+#### Get all available permissions (list of hardcoded permissions)
+
+```
+GET /staff/permissions
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [
+    { "value": "view_products", "label": "View Products", "category": "Products" },
+    { "value": "create_product", "label": "Create Product", "category": "Products" },
+    ...
+  ]
+}
+```
+
+### Dashboard
+
+#### Owner dashboard
+
+```
+GET /dashboard/owner
+```
+
+**Headers:** `Authorization: Bearer <token>` (owner only)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "todaySalesTotal": 12500,
+    "cashSalesTotal": 7500,
+    "mpesaSalesTotal": 5000,
+    "transactionsToday": 12,
+    "totalProducts": 34,
+    "currentStockValue": 45600,
+    "lowStockItems": [ { "_id": "...", "name": "Sugar", "quantity": 2 } ],
+    "recentTransactions": [ ... ]
+  }
+}
+```
+
+#### Staff dashboard
+
+```
+GET /dashboard/staff
+```
+
+**Headers:** `Authorization: Bearer <token>` (staff only)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "todaySalesTotal": 3200,
+    "cashSalesTotal": 2000,
+    "mpesaSalesTotal": 1200,
+    "transactionsToday": 5,
+    "recentSales": [ ... ]
+  }
+}
+```
+
+### Shop Configuration
+
+#### Get shop settings
+
+```
+GET /shop
+```
+
+**Headers:** `Authorization: Bearer <token>`
+
+#### Update shop settings (Owner only)
+
+```
+PUT /shop
+```
+
+**Request body:**
+```json
+{
+  "name": "My New Shop Name",
+  "address": "New Address",
+  "phone": "+254722000000",
+  "email": "new@shop.com",
+  "taxRate": 16
+}
+```
+
+## Error Handling
+
+All errors return a consistent JSON object with the appropriate HTTP status code.
+
+**Example (400 Bad Request):**
+```json
+{
+  "success": false,
+  "message": "Validation error",
+  "errors": [ "email must be a valid email", "password is required" ]
+}
+```
+
+**Common status codes:**
+
+| Code | Description |
+|------|-------------|
+| 200  | OK |
+| 201  | Created |
+| 400  | Bad request (validation or business logic) |
+| 401  | Unauthorized (missing or invalid token) |
+| 403  | Forbidden (role/permission denied) |
+| 404  | Not found |
+| 500  | Internal server error |
+
+## Validation
+
+All endpoints validate input using **Joi** and reject any unknown fields (`unknown(false)`). This prevents unwanted field injection (e.g., `role` or `shop`).
+
+## Email Templates
+
+The API sends HTML emails for:
+- Email verification (6‑digit code)
+- Password reset OTP
+
+The HTML templates are responsive and include a plain‑text fallback.
+
+## Permissions System
+
+Default staff permissions:
+```js
+['view_products', 'record_sale', 'view_sales']
+```
+
+Full permission list (owner can assign any combination):
+
+| Permission | Description |
+|------------|-------------|
+| `view_products` | View product list and details |
+| `create_product` | Create new products |
+| `edit_product` | Edit product details |
+| `delete_product` | Delete products |
+| `edit_product_stock` | Update product stock quantity |
+| `view_sales` | View own sales |
+| `record_sale` | Create a sale |
+| `view_all_sales` | View all shop sales (all staff) |
+| `manage_staff` | Manage staff (not used; owner only) |
+| `edit_shop_settings` | Edit shop settings (not used; owner only) |
+
+## Testing
+
+Use Postman or any API client. Example collection: [Smart Duka API.postman_collection.json](./postman/collection.json)
+
+## Deployment
+
+1. Set environment variables on your hosting platform.
+2. Use a process manager like **PM2** or run behind Nginx.
+3. For production, enable CORS with specific origins:
+```js
+app.use(cors({ origin: 'https://yourfrontend.com' }));
+```
 
 ## License
 
-MIT License
+MIT
 
----
+## Support
 
-## Smart Duka
-
-Simple inventory and sales management for small businesses in Kenya.
+For issues, please create a ticket on the GitHub repository or contact support@smartduka.com.
