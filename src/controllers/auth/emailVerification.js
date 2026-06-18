@@ -44,6 +44,34 @@ export const verifyEmail = async (req, res) => {
 };
 
 /**
+ * Resend verification email by email (unauthenticated)
+ * Used when a user's code expired before they could verify and log in
+ */
+export const resendVerificationEmailByEmail = async (req, res) => {
+  const { email } = req.body;
+
+  const user = await User.findOne({ email });
+  if (!user) {
+    return res.status(404).json({ success: false, message: 'User not found' });
+  }
+
+  if (user.isEmailVerified) {
+    return res.status(400).json({ success: false, message: 'Email already verified' });
+  }
+
+  // Delete any existing verification codes for this user
+  await EmailVerificationToken.deleteMany({ userId: user._id });
+
+  try {
+    await sendVerificationEmail(user);
+    res.json({ success: true, message: 'Verification code sent. Please check your email.' });
+  } catch (error) {
+    console.error('Resend verification error:', error);
+    res.status(500).json({ success: false, message: 'Failed to send verification email. Please try again later.' });
+  }
+};
+
+/**
  * Resend verification email (authenticated user)
  */
 export const resendVerificationEmail = async (req, res) => {

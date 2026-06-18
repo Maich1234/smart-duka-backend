@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import morgan from 'morgan';
 import 'express-async-errors';
 import connectDB from './config/db.js';
 import routes from './routes/v1/index.js';
@@ -13,6 +14,7 @@ const app = express();
 connectDB();
 
 app.use(cors());
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

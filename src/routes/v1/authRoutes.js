@@ -10,6 +10,7 @@ import {
   resetPassword,
   verifyEmail,
   resendVerificationEmail,
+  resendVerificationEmailByEmail,
 } from '../../controllers/auth/index.js';
 import { protect } from '../../middlewares/auth.js';
 import validate from '../../middlewares/validate.js';
@@ -20,6 +21,7 @@ import {
   forgotPasswordSchema,
   verifyOTPSchema,
   resetPasswordSchema,
+  resendVerificationEmailSchema,
 } from '../../validations/authValidation.js';
 
 const router = express.Router();
@@ -31,6 +33,7 @@ router.post('/verify-otp', validate(verifyOTPSchema), verifyOTP);
 router.post('/reset-password', validate(resetPasswordSchema), resetPassword);
 router.get('/verify-email', verifyEmail);          // GET with ?token=
 router.post('/verify-email', verifyEmail);         // POST with body { token }
+router.post('/resend-verification-email', validate(resendVerificationEmailSchema), resendVerificationEmailByEmail);
 
 router.get('/profile', protect, getProfile);
 router.put('/profile', protect, updateProfile);

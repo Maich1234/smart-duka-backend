@@ -19,13 +19,13 @@ export const register = async (req, res) => {
   session.startTransaction();
 
   try {
-    const [shop] = await Shop.create([{ name: shopName, address: address || '', phone: phone || '', owner: null }], { session });
-    const [user] = await User.create([{
-      name, email, password, role: 'owner', shop: shop._id, isActive: true, isEmailVerified: false,
-    }], { session });
+    const shopId = new mongoose.Types.ObjectId();
+    const userId = new mongoose.Types.ObjectId();
 
-    shop.owner = user._id;
-    await shop.save({ session });
+    const [user] = await User.create([{
+      _id: userId, name, email, password, role: 'owner', shop: shopId, isActive: true, isEmailVerified: false,
+    }], { session });
+    await Shop.create([{ _id: shopId, name: shopName, address: address || '', phone: phone || '', owner: userId }], { session });
 
     await session.commitTransaction();
 
