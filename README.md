@@ -14,6 +14,7 @@ A production-ready REST API for the Smart Duka Point‑of‑Sale system. Built w
 - Dashboard endpoints with aggregated data (sales, low stock alerts, stock value).
 - Input validation with Joi – rejects unknown fields.
 - Global error handling and async wrapper.
+- HTTP request logging with Morgan (`dev` format in development, `combined` in production).
 
 ## Tech Stack
 
@@ -24,6 +25,7 @@ A production-ready REST API for the Smart Duka Point‑of‑Sale system. Built w
 - bcryptjs for password hashing
 - Nodemailer for emails
 - Joi for validation
+- Morgan for HTTP request logging
 
 ## Getting Started
 
@@ -66,13 +68,14 @@ The server will run on `http://localhost:5000` by default.
 | Variable | Description | Example |
 |----------|-------------|---------|
 | PORT | Server port | 5000 |
+| NODE_ENV | Environment mode; also controls Morgan log format (`combined` in production, `dev` otherwise) | `development` |
 | MONGO_URI | MongoDB connection string | `mongodb://localhost:27017/smart_duka` |
 | JWT_SECRET | Secret for signing JWTs | `your_super_secret_key` |
 | JWT_EXPIRES_IN | JWT expiration time | `7d` |
 | BCRYPT_ROUNDS | Salt rounds for bcrypt | `10` |
 | SMTP_HOST | SMTP server host | `smtp.gmail.com` |
 | SMTP_PORT | SMTP port | `587` |
-| SMTP_SECURE | Use TLS/SSL? (`true` for 465) | `false` |
+| SMTP_SECURE | Use TLS/SSL? Defaults to `true` when `SMTP_PORT` is `465`, `false` otherwise, if unset | `false` |
 | SMTP_USER | SMTP username | `your-email@gmail.com` |
 | SMTP_PASS | SMTP password or app password | `xxxx xxxx xxxx xxxx` |
 | SMTP_FROM | Sender email address | `"Smart Duka" <noreply@smartduka.com>` |
