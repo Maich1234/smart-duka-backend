@@ -170,6 +170,29 @@ POST /auth/resend-verification
 }
 ```
 
+#### Resend verification email (unauthenticated)
+
+```
+POST /auth/resend-verification-email
+```
+
+**Request body:**
+```json
+{
+  "email": "john@example.com"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Verification code sent. Please check your email."
+}
+```
+
+> Use this when the original verification code expires before the user can log in (unverified users can't authenticate, so the token‑based `/auth/resend-verification` above is unreachable for them). Invalidates any previous code and issues a new one.
+
 #### Verify email
 
 ```
@@ -726,3 +749,4 @@ MIT
 ## Support
 
 For issues, please create a ticket on the GitHub repository or contact support@smartduka.com.
+# smart-duka
