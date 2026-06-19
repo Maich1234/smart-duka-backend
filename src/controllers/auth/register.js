@@ -37,8 +37,7 @@ export const register = async (req, res) => {
     });
   } catch (error) {
     await session.abortTransaction();
-    console.error('Registration error:', error);
-    res.status(500).json({ success: false, message: 'Registration failed. Please try again.' });
+    throw error;
   } finally {
     session.endSession();
   }

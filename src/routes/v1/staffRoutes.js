@@ -12,7 +12,12 @@ import {
 import { getAllPermissions } from '../../controllers/permissionController.js';
 import { protect, ownerOnly } from '../../middlewares/auth.js';
 import validate from '../../middlewares/validate.js';
-import { createStaffSchema, updateStaffSchema, resetPasswordSchema } from '../../validations/staffValidation.js';
+import {
+  createStaffSchema,
+  updateStaffSchema,
+  resetPasswordSchema,
+  updateStaffPermissionsSchema,
+} from '../../validations/staffValidation.js';
 
 const router = express.Router();
 
@@ -27,6 +32,6 @@ router.put('/:id', validate(updateStaffSchema), updateStaff);
 router.delete('/:id', deleteStaff);
 router.post('/:id/reset-password', validate(resetPasswordSchema), resetStaffPassword);
 router.get('/:id/sales', getStaffSales);
-router.put('/:id/permissions', updateStaffPermissions);
+router.put('/:id/permissions', validate(updateStaffPermissionsSchema), updateStaffPermissions);
 
 export default router;

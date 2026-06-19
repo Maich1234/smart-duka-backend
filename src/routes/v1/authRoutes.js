@@ -22,6 +22,7 @@ import {
   verifyOTPSchema,
   resetPasswordSchema,
   resendVerificationEmailSchema,
+  verifyEmailSchema,
 } from '../../validations/authValidation.js';
 
 const router = express.Router();
@@ -31,8 +32,7 @@ router.post('/login', validate(loginSchema), login);
 router.post('/forgot-password', validate(forgotPasswordSchema), forgotPassword);
 router.post('/verify-otp', validate(verifyOTPSchema), verifyOTP);
 router.post('/reset-password', validate(resetPasswordSchema), resetPassword);
-router.get('/verify-email', verifyEmail);          // GET with ?token=
-router.post('/verify-email', verifyEmail);         // POST with body { token }
+router.post('/verify-email', validate(verifyEmailSchema), verifyEmail); // body { email, code }
 router.post('/resend-verification-email', validate(resendVerificationEmailSchema), resendVerificationEmailByEmail);
 
 router.get('/profile', protect, getProfile);
