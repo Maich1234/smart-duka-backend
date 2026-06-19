@@ -27,6 +27,11 @@ const shopSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+  currency: {
+    type: String,
+    default: 'KES',
+    trim: true,
+  },
   isActive: {
     type: Boolean,
     default: true,
