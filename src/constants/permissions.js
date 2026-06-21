@@ -9,6 +9,7 @@ export const ALL_PERMISSIONS = [
   { value: 'view_all_sales', label: 'View All Sales (all staff)', category: 'Sales' },
   { value: 'manage_staff', label: 'Manage Staff', category: 'Admin' },
   { value: 'edit_shop_settings', label: 'Edit Shop Settings', category: 'Admin' },
+  { value: 'manage_expenses', label: 'Manage Expenses', category: 'Admin' },
 ];
 
 export const DEFAULT_STAFF_PERMISSIONS = ['view_products', 'record_sale', 'view_sales'];

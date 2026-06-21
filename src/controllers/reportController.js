@@ -1,5 +1,6 @@
 import Sale from '../models/Sale.js';
 import Rating from '../models/Rating.js';
+import Expense from '../models/Expense.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -101,12 +102,22 @@ export const getSalesReport = async (req, res) => {
     };
   });
 
-  const summary = series.reduce(
-    (acc, bucket) => ({
-      totalRevenue: acc.totalRevenue + bucket.total,
-      totalTransactions: acc.totalTransactions + bucket.transactionCount,
-      cashTotal: acc.cashTotal + bucket.cashTotal,
-      mpesaTotal: acc.mpesaTotal + bucket.mpesaTotal,
+  // Summary/top-products/by-staff/ratings reflect only the *current* bucket
+  // (today / this week / this month) — not the whole multi-bucket trend
+  // window — so the numbers actually change when switching daily/weekly/
+  // monthly instead of staying a rolling sum that looks identical whenever
+  // all the shop's history fits inside every window.
+  const currentBucket = buckets[buckets.length - 1];
+  const currentPeriodSales = sales.filter(
+    (sale) => sale.createdAt >= currentBucket.start && sale.createdAt < currentBucket.end
+  );
+
+  const summary = currentPeriodSales.reduce(
+    (acc, sale) => ({
+      totalRevenue: acc.totalRevenue + sale.totalAmount,
+      totalTransactions: acc.totalTransactions + 1,
+      cashTotal: acc.cashTotal + (sale.paymentMethod === 'cash' ? sale.totalAmount : 0),
+      mpesaTotal: acc.mpesaTotal + (sale.paymentMethod === 'mpesa' ? sale.totalAmount : 0),
     }),
     { totalRevenue: 0, totalTransactions: 0, cashTotal: 0, mpesaTotal: 0 }
   );
@@ -114,8 +125,15 @@ export const getSalesReport = async (req, res) => {
     ? summary.totalRevenue / summary.totalTransactions
     : 0;
 
+  const [expenseAgg] = await Expense.aggregate([
+    { $match: { shop: req.user.shop._id, date: { $gte: currentBucket.start, $lt: currentBucket.end } } },
+    { $group: { _id: null, total: { $sum: '$amount' } } },
+  ]);
+  summary.expenseTotal = expenseAgg?.total || 0;
+  summary.netProfit = summary.totalRevenue - summary.expenseTotal;
+
   const productTotals = new Map();
-  for (const sale of sales) {
+  for (const sale of currentPeriodSales) {
     for (const item of sale.items) {
       const existing = productTotals.get(item.productName) || { productName: item.productName, quantitySold: 0, revenue: 0 };
       existing.quantitySold += item.quantity;
@@ -128,7 +146,7 @@ export const getSalesReport = async (req, res) => {
     .slice(0, 5);
 
   const staffTotals = new Map();
-  for (const sale of sales) {
+  for (const sale of currentPeriodSales) {
     const staffName = sale.staff?.name || 'Unknown';
     const existing = staffTotals.get(staffName) || { staffName, total: 0, transactionCount: 0 };
     existing.total += sale.totalAmount;
@@ -138,7 +156,7 @@ export const getSalesReport = async (req, res) => {
   const byStaff = Array.from(staffTotals.values()).sort((a, b) => b.total - a.total);
 
   const [ratingAgg] = await Rating.aggregate([
-    { $match: { shop: req.user.shop._id, createdAt: { $gte: rangeStart } } },
+    { $match: { shop: req.user.shop._id, createdAt: { $gte: currentBucket.start, $lt: currentBucket.end } } },
     { $group: { _id: null, avgStars: { $avg: '$stars' }, totalRatings: { $sum: 1 } } },
   ]);
   const ratingSummary = {

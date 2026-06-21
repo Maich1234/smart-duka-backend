@@ -1,6 +1,7 @@
 import express from 'express';
 import authRoutes from './authRoutes.js';
 import productRoutes from './productRoutes.js';
+import expenseRoutes from './expenseRoutes.js';
 import saleRoutes from './saleRoutes.js';
 import staffRoutes from './staffRoutes.js';
 import dashboardRoutes from './dashboardRoutes.js';
@@ -15,6 +16,7 @@ const router = express.Router();
 
 router.use('/auth', authRoutes);
 router.use('/products', productRoutes);
+router.use('/expenses', expenseRoutes);
 router.use('/sales', saleRoutes);
 router.use('/staff', staffRoutes);
 router.use('/dashboard', dashboardRoutes);

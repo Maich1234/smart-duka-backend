@@ -32,6 +32,12 @@ const shopSchema = new mongoose.Schema({
     default: 'KES',
     trim: true,
   },
+  receiptThankYouNote: {
+    type: String,
+    default: '',
+    trim: true,
+    maxlength: 150,
+  },
   isActive: {
     type: Boolean,
     default: true,
