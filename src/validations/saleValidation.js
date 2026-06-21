@@ -5,7 +5,11 @@ export const createSaleSchema = Joi.object({
     .items(
       Joi.object({
         productId: Joi.string().required(),
-        quantity: Joi.number().min(1).required(),
+        // Whole-number enforcement for non-weighted product types happens in
+        // pricingEngine.js, where the product's productType is known.
+        quantity: Joi.number().positive().required(),
+        unitPrice: Joi.number().positive().optional(), // override for 'variable'/'service' types
+        variantId: Joi.string().optional(), // required for 'configurable' types
       })
     )
     .min(1)

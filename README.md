@@ -8,13 +8,18 @@ A production-ready REST API for the Smart Duka Point‑of‑Sale system. Built w
 - Multi‑shop architecture – each shop has its own owner, staff, inventory, and sales.
 - Role‑based access control (Owner / Staff) with granular permissions.
 - Full CRUD for products, staff, and sales.
+- **Flexible product pricing** – standard, variable (negotiable), weighted/refillable (per kg/L), service, bundle, and configurable (variant) products, all priced and stock‑deducted correctly through a single pricing engine.
+- **QR receipt verification & customer ratings** – every sale gets a stateless, signed receipt token; customers scan a QR code on the receipt to verify authenticity and rate their service, visible in shop analytics.
+- **Inventory depletion analytics** – sales‑velocity‑based stockout prediction and fast/slow‑mover classification (not just a static low‑stock threshold).
+- **Intelligent push notifications (FCM)** – daily sales‑vs‑historical‑average anomaly alerts and predictive low‑stock alerts, delivered via scheduled cron jobs to each shop's owner only.
 - Email verification for owners (6‑digit OTP).
 - Password reset via OTP (6‑digit code sent by email).
 - Sales are recorded atomically (transactions) to maintain stock integrity.
-- Dashboard endpoints with aggregated data (sales, low stock alerts, stock value).
+- Dashboard endpoints with aggregated data (sales, low stock alerts, stock value, ratings).
 - Input validation with Joi – rejects unknown fields.
 - Global error handling and async wrapper.
 - HTTP request logging with Morgan (`dev` format in development, `combined` in production).
+- Rate‑limited public endpoints for unauthenticated receipt verification/rating.
 
 ## Tech Stack
 
@@ -26,6 +31,9 @@ A production-ready REST API for the Smart Duka Point‑of‑Sale system. Built w
 - Nodemailer for emails
 - Joi for validation
 - Morgan for HTTP request logging
+- firebase-admin – Firebase Cloud Messaging (push notifications)
+- express-rate-limit – rate limiting for public endpoints
+- Vercel Cron Jobs – scheduled daily-sales-check and depletion-alerts (see `vercel.json`)
 
 ## Getting Started
 
@@ -79,6 +87,14 @@ The server will run on `http://localhost:5000` by default.
 | SMTP_USER | SMTP username | `your-email@gmail.com` |
 | SMTP_PASS | SMTP password or app password | `xxxx xxxx xxxx xxxx` |
 | SMTP_FROM | Sender email address | `"Smart Duka" <noreply@smartduka.com>` |
+| RECEIPT_TOKEN_SECRET | HMAC/JWT signing secret for receipt QR-verification tokens | `a-long-random-string` |
+| CRON_SECRET | Shared secret Vercel Cron sends as `Authorization: Bearer <CRON_SECRET>` to the `/cron/*` endpoints | `another-long-random-string` |
+| PUBLIC_WEB_URL | Base URL of the deployed public web app; used to build the QR code link on receipts | `https://app.smartduka.co.ke` |
+| FIREBASE_PROJECT_ID | Firebase project ID (Admin SDK service account) | `smart-duka-64d5c` |
+| FIREBASE_CLIENT_EMAIL | Firebase Admin SDK service account email | `firebase-adminsdk-xxxxx@smart-duka-64d5c.iam.gserviceaccount.com` |
+| FIREBASE_PRIVATE_KEY | Firebase Admin SDK service account private key (keep the `\n` escape sequences, wrap in quotes) | `"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"` |
+
+> `RECEIPT_TOKEN_SECRET`/`CRON_SECRET`/`FIREBASE_*` are optional for local development — the server still boots and every other feature works without them. Receipt QR codes won't verify and push notifications are silently skipped (with a console warning) until they're set.
 
 ## Authentication
 
@@ -355,6 +371,34 @@ POST /auth/change-password
 }
 ```
 
+#### Register device for push notifications
+
+```
+POST /auth/device-token
+```
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request body:**
+```json
+{ "token": "<fcm-device-token>" }
+```
+
+> Adds the token to the user's `fcmTokens` (deduplicated). Only `owner` accounts ever actually receive pushes (sales-anomaly/low-stock alerts), but any authenticated user can register.
+
+#### Unregister device
+
+```
+DELETE /auth/device-token
+```
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request body:**
+```json
+{ "token": "<fcm-device-token>" }
+```
+
 ### Products
 
 All endpoints are scoped to the authenticated user’s shop.
@@ -381,7 +425,7 @@ GET /products?search=maize&category=grains&page=1&limit=20
 }
 ```
 
-> Staff users do **not** see `costPrice`.
+> Staff users do **not** see `costPrice` (including per-variant `costPrice` on configurable products).
 
 #### Get single product
 
@@ -397,7 +441,18 @@ GET /products/:id
 POST /products
 ```
 
-**Request body:**
+**`productType`** (default `standard`) controls which fields are required/allowed — validated with conditional Joi rules so existing `standard` clients need no changes:
+
+| productType | Extra fields | Pricing/stock behavior |
+|---|---|---|
+| `standard` | — | today's behavior: fixed `sellingPrice`, integer qty, 1:1 stock deduction |
+| `variable` | `minPrice`, `maxPrice` (optional) | staff can override unit price at checkout, clamped to bounds if set |
+| `weighted` / `refillable` | `unitOfMeasure` (`kg`\|`g`\|`l`\|`ml`) | `sellingPrice` = price per unit; decimal quantities allowed (e.g. 0.5 kg) |
+| `service` | `allowPriceOverride`, `trackInventory` | no stock check/deduction when `trackInventory: false`; price may be overridden if allowed |
+| `bundle` | `bundleItems: [{ product, quantity }]` | flat combo price; deducts each component's stock, not the bundle's own |
+| `configurable` | `variants: [{ name, sellingPrice, costPrice, quantity, sku?, lowStockAlert }]` | price/stock resolved per selected variant at sale time |
+
+**Request body (standard, unchanged):**
 ```json
 {
   "name": "Maize Flour 2kg",
@@ -408,6 +463,23 @@ POST /products
   "lowStockAlert": 5
 }
 ```
+
+**Request body (bundle example):**
+```json
+{
+  "name": "Breakfast Combo",
+  "category": "combos",
+  "productType": "bundle",
+  "sellingPrice": 350,
+  "costPrice": 280,
+  "bundleItems": [
+    { "product": "<breadProductId>", "quantity": 1 },
+    { "product": "<milkProductId>", "quantity": 1 }
+  ]
+}
+```
+
+> A one-time backfill migration (`scripts/migrate-product-types.js`) sets `productType: 'standard'` on any product created before this feature shipped — run it once after deploying (`node scripts/migrate-product-types.js`). Safe to re-run; only touches documents missing the field.
 
 #### Update product (Owner only or staff with `edit_product` permission)
 
@@ -455,17 +527,26 @@ POST /sales
 }
 ```
 
+Per-item fields beyond `productId`/`quantity` are only needed for non-`standard` product types:
+
+| Field | Used for | Notes |
+|---|---|---|
+| `quantity` | all types | decimal allowed only for `weighted`/`refillable`; integer enforced for everything else |
+| `unitPrice` | `variable`, `service` (with `allowPriceOverride`) | overrides the product's `sellingPrice`, validated against `minPrice`/`maxPrice` if set |
+| `variantId` | `configurable` | required — selects which variant's price/stock to use |
+
 **Response (201 Created):**
 ```json
 {
   "success": true,
-  "data": { "invoiceNumber": "INV-2506-00001", ... },
+  "data": { "invoiceNumber": "INV-2506-00001", "receiptToken": "eyJhbGci...", ... },
   "message": "Sale recorded successfully"
 }
 ```
 
-- Stock is reduced atomically (MongoDB transaction).
+- Stock is reduced atomically (MongoDB transaction), via `src/services/pricingEngine.js` which dispatches per `productType` (handles bundle component deduction and configurable variant deduction too).
 - Invoice number is auto‑generated.
+- `receiptToken` (also returned by `GET /sales/:id`) is a stateless signed token — not stored — used to build the receipt QR code; see [Public Endpoints](#public-endpoints-unauthenticated) below.
 
 #### Get sales (with filters, pagination)
 
@@ -619,7 +700,8 @@ GET /dashboard/owner
     "totalProducts": 34,
     "currentStockValue": 45600,
     "lowStockItems": [ { "_id": "...", "name": "Sugar", "quantity": 2 } ],
-    "recentTransactions": [ ... ]
+    "recentTransactions": [ ... ],
+    "ratingSummary": { "avgStars": 4.6, "totalRatings": 38 }
   }
 }
 ```
@@ -672,6 +754,118 @@ PUT /shop
   "taxRate": 16
 }
 ```
+
+### Public Endpoints (unauthenticated)
+
+Reached by scanning the QR code printed on a receipt. Rate-limited (30 requests / 15 min / IP) since there's no auth layer to lean on.
+
+#### Verify a receipt
+
+```
+GET /public/receipt/:token
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "invoiceNumber": "INV-2506-00001",
+    "shopName": "John's Duka",
+    "currency": "KES",
+    "totalAmount": 720,
+    "itemCount": 2,
+    "createdAt": "2026-06-19T...",
+    "alreadyRated": false,
+    "rating": null
+  }
+}
+```
+
+#### Submit a rating for a receipt
+
+```
+POST /public/receipt/:token/rating
+```
+
+**Request body:**
+```json
+{ "stars": 5, "comment": "Great service!" }
+```
+
+> One rating per sale — idempotent: re-submitting for an already-rated receipt returns the existing rating instead of erroring. `stars` must be a whole number 1–5.
+
+### Ratings (Owner only)
+
+#### List ratings
+
+```
+GET /ratings?staffId=...&stars=5&page=1&limit=20
+```
+
+#### Ratings summary
+
+```
+GET /ratings/summary
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "avgStars": 4.6,
+    "totalRatings": 38,
+    "distribution": [ { "stars": 5, "count": 30 }, { "stars": 4, "count": 6 }, ... ],
+    "byStaff": [ { "staffId": "...", "staffName": "Jane", "avgStars": 4.8, "totalRatings": 20 } ]
+  }
+}
+```
+
+### Analytics (Owner only)
+
+#### Inventory depletion
+
+```
+GET /analytics/depletion?windowDays=30
+```
+
+Computes per-product sales velocity over a rolling window (default 30 days) and predicts stockout dates — used for fast/slow-mover classification and is the same logic the `depletion-alerts` cron job uses to decide what to notify about (not the static `lowStockAlert` field).
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "windowDays": 30,
+    "items": [
+      {
+        "productId": "...",
+        "name": "Water Refill",
+        "quantity": 905,
+        "unitsSold": 95,
+        "avgDailyVelocity": 3.17,
+        "daysUntilStockout": 285.8,
+        "movement": "fast"
+      }
+    ],
+    "fastMovers": [ ... ],
+    "slowMovers": [ ... ],
+    "stockoutSoon": [ ... ]
+  }
+}
+```
+
+### Cron (Vercel Cron only)
+
+Not reachable by normal API clients — gated by a shared secret instead of `protect`. Vercel automatically sends `Authorization: Bearer $CRON_SECRET` to scheduled requests when `CRON_SECRET` is set as an env var (see `vercel.json`).
+
+```
+GET /cron/daily-sales-check     # compares today's sales to the trailing 14-day average per shop (z-score), pushes an anomaly alert to the owner if |z| > 1.5
+GET /cron/depletion-alerts      # pushes a low-stock alert for products projected to run out within 3 days
+```
+
+Both are idempotent per `(shop, day)` via the `NotificationLog` collection — safe if Vercel retries a cron invocation.
 
 ## Error Handling
 
@@ -738,12 +932,13 @@ Use Postman or any API client. Example collection: [Smart Duka API.postman_colle
 
 ## Deployment
 
-1. Set environment variables on your hosting platform.
-2. Use a process manager like **PM2** or run behind Nginx.
+1. Set environment variables on your hosting platform — including `RECEIPT_TOKEN_SECRET`, `CRON_SECRET`, `PUBLIC_WEB_URL`, and the `FIREBASE_*` Admin SDK credentials if you want receipt QR verification and push notifications to work.
+2. Use a process manager like **PM2** or run behind Nginx — or deploy as-is to Vercel (this project ships a `vercel.json` with `builds`/`routes` for serverless functions and a `crons` block for the two scheduled jobs in [Cron](#cron-vercel-cron-only)). On Vercel, setting the `CRON_SECRET` env var makes it auto-attach the matching `Authorization: Bearer` header to cron-triggered requests — no extra config needed.
 3. For production, enable CORS with specific origins:
 ```js
 app.use(cors({ origin: 'https://yourfrontend.com' }));
 ```
+4. After deploying for the first time with this feature set, run the one-time backfill once against your production database: `node scripts/migrate-product-types.js`.
 
 ## License
 

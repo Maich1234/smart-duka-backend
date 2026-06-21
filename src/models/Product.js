@@ -43,6 +43,44 @@ const productSchema = new mongoose.Schema({
     default: 5,
     min: 0,
   },
+  productType: {
+    type: String,
+    enum: ['standard', 'variable', 'weighted', 'refillable', 'service', 'bundle', 'configurable'],
+    default: 'standard',
+  },
+  trackInventory: {
+    type: Boolean,
+    default: true,
+  },
+  unitOfMeasure: {
+    type: String,
+    enum: ['unit', 'kg', 'g', 'l', 'ml'],
+    default: 'unit',
+  },
+  minPrice: {
+    type: Number,
+    min: 0,
+  },
+  maxPrice: {
+    type: Number,
+    min: 0,
+  },
+  allowPriceOverride: {
+    type: Boolean,
+    default: false,
+  },
+  bundleItems: [{
+    product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+    quantity: { type: Number, min: 0.001 },
+  }],
+  variants: [{
+    name: { type: String, required: true, trim: true },
+    sellingPrice: { type: Number, required: true, min: 0 },
+    costPrice: { type: Number, required: true, min: 0 },
+    quantity: { type: Number, default: 0, min: 0 },
+    sku: { type: String, trim: true },
+    lowStockAlert: { type: Number, default: 5, min: 0 },
+  }],
 }, {
   timestamps: true,
 });

@@ -11,5 +11,15 @@
    "src": "/(.*)",
    "dest": "index.js"
   }
+ ],
+ "crons": [
+  {
+   "path": "/api/v1/cron/daily-sales-check",
+   "schedule": "0 17 * * *"
+  },
+  {
+   "path": "/api/v1/cron/depletion-alerts",
+   "schedule": "30 6 * * *"
+  }
  ]
 }

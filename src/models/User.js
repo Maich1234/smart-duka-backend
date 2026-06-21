@@ -46,6 +46,10 @@ const userSchema = new mongoose.Schema({
     type: [String],
     default: DEFAULT_STAFF_PERMISSIONS,
   },
+  fcmTokens: {
+    type: [String],
+    default: [],
+  },
 }, {
   timestamps: true,
   toJSON: { virtuals: true },

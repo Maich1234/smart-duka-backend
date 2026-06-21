@@ -1,6 +1,8 @@
 import mongoose from 'mongoose';
 import Product from '../models/Product.js';
 import Sale from '../models/Sale.js';
+import { signReceiptToken } from '../utils/receiptToken.js';
+import { resolveSaleLine, SaleLineError } from '../services/pricingEngine.js';
 
 export const createSale = async (req, res) => {
   if (req.user.role !== 'owner' && !req.user.permissions?.includes('record_sale')) {
@@ -8,15 +10,20 @@ export const createSale = async (req, res) => {
   }
 
   const { items, paymentMethod } = req.body;
+  const shop = req.user.shop._id;
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     let totalAmount = 0;
     const saleItems = [];
+    // Keeps every product/bundle-component doc touched during this sale in
+    // memory so it's mutated and saved exactly once, even when referenced
+    // by more than one cart line (e.g. shared bundle components).
+    const productCache = new Map();
 
     for (const item of items) {
-      const product = await Product.findOne({ _id: item.productId, shop: req.user.shop._id }).session(session);
+      const product = await Product.findOne({ _id: item.productId, shop }).session(session);
       if (!product) {
         await session.abortTransaction();
         session.endSession();
@@ -25,29 +32,40 @@ export const createSale = async (req, res) => {
           message: `Product with ID ${item.productId} not found in this shop`,
         });
       }
-      if (product.quantity < item.quantity) {
+      productCache.set(product._id.toString(), product);
+
+      let resolved;
+      try {
+        resolved = await resolveSaleLine(product, item, { shop, session, productCache });
+      } catch (err) {
         await session.abortTransaction();
         session.endSession();
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient stock for ${product.name}. Available: ${product.quantity}`,
-        });
+        if (err instanceof SaleLineError) {
+          return res.status(err.status).json({ success: false, message: err.message });
+        }
+        throw err;
       }
-      const subtotal = product.sellingPrice * item.quantity;
-      totalAmount += subtotal;
+
+      totalAmount += resolved.subtotal;
       saleItems.push({
         productId: product._id,
         productName: product.name,
-        quantity: item.quantity,
-        unitPrice: product.sellingPrice,
-        subtotal,
+        quantity: resolved.quantity,
+        unitPrice: resolved.unitPrice,
+        subtotal: resolved.subtotal,
+        variantId: resolved.variantId,
+        variantName: resolved.variantName,
+        unitOfMeasure: resolved.unitOfMeasure,
+        productType: resolved.productType,
       });
-      product.quantity -= item.quantity;
-      await product.save({ session });
+    }
+
+    for (const doc of productCache.values()) {
+      await doc.save({ session });
     }
 
     const [sale] = await Sale.create([{
-      shop: req.user.shop._id,
+      shop,
       items: saleItems,
       totalAmount,
       paymentMethod,
@@ -55,7 +73,9 @@ export const createSale = async (req, res) => {
     }], { session });
 
     await session.commitTransaction();
-    res.status(201).json({ success: true, data: sale, message: 'Sale recorded successfully' });
+    const saleObj = sale.toObject();
+    saleObj.receiptToken = signReceiptToken(sale._id);
+    res.status(201).json({ success: true, data: saleObj, message: 'Sale recorded successfully' });
   } catch (error) {
     await session.abortTransaction();
     throw error;
@@ -104,7 +124,9 @@ export const getSaleById = async (req, res) => {
   if (req.user.role === 'staff' && !req.user.permissions?.includes('view_all_sales') && sale.staff._id.toString() !== req.user._id.toString()) {
     return res.status(403).json({ success: false, message: 'Access denied' });
   }
-  res.json({ success: true, data: sale });
+  const saleObj = sale.toObject();
+  saleObj.receiptToken = signReceiptToken(sale._id);
+  res.json({ success: true, data: saleObj });
 };
 
 export const getMySales = async (req, res) => {

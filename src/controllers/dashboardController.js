@@ -1,5 +1,6 @@
 import Product from '../models/Product.js';
 import Sale from '../models/Sale.js';
+import Rating from '../models/Rating.js';
 
 export const getOwnerDashboard = async (req, res) => {
   const startOfDay = new Date();
@@ -38,6 +39,11 @@ export const getOwnerDashboard = async (req, res) => {
     .sort({ createdAt: -1 })
     .limit(10);
 
+  const [ratingAgg] = await Rating.aggregate([
+    { $match: { shop: req.user.shop._id } },
+    { $group: { _id: null, avgStars: { $avg: '$stars' }, totalRatings: { $sum: 1 } } },
+  ]);
+
   res.json({
     success: true,
     data: {
@@ -49,6 +55,10 @@ export const getOwnerDashboard = async (req, res) => {
       currentStockValue,
       lowStockItems,
       recentTransactions,
+      ratingSummary: {
+        avgStars: ratingAgg?.avgStars || 0,
+        totalRatings: ratingAgg?.totalRatings || 0,
+      },
     },
   });
 };

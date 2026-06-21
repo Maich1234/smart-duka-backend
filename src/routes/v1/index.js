@@ -6,6 +6,10 @@ import staffRoutes from './staffRoutes.js';
 import dashboardRoutes from './dashboardRoutes.js';
 import shopRoutes from './shopRoutes.js';
 import reportRoutes from './reportRoutes.js';
+import publicRoutes from './publicRoutes.js';
+import ratingRoutes from './ratingRoutes.js';
+import analyticsRoutes from './analyticsRoutes.js';
+import cronRoutes from './cronRoutes.js';
 
 const router = express.Router();
 
@@ -16,5 +20,9 @@ router.use('/staff', staffRoutes);
 router.use('/dashboard', dashboardRoutes);
 router.use('/shop', shopRoutes);
 router.use('/reports', reportRoutes);
+router.use('/public', publicRoutes);
+router.use('/ratings', ratingRoutes);
+router.use('/analytics', analyticsRoutes);
+router.use('/cron', cronRoutes);
 
 export default router;

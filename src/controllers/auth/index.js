@@ -3,3 +3,4 @@ export * from './login.js';
 export * from './profile.js';
 export * from './password.js';
 export * from './emailVerification.js';
+export * from './deviceToken.js';

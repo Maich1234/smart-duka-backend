@@ -1,4 +1,5 @@
 import Sale from '../models/Sale.js';
+import Rating from '../models/Rating.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -136,8 +137,17 @@ export const getSalesReport = async (req, res) => {
   }
   const byStaff = Array.from(staffTotals.values()).sort((a, b) => b.total - a.total);
 
+  const [ratingAgg] = await Rating.aggregate([
+    { $match: { shop: req.user.shop._id, createdAt: { $gte: rangeStart } } },
+    { $group: { _id: null, avgStars: { $avg: '$stars' }, totalRatings: { $sum: 1 } } },
+  ]);
+  const ratingSummary = {
+    avgStars: ratingAgg?.avgStars || 0,
+    totalRatings: ratingAgg?.totalRatings || 0,
+  };
+
   res.json({
     success: true,
-    data: { period, rangeStart: rangeStart.toISOString(), summary, series, topProducts, byStaff },
+    data: { period, rangeStart: rangeStart.toISOString(), summary, series, topProducts, byStaff, ratingSummary },
   });
 };

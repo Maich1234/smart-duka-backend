@@ -13,7 +13,10 @@ const saleItemSchema = new mongoose.Schema({
   quantity: {
     type: Number,
     required: true,
-    min: 1,
+    // Weighted/refillable items can be sold in fractional amounts (e.g. 0.5 kg);
+    // whole-unit enforcement for standard/service/bundle/variable/configurable
+    // items happens in pricingEngine.js, not here.
+    min: 0.001,
   },
   unitPrice: {
     type: Number,
@@ -23,6 +26,19 @@ const saleItemSchema = new mongoose.Schema({
   subtotal: {
     type: Number,
     required: true,
+  },
+  // Snapshot fields — optional, only populated for the product types that need them.
+  variantId: {
+    type: mongoose.Schema.Types.ObjectId,
+  },
+  variantName: {
+    type: String,
+  },
+  unitOfMeasure: {
+    type: String,
+  },
+  productType: {
+    type: String,
   },
 });
 

@@ -1,5 +1,24 @@
 import Product from '../models/Product.js';
 
+const stripCostPrice = (product) => {
+  delete product.costPrice;
+  if (Array.isArray(product.variants)) {
+    product.variants = product.variants.map(({ costPrice, ...rest }) => rest);
+  }
+  return product;
+};
+
+/** Ensures every bundleItems[].product reference belongs to the same shop. */
+const validateBundleItems = async (bundleItems, shop) => {
+  if (!bundleItems?.length) return null;
+  const ids = bundleItems.map((b) => b.product);
+  const count = await Product.countDocuments({ _id: { $in: ids }, shop });
+  if (count !== new Set(ids.map(String)).size) {
+    return 'One or more bundle items are invalid or belong to a different shop';
+  }
+  return null;
+};
+
 export const getProducts = async (req, res) => {
   const { search, category, page = 1, limit = 20 } = req.query;
   const query = { shop: req.user.shop._id };
@@ -21,10 +40,7 @@ export const getProducts = async (req, res) => {
 
   const sanitizedProducts = products.map((product) => {
     const p = product.toObject();
-    if (req.user.role === 'staff') {
-      delete p.costPrice;
-    }
-    return p;
+    return req.user.role === 'staff' ? stripCostPrice(p) : p;
   });
 
   res.json({
@@ -46,15 +62,17 @@ export const getProductById = async (req, res) => {
   }
 
   const productObj = product.toObject();
-  if (req.user.role === 'staff') {
-    delete productObj.costPrice;
-  }
-  res.json({ success: true, data: productObj });
+  res.json({ success: true, data: req.user.role === 'staff' ? stripCostPrice(productObj) : productObj });
 };
 
 export const createProduct = async (req, res) => {
   if (req.user.role !== 'owner' && !req.user.permissions?.includes('create_product')) {
     return res.status(403).json({ success: false, message: 'Permission denied' });
+  }
+
+  const bundleError = await validateBundleItems(req.body.bundleItems, req.user.shop._id);
+  if (bundleError) {
+    return res.status(400).json({ success: false, message: bundleError });
   }
 
   const product = await Product.create({ ...req.body, shop: req.user.shop._id });
@@ -69,6 +87,11 @@ export const updateProduct = async (req, res) => {
   const product = await Product.findOne({ _id: req.params.id, shop: req.user.shop._id });
   if (!product) {
     return res.status(404).json({ success: false, message: 'Product not found' });
+  }
+
+  const bundleError = await validateBundleItems(req.body.bundleItems, req.user.shop._id);
+  if (bundleError) {
+    return res.status(400).json({ success: false, message: bundleError });
   }
 
   const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
