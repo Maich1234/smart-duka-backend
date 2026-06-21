@@ -948,3 +948,5 @@ MIT
 
 For issues, please create a ticket on the GitHub repository or contact support@smartduka.com.
 # smart-duka
+
+end
