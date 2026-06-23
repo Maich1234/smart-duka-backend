@@ -13,7 +13,7 @@ export const createStaffSchema = Joi.object({
 export const updateStaffSchema = Joi.object({
   name: Joi.string(),
   email: Joi.string().email().lowercase().trim(),
-  phone: Joi.string(),
+  phone: Joi.string().allow(''),
   isActive: Joi.boolean(),
   permissions: Joi.array().items(Joi.string().valid(...PERMISSION_VALUES)),
 }).unknown(false);

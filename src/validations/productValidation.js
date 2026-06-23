@@ -17,6 +17,13 @@ const variantSchema = Joi.object({
   lowStockAlert: Joi.number().min(0).default(5),
 });
 
+const promotionSchema = Joi.object({
+  label: Joi.string().trim().allow(''),
+  buyQty: Joi.number().integer().min(1).required(),
+  freeQty: Joi.number().integer().min(1).required(),
+  isActive: Joi.boolean().default(true),
+});
+
 export const createProductSchema = Joi.object({
   name: Joi.string().required().trim(),
   description: Joi.string().optional().allow(''),
@@ -38,6 +45,8 @@ export const createProductSchema = Joi.object({
     .when('productType', { is: 'bundle', then: Joi.required(), otherwise: Joi.forbidden() }),
   variants: Joi.array().items(variantSchema).min(1)
     .when('productType', { is: 'configurable', then: Joi.required(), otherwise: Joi.forbidden() }),
+  promotions: Joi.array().items(promotionSchema)
+    .when('productType', { is: Joi.valid('bundle', 'configurable'), then: Joi.forbidden(), otherwise: Joi.optional() }),
 }).unknown(false);
 
 export const updateProductSchema = Joi.object({
@@ -56,6 +65,7 @@ export const updateProductSchema = Joi.object({
   allowPriceOverride: Joi.boolean(),
   bundleItems: Joi.array().items(bundleItemSchema).min(1),
   variants: Joi.array().items(variantSchema).min(1),
+  promotions: Joi.array().items(promotionSchema),
 }).unknown(false);
 
 export const updateStockSchema = Joi.object({

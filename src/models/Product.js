@@ -73,6 +73,12 @@ const productSchema = new mongoose.Schema({
     product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
     quantity: { type: Number, min: 0.001 },
   }],
+  promotions: [{
+    label: { type: String, trim: true },
+    buyQty: { type: Number, required: true, min: 1 },
+    freeQty: { type: Number, required: true, min: 1 },
+    isActive: { type: Boolean, default: true },
+  }],
   variants: [{
     name: { type: String, required: true, trim: true },
     sellingPrice: { type: Number, required: true, min: 0 },

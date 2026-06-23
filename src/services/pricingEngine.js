@@ -22,6 +22,32 @@ const checkAndDeductStock = (product, amount) => {
 };
 
 /**
+ * Picks whichever active buyXGetY promotion yields the lowest payable
+ * quantity for the given purchase quantity ("best one wins" — promotions
+ * don't stack). Returns the discounted subtotal alongside the discount
+ * amount and a label for receipts.
+ */
+const applyPromotions = (promotions, quantity, unitPrice) => {
+  const active = (promotions || []).filter((p) => p.isActive !== false && p.buyQty > 0 && p.freeQty > 0);
+  let payableQty = quantity;
+  let appliedPromotionLabel = null;
+
+  for (const promo of active) {
+    const bundleSize = promo.buyQty + promo.freeQty;
+    const bundles = Math.floor(quantity / bundleSize);
+    if (bundles < 1) continue;
+    const candidate = quantity - bundles * promo.freeQty;
+    if (candidate < payableQty) {
+      payableQty = candidate;
+      appliedPromotionLabel = promo.label || `Buy ${promo.buyQty} Get ${promo.freeQty} Free`;
+    }
+  }
+
+  const subtotal = payableQty * unitPrice;
+  return { subtotal, discountAmount: quantity * unitPrice - subtotal, appliedPromotionLabel };
+};
+
+/**
  * Fetches (or reuses from productCache) the product doc for a given id,
  * scoped to the shop, within the active session. Used so that the same
  * in-memory document is mutated/saved exactly once even if it's referenced
@@ -52,7 +78,8 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
       requireWholeQuantity(quantity, product.name);
       const unitPrice = product.sellingPrice;
       checkAndDeductStock(product, quantity);
-      return { unitPrice, subtotal: unitPrice * quantity, quantity, productType };
+      const { subtotal, discountAmount, appliedPromotionLabel } = applyPromotions(product.promotions, quantity, unitPrice);
+      return { unitPrice, subtotal, discountAmount, appliedPromotionLabel, quantity, productType };
     }
 
     case 'variable': {
@@ -68,7 +95,8 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
         throw new SaleLineError(`Price for ${product.name} cannot exceed ${product.maxPrice}`);
       }
       checkAndDeductStock(product, quantity);
-      return { unitPrice, subtotal: unitPrice * quantity, quantity, productType };
+      const { subtotal, discountAmount, appliedPromotionLabel } = applyPromotions(product.promotions, quantity, unitPrice);
+      return { unitPrice, subtotal, discountAmount, appliedPromotionLabel, quantity, productType };
     }
 
     case 'weighted':
@@ -78,9 +106,12 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
       }
       const unitPrice = product.sellingPrice;
       checkAndDeductStock(product, quantity);
+      const { subtotal, discountAmount, appliedPromotionLabel } = applyPromotions(product.promotions, quantity, unitPrice);
       return {
         unitPrice,
-        subtotal: unitPrice * quantity,
+        subtotal,
+        discountAmount,
+        appliedPromotionLabel,
         quantity,
         unitOfMeasure: product.unitOfMeasure,
         productType,
@@ -96,7 +127,8 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
         throw new SaleLineError(`Price for ${product.name} must be greater than 0`);
       }
       checkAndDeductStock(product, quantity);
-      return { unitPrice, subtotal: unitPrice * quantity, quantity, productType };
+      const { subtotal, discountAmount, appliedPromotionLabel } = applyPromotions(product.promotions, quantity, unitPrice);
+      return { unitPrice, subtotal, discountAmount, appliedPromotionLabel, quantity, productType };
     }
 
     case 'bundle': {

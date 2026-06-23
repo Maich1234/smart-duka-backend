@@ -53,6 +53,8 @@ export const createSale = async (req, res) => {
         quantity: resolved.quantity,
         unitPrice: resolved.unitPrice,
         subtotal: resolved.subtotal,
+        discountAmount: resolved.discountAmount || 0,
+        appliedPromotionLabel: resolved.appliedPromotionLabel,
         variantId: resolved.variantId,
         variantName: resolved.variantName,
         unitOfMeasure: resolved.unitOfMeasure,

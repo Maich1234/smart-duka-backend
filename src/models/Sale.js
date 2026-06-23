@@ -27,6 +27,14 @@ const saleItemSchema = new mongoose.Schema({
     type: Number,
     required: true,
   },
+  discountAmount: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  appliedPromotionLabel: {
+    type: String,
+  },
   // Snapshot fields — optional, only populated for the product types that need them.
   variantId: {
     type: mongoose.Schema.Types.ObjectId,
