@@ -5,12 +5,13 @@ import {
   initiatePayment,
   getTransactionStatus,
   handleCallback,
+  verifyByReceipt,
 } from '../../controllers/mpesaController.js';
 import {
   getPaymentTransactions,
   getPaymentTransactionById,
 } from '../../controllers/paymentTransactionController.js';
-import { initiateSTKPushSchema, transactionQuerySchema } from '../../validations/mpesaValidation.js';
+import { initiateSTKPushSchema, verifyReceiptSchema, transactionQuerySchema } from '../../validations/mpesaValidation.js';
 
 const router = express.Router();
 
@@ -22,6 +23,9 @@ router.post('/initiate', protect, staffOrOwner, validate(initiateSTKPushSchema),
 
 // Poll transaction status (staff can poll their own, owners can poll any)
 router.get('/status/:transactionId', protect, staffOrOwner, getTransactionStatus);
+
+// Verify a payment by the M-Pesa receipt number shown on the customer's phone
+router.post('/verify-receipt', protect, staffOrOwner, validate(verifyReceiptSchema), verifyByReceipt);
 
 // Transaction history — owner only
 router.get('/transactions', protect, ownerOnly, validate(transactionQuerySchema, 'query'), getPaymentTransactions);

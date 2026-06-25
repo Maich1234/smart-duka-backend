@@ -41,9 +41,11 @@ const mpesaTransactionSchema = new mongoose.Schema({
     ref: 'User',
     required: true,
   },
+  // Idempotency key sent by client to deduplicate retried requests
+  idempotencyKey: { type: String, index: true },
 }, { timestamps: true });
 
-// TTL: keep failed/cancelled transactions for 90 days; successful ones are permanent
-// (No TTL applied — business retains financial records)
+// Unique idempotency key per shop — sparse so documents without the key are not constrained
+mpesaTransactionSchema.index({ shop: 1, idempotencyKey: 1 }, { unique: true, sparse: true });
 
 export default mongoose.model('MpesaTransaction', mpesaTransactionSchema);

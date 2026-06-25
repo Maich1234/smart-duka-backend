@@ -2,42 +2,60 @@ import { requestOTP, verifyOTP } from '../services/otpService.js';
 import { logAudit } from '../services/auditLogService.js';
 
 export const requestVerificationOTP = async (req, res) => {
-  const { method } = req.body;
-  const user = req.user;
+  try {
+    const { method } = req.body;
+    const user = req.user;
 
-  const { sessionId, sentTo } = await requestOTP(user, method);
+    const { sessionId, sentTo } = await requestOTP(user, method);
 
-  await logAudit({
-    shopId: user.shop._id ?? user.shop,
-    userId: user._id,
-    action: 'otp.requested',
-    details: { method, sentTo },
-    req,
-  });
+    logAudit({
+      shopId: user.shop._id ?? user.shop,
+      userId: user._id,
+      action: 'otp.requested',
+      details: { method, sentTo },
+      req,
+    }).catch(() => {});
 
-  res.json({
-    success: true,
-    data: { sessionId, sentTo, method },
-    message: `Verification code sent to ${sentTo}`,
-  });
+    return res.json({
+      success: true,
+      data: { sessionId, sentTo, method },
+      message: `Verification code sent to ${sentTo}`,
+    });
+  } catch (err) {
+    console.error('[OTP] requestVerificationOTP error:', err);
+    const message = err.message?.includes('rate limit') || err.message?.includes('Too many')
+      ? 'Too many verification requests. Please wait a few minutes and try again.'
+      : err.message?.includes('email') || err.message?.includes('SMS')
+        ? `Failed to send verification code: ${err.message}`
+        : 'Failed to send verification code. Please try again.';
+    return res.status(err.statusCode ?? 500).json({ success: false, message });
+  }
 };
 
 export const verifyVerificationOTP = async (req, res) => {
-  const { sessionId, code } = req.body;
-  const user = req.user;
+  try {
+    const { sessionId, code } = req.body;
+    const user = req.user;
 
-  const verificationToken = await verifyOTP(sessionId, code, user._id);
+    const verificationToken = await verifyOTP(sessionId, code, user._id);
 
-  await logAudit({
-    shopId: user.shop._id ?? user.shop,
-    userId: user._id,
-    action: 'otp.verified',
-    req,
-  });
+    logAudit({
+      shopId: user.shop._id ?? user.shop,
+      userId: user._id,
+      action: 'otp.verified',
+      req,
+    }).catch(() => {});
 
-  res.json({
-    success: true,
-    data: { verificationToken },
-    message: 'Identity verified successfully.',
-  });
+    return res.json({
+      success: true,
+      data: { verificationToken },
+      message: 'Identity verified successfully.',
+    });
+  } catch (err) {
+    console.error('[OTP] verifyVerificationOTP error:', err);
+    const message = err.message?.includes('Invalid') || err.message?.includes('expired') || err.message?.includes('incorrect')
+      ? err.message
+      : 'Verification failed. Please try again.';
+    return res.status(err.statusCode ?? 400).json({ success: false, message });
+  }
 };

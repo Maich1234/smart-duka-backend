@@ -1,7 +1,7 @@
 import Joi from 'joi';
+import { VALID_UNITS } from '../constants/presets.js';
 
 const PRODUCT_TYPES = ['standard', 'variable', 'weighted', 'refillable', 'service', 'bundle', 'configurable'];
-const UNITS_OF_MEASURE = ['unit', 'kg', 'g', 'l', 'ml'];
 
 const bundleItemSchema = Joi.object({
   product: Joi.string().required(),
@@ -34,7 +34,7 @@ export const createProductSchema = Joi.object({
   quantity: Joi.number().min(0).default(0),
   lowStockAlert: Joi.number().min(0).default(5),
   trackInventory: Joi.boolean().default(true),
-  unitOfMeasure: Joi.string().valid(...UNITS_OF_MEASURE).default('unit'),
+  unitOfMeasure: Joi.string().valid(...VALID_UNITS).default('unit'),
   minPrice: Joi.number().min(0)
     .when('productType', { is: 'variable', then: Joi.optional(), otherwise: Joi.forbidden() }),
   maxPrice: Joi.number().min(Joi.ref('minPrice'))
@@ -59,7 +59,7 @@ export const updateProductSchema = Joi.object({
   quantity: Joi.number().min(0),
   lowStockAlert: Joi.number().min(0),
   trackInventory: Joi.boolean(),
-  unitOfMeasure: Joi.string().valid(...UNITS_OF_MEASURE),
+  unitOfMeasure: Joi.string().valid(...VALID_UNITS),
   minPrice: Joi.number().min(0),
   maxPrice: Joi.number().min(0),
   allowPriceOverride: Joi.boolean(),

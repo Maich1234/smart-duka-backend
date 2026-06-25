@@ -1,4 +1,5 @@
 import Joi from 'joi';
+import { VALID_COUNTRY_CODES, VALID_CURRENCY_CODES } from '../constants/presets.js';
 
 export const updateShopConfigSchema = Joi.object({
   name: Joi.string().trim().min(1).optional(),
@@ -6,7 +7,8 @@ export const updateShopConfigSchema = Joi.object({
   phone: Joi.string().allow('').optional(),
   email: Joi.string().email({ tlds: { allow: false } }).lowercase().trim().allow('').optional(),
   taxRate: Joi.number().min(0).optional(),
-  currency: Joi.string().trim().min(1).max(8).optional(),
+  country: Joi.string().valid(...VALID_COUNTRY_CODES).optional(),
+  currency: Joi.string().valid(...VALID_CURRENCY_CODES).optional(),
   receiptThankYouNote: Joi.string().allow('').max(150).optional(),
   motto: Joi.string().allow('').max(200).optional(),
 }).unknown(false);

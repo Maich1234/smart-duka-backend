@@ -27,10 +27,17 @@ const shopSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+  country: {
+    type: String,
+    default: 'KE',
+    trim: true,
+    uppercase: true,
+  },
   currency: {
     type: String,
     default: 'KES',
     trim: true,
+    uppercase: true,
   },
   receiptThankYouNote: {
     type: String,

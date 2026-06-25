@@ -1,19 +1,27 @@
+const DUPLICATE_KEY_MESSAGES = {
+  email: 'An account with this email address already exists.',
+  'shop + idempotencyKey': 'This payment request was already sent. Please wait for the customer to enter their PIN.',
+  idempotencyKey: 'This payment request was already sent. Please wait for the customer to enter their PIN.',
+  checkoutRequestId: 'A payment with this reference already exists.',
+  phone: 'This phone number is already registered.',
+  name: 'A record with this name already exists.',
+};
+
 const errorHandler = (err, req, res, next) => {
   console.error(err.stack);
 
   if (err.code === 11000) {
-    const field = Object.keys(err.keyPattern)[0];
-    return res.status(400).json({
-      success: false,
-      message: `${field} already exists`,
-    });
+    const keys = Object.keys(err.keyPattern);
+    const lookupKey = keys.length === 1 ? keys[0] : keys.join(' + ');
+    const message = DUPLICATE_KEY_MESSAGES[lookupKey] ?? 'This record already exists. Please check your details and try again.';
+    return res.status(409).json({ success: false, message });
   }
 
   if (err.name === 'ValidationError') {
     const errors = Object.values(err.errors).map((e) => e.message);
     return res.status(400).json({
       success: false,
-      message: 'Validation error',
+      message: 'Some information is missing or incorrect. Please check the form and try again.',
       errors,
     });
   }
@@ -21,13 +29,13 @@ const errorHandler = (err, req, res, next) => {
   if (err.name === 'CastError') {
     return res.status(400).json({
       success: false,
-      message: `Invalid ${err.path}: ${err.value}`,
+      message: 'The requested item could not be found. It may have been deleted or the link is invalid.',
     });
   }
 
   res.status(err.status || 500).json({
     success: false,
-    message: err.message || 'Internal Server Error',
+    message: err.message || 'Something went wrong on our end. Please try again or contact support.',
   });
 };
 

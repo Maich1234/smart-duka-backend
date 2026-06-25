@@ -54,7 +54,7 @@ const productSchema = new mongoose.Schema({
   },
   unitOfMeasure: {
     type: String,
-    enum: ['unit', 'kg', 'g', 'l', 'ml'],
+    enum: ['unit', 'kg', 'g', 'l', 'ml', 'dozen', 'pack', 'box', 'bag', 'lb', 'oz', 'm', 'cm', 'ton'],
     default: 'unit',
   },
   minPrice: {

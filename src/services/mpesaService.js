@@ -7,12 +7,9 @@ function getBaseUrl(environment) {
   return environment === 'production' ? PRODUCTION_BASE : SANDBOX_BASE;
 }
 
-/** Normalises any Kenyan phone format to 254XXXXXXXXX (no + prefix). */
+/** Converts +254XXXXXXXXX → 254XXXXXXXXX (Safaricom API format, no + prefix). */
 export function normalizeKenyanPhone(phone) {
-  let cleaned = String(phone).replace(/[^\d]/g, '');
-  if (cleaned.startsWith('0')) cleaned = '254' + cleaned.slice(1);
-  if (cleaned.startsWith('7') || cleaned.startsWith('1')) cleaned = '254' + cleaned;
-  return cleaned;
+  return String(phone).replace(/^\+/, '');
 }
 
 function getTimestamp() {
@@ -33,14 +30,30 @@ function buildPassword(shortcode, passkey, timestamp) {
  */
 async function getAccessToken(config) {
   const baseUrl = getBaseUrl(config.environment);
-  const consumerKey = decrypt(config.consumerKey);
-  const consumerSecret = decrypt(config.consumerSecret);
+
+  let consumerKey, consumerSecret;
+  try {
+    consumerKey = decrypt(config.consumerKey);
+    consumerSecret = decrypt(config.consumerSecret);
+  } catch (err) {
+    throw new Error('Failed to decrypt M-Pesa credentials. The ENCRYPTION_KEY may have changed. Please re-save your M-Pesa configuration in Profile → Payments.');
+  }
 
   const credentials = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
-  const response = await fetch(`${baseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
-    method: 'GET',
-    headers: { Authorization: `Basic ${credentials}` },
-  });
+
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
+      method: 'GET',
+      headers: { Authorization: `Basic ${credentials}` },
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch (err) {
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      throw new Error('ETIMEDOUT: M-Pesa OAuth request timed out after 15s');
+    }
+    throw new Error(`ECONNREFUSED: Could not connect to Safaricom API (${err.message})`);
+  }
 
   if (!response.ok) {
     const body = await response.text();
@@ -48,6 +61,9 @@ async function getAccessToken(config) {
   }
 
   const data = await response.json();
+  if (!data.access_token) {
+    throw new Error(`M-Pesa OAuth returned no access token: ${JSON.stringify(data)}`);
+  }
   return data.access_token;
 }
 
@@ -58,7 +74,13 @@ async function getAccessToken(config) {
 export async function initiateSTKPush({ config, phoneNumber, amount, accountReference, transactionDesc, callbackUrl }) {
   const baseUrl = getBaseUrl(config.environment);
   const accessToken = await getAccessToken(config);
-  const passkey = decrypt(config.passkey);
+
+  let passkey;
+  try {
+    passkey = decrypt(config.passkey);
+  } catch (err) {
+    throw new Error('Failed to decrypt M-Pesa Passkey. Please re-save your M-Pesa configuration in Profile → Payments.');
+  }
   const timestamp = getTimestamp();
   const password = buildPassword(config.shortcode, passkey, timestamp);
   const phone = normalizeKenyanPhone(phoneNumber);
@@ -77,19 +99,29 @@ export async function initiateSTKPush({ config, phoneNumber, amount, accountRefe
     TransactionDesc: transactionDesc || 'Sale Payment',
   };
 
-  const response = await fetch(`${baseUrl}/mpesa/stkpush/v1/processrequest`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/mpesa/stkpush/v1/processrequest`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch (err) {
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      throw new Error('ETIMEDOUT: STK Push request timed out after 20s');
+    }
+    throw new Error(`ECONNREFUSED: Could not connect to Safaricom API (${err.message})`);
+  }
 
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
 
   if (!response.ok || data.ResponseCode !== '0') {
-    throw new Error(data.errorMessage || data.ResponseDescription || 'STK Push initiation failed');
+    const errMsg = data.errorMessage || data.ResponseDescription || data.ResultDesc || `HTTP ${response.status}`;
+    throw new Error(`{"errorMessage":"${errMsg}","responseCode":"${data.ResponseCode ?? response.status}"}`);
   }
 
   return {
@@ -142,7 +174,6 @@ export function parseSTKCallback(callbackBody) {
   const merchantRequestId = callback.MerchantRequestID;
   const checkoutRequestId = callback.CheckoutRequestID;
 
-  // ResultCode 0 = success
   if (resultCode !== '0') {
     return { success: false, resultCode, resultDesc, merchantRequestId, checkoutRequestId };
   }

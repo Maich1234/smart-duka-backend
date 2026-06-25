@@ -14,6 +14,7 @@ import cronRoutes from './cronRoutes.js';
 import paymentConfigRoutes from './paymentConfigRoutes.js';
 import otpRoutes from './otpRoutes.js';
 import mpesaRoutes from './mpesaRoutes.js';
+import presetsRoutes from './presetsRoutes.js';
 
 const router = express.Router();
 
@@ -32,5 +33,6 @@ router.use('/cron', cronRoutes);
 router.use('/payment-config', paymentConfigRoutes);
 router.use('/otp', otpRoutes);
 router.use('/mpesa', mpesaRoutes);
+router.use('/presets', presetsRoutes);
 
 export default router;

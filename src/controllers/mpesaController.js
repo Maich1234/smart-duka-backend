@@ -3,102 +3,200 @@ import MpesaTransaction from '../models/MpesaTransaction.js';
 import { initiateSTKPush, parseSTKCallback, normalizeKenyanPhone } from '../services/mpesaService.js';
 import { logAudit } from '../services/auditLogService.js';
 
-const CALLBACK_URL = process.env.MPESA_CALLBACK_URL || `${process.env.API_BASE_URL}/api/v1/mpesa/callback`;
+/** Validates that all required M-Pesa config fields are present and non-empty. */
+function validateMpesaConfig(mpesa) {
+  const missing = [];
+  if (!mpesa?.enabled)       missing.push('M-Pesa is not enabled');
+  if (!mpesa?.shortcode)     missing.push('Shortcode');
+  if (!mpesa?.consumerKey)   missing.push('Consumer Key');
+  if (!mpesa?.consumerSecret) missing.push('Consumer Secret');
+  if (!mpesa?.passkey)       missing.push('Passkey');
+  if (!mpesa?.environment)   missing.push('Environment');
+  return missing;
+}
 
 /** Sends an STK Push to the customer's phone and creates a pending transaction record. */
 export const initiatePayment = async (req, res) => {
-  const shopId = req.user.shop._id ?? req.user.shop;
-  const { phoneNumber, amount, accountReference } = req.body;
-
-  const paymentConfig = await PaymentConfig.findOne({ shop: shopId });
-  if (!paymentConfig?.mpesa?.enabled || !paymentConfig?.mpesa?.consumerKey) {
-    return res.status(400).json({
-      success: false,
-      message: 'M-Pesa is not configured for this shop. Please connect your M-Pesa Business account in Settings.',
-    });
-  }
-
-  const mpesaConfig = paymentConfig.mpesa;
-
-  let stkResult;
   try {
-    stkResult = await initiateSTKPush({
-      config: mpesaConfig,
-      phoneNumber,
-      amount,
-      accountReference: accountReference || 'SmartDuka',
-      transactionDesc: 'Sale Payment',
-      callbackUrl: CALLBACK_URL,
+    const shopId = req.user.shop._id ?? req.user.shop;
+    const { phoneNumber, amount, accountReference } = req.body;
+    const idempotencyKey = req.headers['idempotency-key'];
+
+    // ── 1. Idempotency check — return cached result for duplicate requests ──
+    if (idempotencyKey) {
+      const existing = await MpesaTransaction.findOne({ shop: shopId, idempotencyKey });
+      if (existing) {
+        if (existing.status === 'pending') {
+          return res.status(200).json({
+            success: true,
+            idempotent: true,
+            data: {
+              transactionId: existing._id,
+              checkoutRequestId: existing.checkoutRequestId,
+              status: 'pending',
+            },
+            message: 'Payment request already sent. Keep waiting for customer PIN.',
+          });
+        }
+        return res.status(200).json({
+          success: true,
+          idempotent: true,
+          data: {
+            transactionId: existing._id,
+            checkoutRequestId: existing.checkoutRequestId,
+            status: existing.status,
+            mpesaReceiptNumber: existing.mpesaReceiptNumber ?? null,
+            errorMessage: existing.errorMessage ?? null,
+          },
+          message: `Duplicate request — transaction already ${existing.status}.`,
+        });
+      }
+    }
+
+    // ── 2. Load and validate M-Pesa configuration ──────────────────────────
+    const paymentConfig = await PaymentConfig.findOne({ shop: shopId });
+    const mpesaConfig = paymentConfig?.mpesa;
+    if (!mpesaConfig) {
+      return res.status(400).json({
+        success: false,
+        message: 'M-Pesa is not configured for this shop. Go to Profile → Payments to connect your M-Pesa Business account.',
+      });
+    }
+
+    const missingFields = validateMpesaConfig(mpesaConfig);
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Incomplete M-Pesa setup. Missing: ${missingFields.join(', ')}. Please update your M-Pesa configuration in Profile → Payments.`,
+      });
+    }
+
+    const CALLBACK_URL = process.env.MPESA_CALLBACK_URL;
+    if (!CALLBACK_URL) {
+      return res.status(503).json({
+        success: false,
+        message: 'MPESA_CALLBACK_URL is not configured on the server. Contact the app administrator.',
+      });
+    }
+
+    // ── 3. Send STK Push to Safaricom ──────────────────────────────────────
+    let stkResult;
+    try {
+      stkResult = await initiateSTKPush({
+        config: mpesaConfig,
+        phoneNumber,
+        amount,
+        accountReference: accountReference || 'SmartDuka',
+        transactionDesc: 'Sale Payment',
+        callbackUrl: CALLBACK_URL,
+      });
+    } catch (err) {
+      const message = parseMpesaError(err, mpesaConfig.environment);
+      return res.status(503).json({
+        success: false,
+        message,
+        ...(mpesaConfig.environment !== 'production' && { detail: err.message }),
+      });
+    }
+
+    // ── 4. Record the pending transaction ──────────────────────────────────
+    let transaction;
+    try {
+      transaction = await MpesaTransaction.create({
+        shop: shopId,
+        checkoutRequestId: stkResult.checkoutRequestId,
+        merchantRequestId: stkResult.merchantRequestId,
+        phoneNumber: normalizeKenyanPhone(phoneNumber),
+        amount,
+        accountReference: accountReference || 'SmartDuka',
+        status: 'pending',
+        requestedBy: req.user._id,
+        ...(idempotencyKey && { idempotencyKey }),
+      });
+    } catch (err) {
+      // Race condition: two simultaneous requests with the same idempotency key both
+      // passed the check above, but the second one lost the unique index race.
+      // Recover by returning the record the first request created.
+      if (err.code === 11000 && idempotencyKey) {
+        const existing = await MpesaTransaction.findOne({ shop: shopId, idempotencyKey });
+        if (existing) {
+          return res.status(200).json({
+            success: true,
+            idempotent: true,
+            data: {
+              transactionId: existing._id,
+              checkoutRequestId: existing.checkoutRequestId,
+              status: existing.status,
+            },
+            message: 'Payment request already sent. Keep waiting for customer PIN.',
+          });
+        }
+      }
+      throw err;
+    }
+
+    logAudit({
+      shopId,
+      userId: req.user._id,
+      action: 'mpesa.stk_push.initiated',
+      entityType: 'MpesaTransaction',
+      entityId: transaction._id,
+      details: { phoneNumber: normalizeKenyanPhone(phoneNumber), amount, idempotencyKey },
+      req,
+    }).catch(() => {});
+
+    return res.status(201).json({
+      success: true,
+      data: {
+        transactionId: transaction._id,
+        checkoutRequestId: stkResult.checkoutRequestId,
+        status: 'pending',
+      },
+      message: 'Payment request sent. Waiting for customer to enter PIN.',
     });
   } catch (err) {
-    return res.status(502).json({
+    console.error('[M-Pesa Initiate] Unexpected error:', err);
+    return res.status(500).json({
       success: false,
-      message: `M-Pesa request failed: ${err.message}`,
+      message: 'An unexpected error occurred while initiating the payment. Please try again.',
     });
   }
-
-  const transaction = await MpesaTransaction.create({
-    shop: shopId,
-    checkoutRequestId: stkResult.checkoutRequestId,
-    merchantRequestId: stkResult.merchantRequestId,
-    phoneNumber: normalizeKenyanPhone(phoneNumber),
-    amount,
-    accountReference,
-    status: 'pending',
-    requestedBy: req.user._id,
-  });
-
-  await logAudit({
-    shopId,
-    userId: req.user._id,
-    action: 'mpesa.stk_push.initiated',
-    entityType: 'MpesaTransaction',
-    entityId: transaction._id,
-    details: { phoneNumber: normalizeKenyanPhone(phoneNumber), amount },
-    req,
-  });
-
-  res.status(201).json({
-    success: true,
-    data: {
-      transactionId: transaction._id,
-      checkoutRequestId: stkResult.checkoutRequestId,
-      status: 'pending',
-    },
-    message: 'Payment request sent to customer.',
-  });
 };
 
 /** Polls the current status of a pending M-Pesa transaction. */
 export const getTransactionStatus = async (req, res) => {
-  const shopId = req.user.shop._id ?? req.user.shop;
-  const { transactionId } = req.params;
+  try {
+    const shopId = req.user.shop._id ?? req.user.shop;
+    const { transactionId } = req.params;
 
-  const transaction = await MpesaTransaction.findOne({ _id: transactionId, shop: shopId });
-  if (!transaction) {
-    return res.status(404).json({ success: false, message: 'Transaction not found' });
-  }
-
-  // If still pending and callback hasn't arrived, check for timeout (> 2 minutes)
-  if (transaction.status === 'pending') {
-    const ageMs = Date.now() - new Date(transaction.createdAt).getTime();
-    if (ageMs > 2 * 60 * 1000) {
-      transaction.status = 'timeout';
-      await transaction.save();
+    const transaction = await MpesaTransaction.findOne({ _id: transactionId, shop: shopId });
+    if (!transaction) {
+      return res.status(404).json({ success: false, message: 'Transaction not found' });
     }
-  }
 
-  res.json({
-    success: true,
-    data: {
-      transactionId: transaction._id,
-      status: transaction.status,
-      mpesaReceiptNumber: transaction.mpesaReceiptNumber ?? null,
-      phoneNumber: transaction.phoneNumber,
-      amount: transaction.amount,
-      errorMessage: transaction.errorMessage ?? null,
-    },
-  });
+    if (transaction.status === 'pending') {
+      const ageMs = Date.now() - new Date(transaction.createdAt).getTime();
+      if (ageMs > 2 * 60 * 1000) {
+        transaction.status = 'timeout';
+        await transaction.save();
+      }
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        transactionId: transaction._id,
+        status: transaction.status,
+        mpesaReceiptNumber: transaction.mpesaReceiptNumber ?? null,
+        phoneNumber: transaction.phoneNumber,
+        amount: transaction.amount,
+        errorMessage: transaction.errorMessage ?? null,
+      },
+    });
+  } catch (err) {
+    console.error('[M-Pesa Status] Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch transaction status.' });
+  }
 };
 
 /**
@@ -106,7 +204,6 @@ export const getTransactionStatus = async (req, res) => {
  * Validates, updates the transaction record, and prevents duplicate processing.
  */
 export const handleCallback = async (req, res) => {
-  // Acknowledge immediately — Safaricom expects a 200 within a few seconds
   res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
 
   try {
@@ -121,12 +218,11 @@ export const handleCallback = async (req, res) => {
       return;
     }
 
-    // Idempotency guard — don't reprocess a finalised transaction
     if (transaction.status !== 'pending') return;
 
     transaction.callbackPayload = req.body;
     transaction.callbackReceivedAt = new Date();
-    transaction.resultCode = parsed.resultCode;
+    transaction.resultCode = String(parsed.resultCode);
 
     if (parsed.success) {
       transaction.status = 'success';
@@ -134,10 +230,10 @@ export const handleCallback = async (req, res) => {
       transaction.transactionDate = new Date();
       transaction.errorMessage = null;
     } else {
-      // ResultCode 1032 = cancelled by user, 1037 = timeout
-      if (['1032'].includes(parsed.resultCode)) {
+      const code = String(parsed.resultCode);
+      if (code === '1032') {
         transaction.status = 'cancelled';
-      } else if (['1037', '1001'].includes(parsed.resultCode)) {
+      } else if (code === '1037' || code === '1001') {
         transaction.status = 'timeout';
       } else {
         transaction.status = 'failed';
@@ -147,13 +243,13 @@ export const handleCallback = async (req, res) => {
 
     await transaction.save();
 
-    await logAudit({
+    logAudit({
       shopId: transaction.shop,
       action: `mpesa.callback.${transaction.status}`,
       entityType: 'MpesaTransaction',
       entityId: transaction._id,
       details: { resultCode: parsed.resultCode, mpesaReceiptNumber: parsed.mpesaReceiptNumber },
-    });
+    }).catch(() => {});
   } catch (err) {
     console.error('[M-Pesa Callback] Processing error:', err.message);
   }
@@ -163,3 +259,98 @@ export const handleCallback = async (req, res) => {
 export const linkTransactionToSale = async (transactionId, saleId) => {
   await MpesaTransaction.findByIdAndUpdate(transactionId, { saleId });
 };
+
+/**
+ * Looks up a transaction by the M-Pesa receipt number the customer received via SMS.
+ */
+export const verifyByReceipt = async (req, res) => {
+  try {
+    const shopId = req.user.shop._id ?? req.user.shop;
+    const { receiptNumber } = req.body;
+
+    const transaction = await MpesaTransaction.findOne({
+      shop: shopId,
+      mpesaReceiptNumber: receiptNumber.trim().toUpperCase(),
+    }).populate('requestedBy', 'name email');
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        message: `No transaction found with M-Pesa receipt ${receiptNumber}. The payment may not have been processed by this shop.`,
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        transactionId: transaction._id,
+        status: transaction.status,
+        mpesaReceiptNumber: transaction.mpesaReceiptNumber,
+        phoneNumber: transaction.phoneNumber,
+        amount: transaction.amount,
+        accountReference: transaction.accountReference,
+        saleId: transaction.saleId ?? null,
+        transactionDate: transaction.transactionDate ?? null,
+        createdAt: transaction.createdAt,
+        requestedBy: transaction.requestedBy,
+      },
+      message: transaction.status === 'success'
+        ? 'Payment verified successfully.'
+        : `Transaction found but status is "${transaction.status}".`,
+    });
+  } catch (err) {
+    console.error('[M-Pesa Verify] Error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to verify transaction.' });
+  }
+};
+
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+
+function parseMpesaError(err, environment) {
+  const raw = err.message ?? '';
+
+  const jsonMatch = raw.match(/\{.*\}/s);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      const sfError = parsed.errorMessage || parsed.ResponseDescription || parsed.errorDescription;
+      if (sfError) {
+        return buildUserMessage(sfError, raw, environment);
+      }
+    } catch {
+      // JSON parse failed — fall through to generic handling
+    }
+  }
+
+  if (/oauth/i.test(raw) || /401|400/.test(raw)) {
+    return 'M-Pesa credentials are invalid. Please update your Consumer Key and Consumer Secret in Profile → Payments.';
+  }
+  if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|network/i.test(raw)) {
+    return 'Could not reach the M-Pesa API. Check your internet connection and try again.';
+  }
+  if (/passkey|password/i.test(raw)) {
+    return 'M-Pesa Passkey is invalid. Please update it in Profile → Payments.';
+  }
+  if (/shortcode/i.test(raw)) {
+    return 'Invalid M-Pesa Shortcode. Please verify it in Profile → Payments.';
+  }
+
+  return `M-Pesa request failed: ${raw}`;
+}
+
+function buildUserMessage(sfError, raw, environment) {
+  const e = sfError.toLowerCase();
+  if (e.includes('authentication') || e.includes('invalid key') || e.includes('consumer')) {
+    return `M-Pesa credentials rejected by Safaricom: "${sfError}". Update your Consumer Key and Consumer Secret in Profile → Payments.`;
+  }
+  if (e.includes('shortcode') || e.includes('business')) {
+    return `Safaricom rejected the Shortcode: "${sfError}". Verify your Shortcode in Profile → Payments.`;
+  }
+  if (e.includes('insufficient') || e.includes('balance')) {
+    return `M-Pesa: "${sfError}". The customer may have insufficient balance.`;
+  }
+  if (environment === 'sandbox' && (e.includes('test') || e.includes('sandbox'))) {
+    return `Sandbox M-Pesa: "${sfError}". Use a Safaricom test phone number for sandbox testing.`;
+  }
+  return `Safaricom error: "${sfError}"`;
+}

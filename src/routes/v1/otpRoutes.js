@@ -1,5 +1,5 @@
 import express from 'express';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { protect, ownerOnly } from '../../middlewares/auth.js';
 import validate from '../../middlewares/validate.js';
 import { requestVerificationOTP, verifyVerificationOTP } from '../../controllers/otpController.js';
@@ -11,7 +11,7 @@ const router = express.Router();
 const otpRequestLimiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10-minute window
   max: 3,                    // max 3 OTP requests per user per 10 min
-  keyGenerator: (req) => req.user?._id?.toString() ?? req.ip,
+  keyGenerator: (req) => req.user?._id?.toString() ?? ipKeyGenerator(req),
   message: { success: false, message: 'Too many verification requests. Please wait 10 minutes before trying again.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -21,7 +21,7 @@ const otpRequestLimiter = rateLimit({
 const otpVerifyLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
   max: 10,
-  keyGenerator: (req) => req.user?._id?.toString() ?? req.ip,
+  keyGenerator: (req) => req.user?._id?.toString() ?? ipKeyGenerator(req),
   message: { success: false, message: 'Too many verification attempts. Please wait before trying again.' },
   standardHeaders: true,
   legacyHeaders: false,
