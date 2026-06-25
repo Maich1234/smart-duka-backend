@@ -15,6 +15,8 @@ export const createSaleSchema = Joi.object({
     .min(1)
     .required(),
   paymentMethod: Joi.string().valid('cash', 'mpesa', 'card').required(),
+  // For M-Pesa sales: links the confirmed STK Push transaction to this sale
+  mpesaTransactionId: Joi.string().optional(),
 }).unknown(false);
 
 export const saleQuerySchema = Joi.object({

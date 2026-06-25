@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import Product from '../models/Product.js';
 import Sale from '../models/Sale.js';
+import MpesaTransaction from '../models/MpesaTransaction.js';
 import { signReceiptToken } from '../utils/receiptToken.js';
 import { resolveSaleLine, SaleLineError } from '../services/pricingEngine.js';
 
@@ -9,8 +10,21 @@ export const createSale = async (req, res) => {
     return res.status(403).json({ success: false, message: 'Permission denied' });
   }
 
-  const { items, paymentMethod } = req.body;
+  const { items, paymentMethod, mpesaTransactionId } = req.body;
   const shop = req.user.shop._id;
+
+  // For M-Pesa sales, confirm the linked transaction was successful before recording
+  let mpesaTx = null;
+  if (paymentMethod === 'mpesa' && mpesaTransactionId) {
+    mpesaTx = await MpesaTransaction.findOne({ _id: mpesaTransactionId, shop, status: 'success' });
+    if (!mpesaTx) {
+      return res.status(400).json({ success: false, message: 'M-Pesa payment not confirmed. Please wait for payment confirmation before recording the sale.' });
+    }
+    // Prevent double-use of the same transaction
+    if (mpesaTx.saleId) {
+      return res.status(400).json({ success: false, message: 'This M-Pesa transaction has already been linked to a sale.' });
+    }
+  }
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -72,9 +86,19 @@ export const createSale = async (req, res) => {
       totalAmount,
       paymentMethod,
       staff: req.user._id,
+      ...(mpesaTx ? {
+        mpesaTransactionId: mpesaTx._id,
+        mpesaReceiptNumber: mpesaTx.mpesaReceiptNumber,
+      } : {}),
     }], { session });
 
     await session.commitTransaction();
+
+    // Link the M-Pesa transaction to this sale outside the session (best-effort)
+    if (mpesaTx) {
+      MpesaTransaction.findByIdAndUpdate(mpesaTx._id, { saleId: sale._id }).catch(() => {});
+    }
+
     const saleObj = sale.toObject();
     saleObj.receiptToken = signReceiptToken(sale._id);
     res.status(201).json({ success: true, data: saleObj, message: 'Sale recorded successfully' });

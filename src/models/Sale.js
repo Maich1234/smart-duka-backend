@@ -72,6 +72,14 @@ const saleSchema = new mongoose.Schema({
     enum: ['cash', 'mpesa', 'card'],
     required: true,
   },
+  // Populated for M-Pesa sales — links to the confirmed STK Push transaction
+  mpesaTransactionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'MpesaTransaction',
+  },
+  mpesaReceiptNumber: {
+    type: String,
+  },
   staff: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
