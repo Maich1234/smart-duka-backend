@@ -38,6 +38,17 @@ const shopSchema = new mongoose.Schema({
     trim: true,
     maxlength: 150,
   },
+  logoUrl: {
+    type: String,
+    default: '',
+    trim: true,
+  },
+  motto: {
+    type: String,
+    default: '',
+    trim: true,
+    maxlength: 200,
+  },
   isActive: {
     type: Boolean,
     default: true,

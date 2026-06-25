@@ -14,14 +14,14 @@ export const createSaleSchema = Joi.object({
     )
     .min(1)
     .required(),
-  paymentMethod: Joi.string().valid('cash', 'mpesa').required(),
+  paymentMethod: Joi.string().valid('cash', 'mpesa', 'card').required(),
 }).unknown(false);
 
 export const saleQuerySchema = Joi.object({
   startDate: Joi.date(),
   endDate: Joi.date(),
   staffId: Joi.string(),
-  paymentMethod: Joi.string().valid('cash', 'mpesa'),
+  paymentMethod: Joi.string().valid('cash', 'mpesa', 'card'),
   page: Joi.number().min(1).default(1),
   limit: Joi.number().min(1).max(100).default(20),
 }).unknown(false);

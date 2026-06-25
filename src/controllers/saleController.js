@@ -131,6 +131,63 @@ export const getSaleById = async (req, res) => {
   res.json({ success: true, data: saleObj });
 };
 
+export const getSalesStats = async (req, res) => {
+  const shop = req.user.shop._id;
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+
+  const baseQuery = req.user.role === 'owner' || req.user.permissions?.includes('view_all_sales')
+    ? { shop }
+    : { shop, staff: req.user._id };
+
+  const [thisMonth, lastMonth] = await Promise.all([
+    Sale.aggregate([
+      { $match: { ...baseQuery, createdAt: { $gte: startOfMonth } } },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: '$totalAmount' },
+          cashTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'cash'] }, '$totalAmount', 0] } },
+          mpesaTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'mpesa'] }, '$totalAmount', 0] } },
+          cardTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'card'] }, '$totalAmount', 0] } },
+          cashCount: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'cash'] }, 1, 0] } },
+          mpesaCount: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'mpesa'] }, 1, 0] } },
+          cardCount: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'card'] }, 1, 0] } },
+          transactionCount: { $sum: 1 },
+        },
+      },
+    ]),
+    Sale.aggregate([
+      { $match: { ...baseQuery, createdAt: { $gte: startOfLastMonth, $lte: endOfLastMonth } } },
+      { $group: { _id: null, total: { $sum: '$totalAmount' } } },
+    ]),
+  ]);
+
+  const cur = thisMonth[0] || { total: 0, cashTotal: 0, mpesaTotal: 0, cardTotal: 0, cashCount: 0, mpesaCount: 0, cardCount: 0, transactionCount: 0 };
+  const lastTotal = lastMonth[0]?.total || 0;
+  const percentageChange = lastTotal > 0
+    ? Math.round(((cur.total - lastTotal) / lastTotal) * 1000) / 10
+    : cur.total > 0 ? 100 : 0;
+
+  res.json({
+    success: true,
+    data: {
+      totalSales: cur.total,
+      cashTotal: cur.cashTotal,
+      mpesaTotal: cur.mpesaTotal,
+      cardTotal: cur.cardTotal,
+      cashCount: cur.cashCount,
+      mpesaCount: cur.mpesaCount,
+      cardCount: cur.cardCount,
+      transactionCount: cur.transactionCount,
+      avgSale: cur.transactionCount > 0 ? cur.total / cur.transactionCount : 0,
+      percentageChange,
+    },
+  });
+};
+
 export const getMySales = async (req, res) => {
   const { page = 1, limit = 20 } = req.query;
   const skip = (parseInt(page) - 1) * parseInt(limit);

@@ -69,7 +69,7 @@ const saleSchema = new mongoose.Schema({
   },
   paymentMethod: {
     type: String,
-    enum: ['cash', 'mpesa'],
+    enum: ['cash', 'mpesa', 'card'],
     required: true,
   },
   staff: {
