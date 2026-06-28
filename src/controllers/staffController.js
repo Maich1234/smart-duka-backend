@@ -2,8 +2,25 @@ import User from '../models/User.js';
 import { DEFAULT_STAFF_PERMISSIONS } from '../constants/permissions.js';
 
 export const getStaff = async (req, res) => {
-  const staff = await User.find({ role: 'staff', shop: req.user.shop._id }).select('-password').sort({ createdAt: -1 });
-  res.json({ success: true, data: staff });
+  const { page = 1, limit = 20, search } = req.query;
+  const query = { role: 'staff', shop: req.user.shop._id };
+  if (search) {
+    query.$or = [
+      { name: { $regex: search, $options: 'i' } },
+      { email: { $regex: search, $options: 'i' } },
+    ];
+  }
+  const limitN = Math.min(parseInt(limit), 100);
+  const skip = (parseInt(page) - 1) * limitN;
+  const [staff, total] = await Promise.all([
+    User.find(query).select('-password').sort({ createdAt: -1 }).skip(skip).limit(limitN),
+    User.countDocuments(query),
+  ]);
+  res.json({
+    success: true,
+    data: staff,
+    pagination: { page: parseInt(page), limit: limitN, total, pages: Math.ceil(total / limitN) },
+  });
 };
 
 export const getStaffById = async (req, res) => {
