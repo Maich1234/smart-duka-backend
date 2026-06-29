@@ -10,19 +10,28 @@ export const createSale = async (req, res) => {
     return res.status(403).json({ success: false, message: 'Permission denied' });
   }
 
-  const { items, paymentMethod, mpesaTransactionId } = req.body;
+  const { items, paymentMethod, mpesaTransactionId, mpesaReceiptNumber } = req.body;
   const shop = req.user.shop._id;
 
-  // For M-Pesa sales, confirm the linked transaction was successful before recording
+  // For M-Pesa sales, verify or record the payment reference
   let mpesaTx = null;
-  if (paymentMethod === 'mpesa' && mpesaTransactionId) {
-    mpesaTx = await MpesaTransaction.findOne({ _id: mpesaTransactionId, shop, status: 'success' });
-    if (!mpesaTx) {
-      return res.status(400).json({ success: false, message: 'M-Pesa payment not confirmed. Please wait for payment confirmation before recording the sale.' });
-    }
-    // Prevent double-use of the same transaction
-    if (mpesaTx.saleId) {
-      return res.status(400).json({ success: false, message: 'This M-Pesa transaction has already been linked to a sale.' });
+  if (paymentMethod === 'mpesa') {
+    if (mpesaTransactionId) {
+      // Normal STK push flow — confirm the transaction succeeded
+      mpesaTx = await MpesaTransaction.findOne({ _id: mpesaTransactionId, shop, status: 'success' });
+      if (!mpesaTx) {
+        return res.status(400).json({ success: false, message: 'M-Pesa payment not confirmed. Please wait for payment confirmation before recording the sale.' });
+      }
+      if (mpesaTx.saleId) {
+        return res.status(400).json({ success: false, message: 'This M-Pesa transaction has already been linked to a sale.' });
+      }
+    } else if (mpesaReceiptNumber) {
+      // Offline manual entry — staff entered the code from the customer's confirmation SMS.
+      // Try to link to an existing Safaricom transaction if the callback has already arrived.
+      mpesaTx = await MpesaTransaction.findOne({ mpesaReceiptNumber, shop }).catch(() => null);
+      if (mpesaTx?.saleId) {
+        return res.status(400).json({ success: false, message: 'This M-Pesa receipt has already been linked to a sale.' });
+      }
     }
   }
   const session = await mongoose.startSession();
@@ -89,6 +98,9 @@ export const createSale = async (req, res) => {
       ...(mpesaTx ? {
         mpesaTransactionId: mpesaTx._id,
         mpesaReceiptNumber: mpesaTx.mpesaReceiptNumber,
+      } : mpesaReceiptNumber ? {
+        // Offline manual entry — receipt number recorded as-is; no linked transaction yet
+        mpesaReceiptNumber,
       } : {}),
     }], { session });
 
