@@ -2,13 +2,18 @@ import User from '../models/User.js';
 import { DEFAULT_STAFF_PERMISSIONS } from '../constants/permissions.js';
 
 export const getStaff = async (req, res) => {
-  const { page = 1, limit = 20, search } = req.query;
+  const { page = 1, limit = 10, search, startDate, endDate } = req.query;
   const query = { role: 'staff', shop: req.user.shop._id };
   if (search) {
     query.$or = [
       { name: { $regex: search, $options: 'i' } },
       { email: { $regex: search, $options: 'i' } },
     ];
+  }
+  if (startDate || endDate) {
+    query.createdAt = {};
+    if (startDate) query.createdAt.$gte = new Date(startDate);
+    if (endDate) query.createdAt.$lte = new Date(endDate);
   }
   const limitN = Math.min(parseInt(limit), 100);
   const skip = (parseInt(page) - 1) * limitN;
