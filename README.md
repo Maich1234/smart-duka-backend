@@ -15,6 +15,7 @@ A production-ready REST API for the Smart Duka Point‑of‑Sale system. Built w
 - Email verification for owners (6‑digit OTP).
 - Password reset via OTP (6‑digit code sent by email).
 - Sales are recorded atomically (transactions) to maintain stock integrity.
+- **Sale voiding & refunds** – owners (or staff granted the permission) can void mis-recorded sales or refund customers. M-Pesa sales are refunded straight back to the customer via Safaricom's Transaction Reversal API (async, settled by result webhook); any sale can be refunded in cash. Both restore stock and drop out of every revenue aggregate. Staff refund rights are granular: `refund_own_sales` vs `refund_all_sales` (the latter auto-grants `view_all_sales`).
 - Dashboard endpoints with aggregated data (sales, low stock alerts, stock value, ratings).
 - Input validation with Joi – rejects unknown fields.
 - Global error handling and async wrapper.
@@ -93,6 +94,8 @@ The server will run on `http://localhost:5000` by default.
 | FIREBASE_PROJECT_ID | Firebase project ID (Admin SDK service account) | `smart-duka-64d5c` |
 | FIREBASE_CLIENT_EMAIL | Firebase Admin SDK service account email | `firebase-adminsdk-xxxxx@smart-duka-64d5c.iam.gserviceaccount.com` |
 | FIREBASE_PRIVATE_KEY | Firebase Admin SDK service account private key (keep the `\n` escape sequences, wrap in quotes) | `"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"` |
+| MPESA_CALLBACK_URL | Public HTTPS URL Safaricom POSTs STK Push results to | `https://api.smartduka.co.ke/api/v1/mpesa/callback` |
+| MPESA_REVERSAL_RESULT_URL | (Optional) Public HTTPS URL for Transaction Reversal (refund) results; defaults to `MPESA_CALLBACK_URL` with `/callback` → `/reversal-result` | `https://api.smartduka.co.ke/api/v1/mpesa/reversal-result` |
 
 > `RECEIPT_TOKEN_SECRET`/`CRON_SECRET`/`FIREBASE_*` are optional for local development — the server still boots and every other feature works without them. Receipt QR codes won't verify and push notifications are silently skipped (with a console warning) until they're set.
 

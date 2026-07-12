@@ -92,5 +92,7 @@ const productSchema = new mongoose.Schema({
 });
 
 productSchema.index({ name: 'text', category: 'text', shop: 1 });
+// Hot path: the inventory/POS list is always "this shop, newest first".
+productSchema.index({ shop: 1, createdAt: -1 });
 
 export default mongoose.model('Product', productSchema);

@@ -85,9 +85,59 @@ const saleSchema = new mongoose.Schema({
     ref: 'User',
     required: true,
   },
+  // The work session this sale happened in (set when the seller had an
+  // active shift). Optional so shops with shift management off — and all
+  // pre-feature sales — keep working unchanged.
+  shift: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Shift',
+  },
+  // Voided/refunded sales stay visible in history (with a badge) but are
+  // excluded from every revenue/stats aggregate. Both restore the stock the
+  // sale deducted — refunds only once the money is actually back with the
+  // customer ('refund_pending' still counts as revenue until then).
+  status: {
+    type: String,
+    enum: ['completed', 'voided', 'refund_pending', 'refunded'],
+    default: 'completed',
+  },
+  voidedAt: { type: Date },
+  voidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  voidReason: { type: String, maxlength: 300 },
+  // Refund lifecycle. Cash/card refunds complete immediately (money handed
+  // back over the counter); M-Pesa refunds go through Safaricom's async
+  // Transaction Reversal API — initiation sets 'refund_pending' and the
+  // result callback settles it to 'refunded' or back to 'completed'.
+  refund: {
+    amount: { type: Number, min: 0 },
+    method: { type: String, enum: ['cash', 'mpesa'] },
+    reason: { type: String, maxlength: 300 },
+    requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    requestedAt: { type: Date },
+    completedAt: { type: Date },
+    // Safaricom reversal correlation ids — the result callback only carries
+    // these, so they're how the callback finds this sale again.
+    originatorConversationId: { type: String },
+    conversationId: { type: String },
+    // Receipt number of the reversal transaction itself (from the result callback)
+    reversalTransactionId: { type: String },
+    resultCode: { type: String },
+    resultDesc: { type: String },
+    // Set when a reversal attempt failed — shown in the UI so the cashier
+    // knows why and can retry or refund in cash instead.
+    failureReason: { type: String },
+  },
 }, {
   timestamps: true,
 });
+
+// Hot paths: shop-scoped date-sorted lists/stats, and per-staff history.
+saleSchema.index({ shop: 1, createdAt: -1 });
+saleSchema.index({ shop: 1, staff: 1, createdAt: -1 });
+// Shift reconciliation aggregates every sale in a shift at close time.
+saleSchema.index({ shift: 1 }, { sparse: true });
+// Reversal result callbacks look the sale up by Safaricom's correlation id.
+saleSchema.index({ 'refund.originatorConversationId': 1 }, { sparse: true });
 
 saleSchema.pre('save', async function (next) {
   if (!this.invoiceNumber) {

@@ -1,6 +1,7 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { getPublicReceipt, submitPublicRating } from '../../controllers/publicController.js';
+import { createRateLimitStore } from '../../utils/rateLimitStore.js';
 
 const router = express.Router();
 
@@ -11,6 +12,7 @@ const publicLimiter = rateLimit({
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
+  store: createRateLimitStore('public'),
   message: { success: false, message: 'Too many requests, please try again later' },
 });
 

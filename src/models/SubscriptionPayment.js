@@ -1,0 +1,74 @@
+import mongoose from 'mongoose';
+
+// One attempted subscription charge. Provider-agnostic: M-Pesa today, card
+// and bank transfer later — providerRef holds whatever id the provider uses
+// to correlate its webhook (checkoutRequestId for M-Pesa STK Push).
+const subscriptionPaymentSchema = new mongoose.Schema({
+  shop: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Shop',
+    required: true,
+    index: true,
+  },
+  subscription: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Subscription',
+    required: true,
+    index: true,
+  },
+  plan: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'SubscriptionPlan',
+    required: true,
+  },
+  billingCycle: { type: String, enum: ['monthly', 'yearly'], required: true },
+  staffCount: { type: Number, required: true, min: 1 },
+  // Always computed server-side by subscriptionPricingService — never client input.
+  amount: { type: Number, required: true, min: 0 },
+  currency: { type: String, default: 'KES', uppercase: true, trim: true },
+  provider: {
+    type: String,
+    enum: ['mpesa', 'card', 'bank'],
+    required: true,
+  },
+  // Provider correlation ids (M-Pesa: CheckoutRequestID / MerchantRequestID).
+  providerRef: { type: String, index: true },
+  merchantRequestId: { type: String },
+  phoneNumber: { type: String },
+  status: {
+    type: String,
+    enum: ['pending', 'success', 'failed', 'cancelled', 'timeout'],
+    default: 'pending',
+    index: true,
+  },
+  // Provider receipt on success (M-Pesa receipt number).
+  receipt: { type: String },
+  transactionDate: { type: Date },
+  // The service period this payment covers, set when the charge succeeds.
+  periodStart: { type: Date },
+  periodEnd: { type: Date },
+  promotion: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Promotion',
+    default: null,
+  },
+  promoCode: { type: String, default: null },
+  promoDiscount: { type: Number, default: 0 },
+  // Error context for failed/cancelled charges.
+  resultCode: { type: String },
+  errorMessage: { type: String },
+  // Raw webhook payload for audit trail.
+  callbackPayload: { type: mongoose.Schema.Types.Mixed },
+  callbackReceivedAt: { type: Date },
+  requestedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+  },
+  idempotencyKey: { type: String, index: true },
+}, { timestamps: true });
+
+// Unique idempotency key per shop — sparse so documents without the key are not constrained
+subscriptionPaymentSchema.index({ shop: 1, idempotencyKey: 1 }, { unique: true, sparse: true });
+
+export default mongoose.model('SubscriptionPayment', subscriptionPaymentSchema);

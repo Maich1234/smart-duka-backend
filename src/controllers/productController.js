@@ -1,4 +1,8 @@
 import Product from '../models/Product.js';
+import { logAudit } from '../services/auditLogService.js';
+import { getActiveShift } from '../services/shiftService.js';
+import { parsePagination } from '../utils/pagination.js';
+import { escapeRegex } from '../utils/escapeRegex.js';
 
 const stripCostPrice = (product) => {
   delete product.costPrice;
@@ -20,23 +24,25 @@ const validateBundleItems = async (bundleItems, shop) => {
 };
 
 export const getProducts = async (req, res) => {
-  const { search, category, page = 1, limit = 20 } = req.query;
+  const { search, category } = req.query;
+  const { page, limit, skip } = parsePagination(req.query);
   const query = { shop: req.user.shop._id };
 
   if (search) {
     query.$or = [
-      { name: { $regex: search, $options: 'i' } },
-      { description: { $regex: search, $options: 'i' } },
+      { name: { $regex: escapeRegex(search), $options: 'i' } },
+      { description: { $regex: escapeRegex(search), $options: 'i' } },
     ];
   }
 
   if (category) {
-    query.category = { $regex: category, $options: 'i' };
+    query.category = { $regex: escapeRegex(category), $options: 'i' };
   }
 
-  const skip = (parseInt(page) - 1) * parseInt(limit);
-  const products = await Product.find(query).skip(skip).limit(parseInt(limit)).sort({ createdAt: -1 });
-  const total = await Product.countDocuments(query);
+  const [products, total] = await Promise.all([
+    Product.find(query).skip(skip).limit(limit).sort({ createdAt: -1 }),
+    Product.countDocuments(query),
+  ]);
 
   const sanitizedProducts = products.map((product) => {
     const p = product.toObject();
@@ -47,10 +53,10 @@ export const getProducts = async (req, res) => {
     success: true,
     data: sanitizedProducts,
     pagination: {
-      page: parseInt(page),
-      limit: parseInt(limit),
+      page,
+      limit,
       total,
-      pages: Math.ceil(total / parseInt(limit)),
+      pages: Math.ceil(total / limit),
     },
   });
 };
@@ -129,7 +135,30 @@ export const updateStock = async (req, res) => {
     return res.status(403).json({ success: false, message: 'Permission denied' });
   }
 
+  const previousQuantity = product.quantity;
   product.quantity = quantity;
   await product.save();
+
+  // Manual stock corrections are a shrinkage signal — record who moved what,
+  // and under which shift, so shift/daily reports can surface adjustments.
+  const activeShift = req.user.shop?.shiftManagementEnabled
+    ? await getActiveShift(req.user._id)
+    : null;
+  await logAudit({
+    shopId: req.user.shop._id,
+    userId: req.user._id,
+    action: 'inventory.stock_adjusted',
+    entityType: 'Product',
+    entityId: product._id,
+    details: {
+      productName: product.name,
+      from: previousQuantity,
+      to: quantity,
+      delta: quantity - previousQuantity,
+      ...(activeShift ? { shiftId: String(activeShift._id) } : {}),
+    },
+    req,
+  });
+
   res.json({ success: true, data: product });
 };

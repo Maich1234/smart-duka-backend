@@ -17,7 +17,7 @@ export const getDepletionAnalytics = async (shopId, { windowDays = DEFAULT_WINDO
   const shopObjectId = new mongoose.Types.ObjectId(shopId);
 
   const salesAgg = await Sale.aggregate([
-    { $match: { shop: shopObjectId, createdAt: { $gte: since } } },
+    { $match: { shop: shopObjectId, status: { $nin: ['voided', 'refunded'] }, createdAt: { $gte: since } } },
     { $unwind: '$items' },
     { $group: { _id: '$items.productId', unitsSold: { $sum: '$items.quantity' } } },
   ]);

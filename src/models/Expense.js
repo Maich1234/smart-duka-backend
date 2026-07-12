@@ -32,6 +32,12 @@ const expenseSchema = new mongoose.Schema({
     ref: 'User',
     required: true,
   },
+  // Work session this expense was recorded in — cash expenses paid from the
+  // till reduce the drawer's expected cash at shift close.
+  shift: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Shift',
+  },
 }, {
   timestamps: true,
 });

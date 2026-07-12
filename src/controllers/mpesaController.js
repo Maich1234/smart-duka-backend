@@ -1,6 +1,9 @@
+import mongoose from 'mongoose';
 import PaymentConfig from '../models/PaymentConfig.js';
 import MpesaTransaction from '../models/MpesaTransaction.js';
-import { initiateSTKPush, parseSTKCallback, normalizeKenyanPhone } from '../services/mpesaService.js';
+import Sale from '../models/Sale.js';
+import { initiateSTKPush, parseSTKCallback, parseReversalResult, normalizeKenyanPhone } from '../services/mpesaService.js';
+import { restoreSaleStock } from '../services/saleStockService.js';
 import { logAudit } from '../services/auditLogService.js';
 
 /** Validates that all required M-Pesa config fields are present and non-empty. */
@@ -20,7 +23,10 @@ export const initiatePayment = async (req, res) => {
   try {
     const shopId = req.user.shop._id ?? req.user.shop;
     const { phoneNumber, amount, accountReference } = req.body;
-    const idempotencyKey = req.headers['idempotency-key'];
+    // The payment modal sends Idempotency-Key; the shared axios layer sends
+    // X-Idempotency-Key on every mutation. Accept either so a retry through
+    // either path never fires a second STK push at the customer.
+    const idempotencyKey = req.headers['idempotency-key'] ?? req.headers['x-idempotency-key'];
 
     // ── 1. Idempotency check — return cached result for duplicate requests ──
     if (idempotencyKey) {
@@ -252,6 +258,104 @@ export const handleCallback = async (req, res) => {
     }).catch(() => {});
   } catch (err) {
     console.error('[M-Pesa Callback] Processing error:', err.message);
+  }
+};
+
+/**
+ * Safaricom Transaction Reversal result endpoint — publicly accessible, no
+ * JWT auth. Settles a 'refund_pending' sale: on success restores stock and
+ * marks it 'refunded'; on failure returns it to 'completed' with the reason
+ * recorded so the cashier can retry or refund in cash.
+ */
+export const handleReversalResult = async (req, res) => {
+  res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+
+  try {
+    const parsed = parseReversalResult(req.body);
+
+    const sale = await Sale.findOne(parsed.originatorConversationId
+      ? { 'refund.originatorConversationId': parsed.originatorConversationId }
+      : { 'refund.conversationId': parsed.conversationId });
+
+    if (!sale) {
+      console.error('[M-Pesa Reversal] Unknown conversation id:', parsed.originatorConversationId ?? parsed.conversationId);
+      return;
+    }
+    // Duplicate callback, or the sale was already settled another way
+    // (e.g. cash refund after the reversal looked stuck) — never touch it twice.
+    if (sale.status !== 'refund_pending') return;
+
+    if (parsed.success) {
+      const session = await mongoose.startSession();
+      session.startTransaction();
+      try {
+        const fresh = await Sale.findById(sale._id).session(session);
+        if (fresh?.status !== 'refund_pending') {
+          await session.abortTransaction();
+          return;
+        }
+        await restoreSaleStock(fresh, session);
+        fresh.status = 'refunded';
+        fresh.refund.completedAt = new Date();
+        fresh.refund.reversalTransactionId = parsed.transactionId;
+        fresh.refund.resultCode = parsed.resultCode;
+        fresh.refund.resultDesc = parsed.resultDesc;
+        await fresh.save({ session });
+        await session.commitTransaction();
+      } catch (err) {
+        await session.abortTransaction();
+        throw err;
+      } finally {
+        session.endSession();
+      }
+    } else {
+      sale.status = 'completed';
+      sale.refund.resultCode = parsed.resultCode;
+      sale.refund.resultDesc = parsed.resultDesc;
+      sale.refund.failureReason = parsed.resultDesc || 'The M-Pesa reversal was rejected.';
+      await sale.save();
+    }
+
+    logAudit({
+      shopId: sale.shop,
+      action: parsed.success ? 'sale.refund.completed' : 'sale.refund.failed',
+      entityType: 'Sale',
+      entityId: sale._id,
+      details: { resultCode: parsed.resultCode, resultDesc: parsed.resultDesc, reversalTransactionId: parsed.transactionId },
+    }).catch(() => {});
+  } catch (err) {
+    console.error('[M-Pesa Reversal] Processing error:', err.message);
+  }
+};
+
+/**
+ * Safaricom reversal queue-timeout endpoint — the request never reached the
+ * processor. Release the sale back to 'completed' so a retry is possible.
+ */
+export const handleReversalTimeout = async (req, res) => {
+  res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+
+  try {
+    const originatorId = req.body?.Result?.OriginatorConversationID
+      ?? req.body?.OriginatorConversationID;
+    if (!originatorId) return;
+
+    const sale = await Sale.findOne({ 'refund.originatorConversationId': originatorId });
+    if (!sale || sale.status !== 'refund_pending') return;
+
+    sale.status = 'completed';
+    sale.refund.failureReason = 'M-Pesa did not process the refund in time (queue timeout). Please try again.';
+    await sale.save();
+
+    logAudit({
+      shopId: sale.shop,
+      action: 'sale.refund.failed',
+      entityType: 'Sale',
+      entityId: sale._id,
+      details: { reason: 'queue_timeout' },
+    }).catch(() => {});
+  } catch (err) {
+    console.error('[M-Pesa Reversal Timeout] Processing error:', err.message);
   }
 };
 

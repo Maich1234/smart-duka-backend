@@ -60,6 +60,13 @@ const shopSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
+  // Owner-controlled feature flag: when on, staff must start a shift before
+  // recording sales, shift-close reports are pushed to the owner, and the
+  // end-of-day cron compiles a daily business summary for this shop.
+  shiftManagementEnabled: {
+    type: Boolean,
+    default: false,
+  },
 }, { timestamps: true });
 
 export default mongoose.model('Shop', shopSchema);

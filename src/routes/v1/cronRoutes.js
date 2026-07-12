@@ -1,5 +1,5 @@
 import express from 'express';
-import { dailySalesCheck, depletionAlerts } from '../../controllers/cronController.js';
+import { dailySalesCheck, depletionAlerts, dailyBusinessSummary, subscriptionReminders } from '../../controllers/cronController.js';
 
 const router = express.Router();
 
@@ -7,5 +7,7 @@ const router = express.Router();
 // logged-in user. Each handler verifies the CRON_SECRET header itself.
 router.get('/daily-sales-check', dailySalesCheck);
 router.get('/depletion-alerts', depletionAlerts);
+router.get('/daily-summary', dailyBusinessSummary);
+router.get('/subscription-reminders', subscriptionReminders);
 
 export default router;

@@ -1,0 +1,177 @@
+import User from '../models/User.js';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Billable head-count for a shop: the owner plus every active staff account.
+ * Never below 1 — a solo owner is one billable user.
+ */
+export async function getBillableUserCount(shopId) {
+  const count = await User.countDocuments({ shop: shopId, isActive: true });
+  return Math.max(count, 1);
+}
+
+/**
+ * Picks the tier that covers a given head-count: the cheapest active plan
+ * whose maxStaff fits, or the largest tier (extra users are charged at its
+ * extraStaffPrice) when the team outgrows every plan.
+ */
+export function pickPlanForStaffCount(plans, staffCount) {
+  const active = plans
+    .filter((p) => p.active !== false)
+    .sort((a, b) => a.maxStaff - b.maxStaff);
+  if (active.length === 0) return null;
+  return active.find((p) => staffCount <= p.maxStaff) ?? active[active.length - 1];
+}
+
+/** Monthly total for one plan at a given head-count (tier overflow included). */
+export function monthlyTotalForPlan(plan, staffCount) {
+  let total = plan.billingType === 'per_staff'
+    ? staffCount * plan.monthlyPrice
+    : plan.monthlyPrice;
+  if (staffCount > plan.maxStaff && plan.extraStaffPrice > 0) {
+    total += (staffCount - plan.maxStaff) * plan.extraStaffPrice;
+  }
+  return Math.round(total);
+}
+
+/** Yearly total: explicit override, else monthly × 12 less the yearly discount. */
+export function yearlyTotalForPlan(plan, staffCount) {
+  if (plan.yearlyPrice != null && plan.billingType === 'flat' && staffCount <= plan.maxStaff) {
+    return Math.round(plan.yearlyPrice);
+  }
+  const monthly = monthlyTotalForPlan(plan, staffCount);
+  const discount = (plan.yearlyDiscountPercent ?? 0) / 100;
+  return Math.round(monthly * 12 * (1 - discount));
+}
+
+/**
+ * Applies a promotion to an amount. Returns { amount, discount }.
+ * The promotion must already have been checked with isRedeemable().
+ */
+export function applyPromotion(amount, promotion) {
+  if (!promotion) return { amount, discount: 0 };
+  let discount = promotion.discountType === 'percentage'
+    ? Math.round(amount * (promotion.discountValue / 100))
+    : Math.round(promotion.discountValue);
+  discount = Math.min(discount, amount);
+  return { amount: amount - discount, discount };
+}
+
+/**
+ * Full price computation for a shop. `plan` may be forced (user picked a
+ * card); otherwise the tier is chosen from the head-count.
+ *
+ * Returns everything the pricing screen and the payment initiator need:
+ * { plan, staffCount, billingCycle, monthlyTotal, yearlyTotal, yearlySavings,
+ *   amountDue, promoDiscount, currency }
+ */
+export function computePrice({ plans, plan = null, staffCount, billingCycle = 'monthly', promotion = null }) {
+  const chosen = plan ?? pickPlanForStaffCount(plans, staffCount);
+  if (!chosen) throw new Error('No active subscription plans are configured');
+
+  const monthlyTotal = monthlyTotalForPlan(chosen, staffCount);
+  const yearlyTotal = yearlyTotalForPlan(chosen, staffCount);
+  const yearlySavings = Math.max(monthlyTotal * 12 - yearlyTotal, 0);
+
+  const base = billingCycle === 'yearly' ? yearlyTotal : monthlyTotal;
+  const { amount, discount } = applyPromotion(base, promotion);
+
+  return {
+    plan: chosen,
+    staffCount,
+    billingCycle,
+    monthlyTotal,
+    yearlyTotal,
+    yearlySavings,
+    amountDue: amount,
+    promoDiscount: discount,
+    currency: chosen.currency ?? 'KES',
+  };
+}
+
+/**
+ * Derives the shop's real access state from its subscription record and the
+ * clock — the single source of truth for banners, reminders, and the lock
+ * screen. Stored status never needs a cron to flip it.
+ *
+ * States:
+ *  none      — no subscription yet (offer the trial)
+ *  trialing  — inside the free trial          (daysLeft until trialEnd)
+ *  active    — inside a paid period           (daysLeft until currentPeriodEnd)
+ *  grace     — expired, within gracePeriodDays (graceDaysLeft until lock)
+ *  locked    — expired and grace exhausted
+ * cancelled subscriptions keep access until whatever period was already
+ * paid/granted runs out, then go straight through grace → locked.
+ */
+export function deriveAccess(subscription, gracePeriodDays = 3, now = new Date()) {
+  if (!subscription) {
+    return { state: 'none', daysLeft: 0, graceDaysLeft: 0, expiresAt: null, cancelled: false };
+  }
+
+  const cancelled = subscription.status === 'cancelled';
+  // The latest date access has been granted to.
+  const paidEnd = subscription.currentPeriodEnd ? new Date(subscription.currentPeriodEnd) : null;
+  const trialEnd = subscription.trialEnd ? new Date(subscription.trialEnd) : null;
+  const expiresAt = [paidEnd, trialEnd]
+    .filter(Boolean)
+    .sort((a, b) => b - a)[0] ?? null;
+
+  if (!expiresAt) {
+    return { state: 'none', daysLeft: 0, graceDaysLeft: 0, expiresAt: null, cancelled };
+  }
+
+  if (now <= expiresAt) {
+    const daysLeft = Math.ceil((expiresAt - now) / DAY_MS);
+    const inPaidPeriod = paidEnd && now <= paidEnd;
+    return {
+      state: inPaidPeriod ? 'active' : 'trialing',
+      daysLeft,
+      graceDaysLeft: 0,
+      expiresAt,
+      cancelled,
+    };
+  }
+
+  const graceEnd = new Date(expiresAt.getTime() + gracePeriodDays * DAY_MS);
+  if (now <= graceEnd) {
+    return {
+      state: 'grace',
+      daysLeft: 0,
+      graceDaysLeft: Math.ceil((graceEnd - now) / DAY_MS),
+      expiresAt,
+      cancelled,
+    };
+  }
+
+  return { state: 'locked', daysLeft: 0, graceDaysLeft: 0, expiresAt, cancelled };
+}
+
+/**
+ * Which reminder (if any) is due for a subscription right now.
+ * Returns { kind, dedupeKey } or null. kind ∈ 'expiry-<n>d' | 'grace' — the
+ * dedupe key pins the reminder to the expiry date it was for, so a renewal
+ * (which moves expiresAt) naturally re-arms every reminder.
+ */
+export function dueReminder(subscription, { reminderDaysBefore = [7, 3], gracePeriodDays = 3 } = {}, now = new Date()) {
+  const access = deriveAccess(subscription, gracePeriodDays, now);
+  if (access.state === 'none' || access.state === 'locked') return null;
+
+  const expiryTag = access.expiresAt.toISOString().slice(0, 10);
+  const sent = subscription.remindersSent ?? [];
+
+  if (access.state === 'grace') {
+    const key = `grace:${expiryTag}`;
+    return sent.includes(key) ? null : { kind: 'grace', dedupeKey: key, access };
+  }
+
+  // Inside trial/paid period: fire the tightest window that has been entered.
+  const windows = [...reminderDaysBefore].sort((a, b) => a - b);
+  for (const days of windows) {
+    if (access.daysLeft <= days) {
+      const key = `expiry-${days}d:${expiryTag}`;
+      return sent.includes(key) ? null : { kind: `expiry-${days}d`, dedupeKey: key, access };
+    }
+  }
+  return null;
+}

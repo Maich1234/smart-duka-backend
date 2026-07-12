@@ -10,4 +10,7 @@ export const saveMpesaConfigSchema = Joi.object({
   consumerKey: Joi.string().trim().min(10).allow('').optional(),
   consumerSecret: Joi.string().trim().min(10).allow('').optional(),
   passkey: Joi.string().trim().min(10).allow('').optional(),
+  // Refund (Transaction Reversal) credentials — optional; empty string clears them.
+  initiatorName: Joi.string().trim().max(100).allow('').optional(),
+  securityCredential: Joi.string().trim().min(10).allow('').optional(),
 }).unknown(false);

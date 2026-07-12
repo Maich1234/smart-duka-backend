@@ -163,6 +163,99 @@ export async function querySTKStatus({ config, checkoutRequestId }) {
 }
 
 /**
+ * Sends a Transaction Reversal request to Safaricom — refunds a received
+ * C2B payment back to the customer. Asynchronous: Safaricom acks the request
+ * here and posts the final outcome to resultUrl later.
+ *
+ * transactionId is the M-Pesa receipt number of the original payment (e.g.
+ * "SGH3TZO2LP"). Requires initiator credentials (Daraja API operator).
+ */
+export async function initiateReversal({ config, transactionId, amount, remarks, resultUrl, queueTimeoutUrl }) {
+  const baseUrl = getBaseUrl(config.environment);
+  const accessToken = await getAccessToken(config);
+
+  let securityCredential;
+  try {
+    securityCredential = decrypt(config.securityCredential);
+  } catch (err) {
+    throw new Error('Failed to decrypt the M-Pesa Security Credential. Please re-save your refund credentials in Profile → Payments.');
+  }
+
+  const body = {
+    Initiator: config.initiatorName,
+    SecurityCredential: securityCredential,
+    CommandID: 'TransactionReversal',
+    TransactionID: transactionId,
+    Amount: Math.ceil(amount),
+    ReceiverParty: config.shortcode,
+    // '11' = organisation shortcode. Safaricom's API requires this misspelled
+    // field name — do not "fix" it.
+    RecieverIdentifierType: '11',
+    ResultURL: resultUrl,
+    QueueTimeOutURL: queueTimeoutUrl,
+    Remarks: (remarks || 'Sale refund').slice(0, 100),
+    Occasion: 'Refund',
+  };
+
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/mpesa/reversal/v1/request`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch (err) {
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      throw new Error('ETIMEDOUT: M-Pesa reversal request timed out after 20s');
+    }
+    throw new Error(`ECONNREFUSED: Could not connect to Safaricom API (${err.message})`);
+  }
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok || data.ResponseCode !== '0') {
+    const errMsg = data.errorMessage || data.ResponseDescription || data.ResultDesc || `HTTP ${response.status}`;
+    throw new Error(`{"errorMessage":"${errMsg}","responseCode":"${data.ResponseCode ?? response.status}"}`);
+  }
+
+  return {
+    originatorConversationId: data.OriginatorConversationID,
+    conversationId: data.ConversationID,
+    responseDescription: data.ResponseDescription,
+  };
+}
+
+/**
+ * Parses a Safaricom reversal Result callback into a normalised object.
+ * ResultCode 0 = money returned to the customer; anything else is a failure.
+ */
+export function parseReversalResult(callbackBody) {
+  const result = callbackBody?.Result;
+  if (!result) throw new Error('Invalid reversal result structure');
+
+  const params = result.ResultParameters?.ResultParameter ?? [];
+  const getParam = (key) => {
+    const list = Array.isArray(params) ? params : [params];
+    return list.find((p) => p?.Key === key)?.Value;
+  };
+
+  return {
+    success: String(result.ResultCode) === '0',
+    resultCode: String(result.ResultCode),
+    resultDesc: result.ResultDesc,
+    originatorConversationId: result.OriginatorConversationID,
+    conversationId: result.ConversationID,
+    // Receipt of the reversal transaction itself
+    transactionId: result.TransactionID || getParam('TransactionID'),
+    amount: getParam('Amount') ?? getParam('TransactionAmount'),
+  };
+}
+
+/**
  * Parses a Safaricom STK callback body into a normalised result object.
  */
 export function parseSTKCallback(callbackBody) {

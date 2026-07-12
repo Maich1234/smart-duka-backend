@@ -74,33 +74,7 @@ export const getSalesReport = async (req, res) => {
   const now = new Date();
   const buckets = buildBuckets(period, now);
   const rangeStart = buckets[0].start;
-
-  const sales = await Sale.find({
-    shop: req.user.shop._id,
-    createdAt: { $gte: rangeStart },
-  }).select('totalAmount paymentMethod items createdAt staff').populate('staff', 'name');
-
-  const series = buckets.map((bucket) => {
-    const bucketSales = sales.filter(
-      (sale) => sale.createdAt >= bucket.start && sale.createdAt < bucket.end
-    );
-    const total = bucketSales.reduce((sum, sale) => sum + sale.totalAmount, 0);
-    const cashTotal = bucketSales
-      .filter((sale) => sale.paymentMethod === 'cash')
-      .reduce((sum, sale) => sum + sale.totalAmount, 0);
-    const mpesaTotal = bucketSales
-      .filter((sale) => sale.paymentMethod === 'mpesa')
-      .reduce((sum, sale) => sum + sale.totalAmount, 0);
-
-    return {
-      label: bucket.label,
-      date: bucket.start.toISOString(),
-      total,
-      cashTotal,
-      mpesaTotal,
-      transactionCount: bucketSales.length,
-    };
-  });
+  const rangeEnd = buckets[buckets.length - 1].end;
 
   // Summary/top-products/by-staff/ratings reflect only the *current* bucket
   // (today / this week / this month) — not the whole multi-bucket trend
@@ -108,9 +82,49 @@ export const getSalesReport = async (req, res) => {
   // monthly instead of staying a rolling sum that looks identical whenever
   // all the shop's history fits inside every window.
   const currentBucket = buckets[buckets.length - 1];
-  const currentPeriodSales = sales.filter(
-    (sale) => sale.createdAt >= currentBucket.start && sale.createdAt < currentBucket.end
-  );
+
+  // The trend series is aggregated in the database ($bucket per period) —
+  // the previous implementation loaded every sale in the whole range (up to
+  // 6 months) into memory, which does not scale for a busy shop. Full docs
+  // are only loaded for the current bucket, whose items[] the top-products
+  // and by-staff sections genuinely need.
+  const [bucketAgg, currentPeriodSales] = await Promise.all([
+    Sale.aggregate([
+      { $match: { shop: req.user.shop._id, status: { $nin: ['voided', 'refunded'] }, createdAt: { $gte: rangeStart, $lt: rangeEnd } } },
+      {
+        $bucket: {
+          groupBy: '$createdAt',
+          boundaries: [...buckets.map((b) => b.start), rangeEnd],
+          output: {
+            total: { $sum: '$totalAmount' },
+            cashTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'cash'] }, '$totalAmount', 0] } },
+            mpesaTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'mpesa'] }, '$totalAmount', 0] } },
+            transactionCount: { $sum: 1 },
+          },
+        },
+      },
+    ]),
+    Sale.find({
+      shop: req.user.shop._id,
+      status: { $nin: ['voided', 'refunded'] },
+      createdAt: { $gte: currentBucket.start, $lt: currentBucket.end },
+    }).select('totalAmount paymentMethod items createdAt staff').populate('staff', 'name'),
+  ]);
+
+  // $bucket keys each group by its lower boundary; zero-fill buckets with no
+  // sales so owners can see gaps, not just totals.
+  const aggByBucketStart = new Map(bucketAgg.map((b) => [new Date(b._id).getTime(), b]));
+  const series = buckets.map((bucket) => {
+    const agg = aggByBucketStart.get(bucket.start.getTime());
+    return {
+      label: bucket.label,
+      date: bucket.start.toISOString(),
+      total: agg?.total ?? 0,
+      cashTotal: agg?.cashTotal ?? 0,
+      mpesaTotal: agg?.mpesaTotal ?? 0,
+      transactionCount: agg?.transactionCount ?? 0,
+    };
+  });
 
   const summary = currentPeriodSales.reduce(
     (acc, sale) => ({

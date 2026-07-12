@@ -29,6 +29,8 @@ export const getPaymentStatus = async (req, res) => {
           businessName: config?.mpesa?.businessName ?? null,
           shortcode: config?.mpesa?.shortcode ?? null,
           isConfigured: !!(config?.mpesa?.consumerKey),
+          // M-Pesa refunds (reversals) need the separate initiator credentials
+          refundsConfigured: !!(config?.mpesa?.initiatorName && config?.mpesa?.securityCredential),
         },
       },
     });
@@ -61,10 +63,13 @@ export const getPaymentConfig = async (req, res) => {
           consumerKeySet: !!mpesa.consumerKey,
           consumerSecretSet: !!mpesa.consumerSecret,
           passkeySet: !!mpesa.passkey,
+          initiatorName: mpesa.initiatorName ?? '',
+          securityCredentialSet: !!mpesa.securityCredential,
           // Masked credential previews (first 3 + •••• + last 4) — never full plaintext
           consumerKeyMasked: maskCredential(mpesa.consumerKey),
           consumerSecretMasked: maskCredential(mpesa.consumerSecret),
           passkeyMasked: maskCredential(mpesa.passkey),
+          securityCredentialMasked: maskCredential(mpesa.securityCredential),
           configuredAt: mpesa.configuredAt ?? null,
           configuredBy: mpesa.configuredBy ?? null,
         },
@@ -80,7 +85,7 @@ export const getPaymentConfig = async (req, res) => {
 export const saveMpesaConfig = async (req, res) => {
   try {
     const shopId = req.user.shop._id ?? req.user.shop;
-    const { environment, businessName, shortcode, consumerKey, consumerSecret, passkey } = req.body;
+    const { environment, businessName, shortcode, consumerKey, consumerSecret, passkey, initiatorName, securityCredential } = req.body;
 
     const updates = {
       'mpesa.enabled': true,
@@ -90,11 +95,16 @@ export const saveMpesaConfig = async (req, res) => {
       'mpesa.configuredAt': new Date(),
       'mpesa.configuredBy': req.user._id,
     };
+    // Refund credentials are optional — undefined leaves the stored value
+    // untouched, an explicit empty string clears it (turns refunds off).
+    if (initiatorName !== undefined) updates['mpesa.initiatorName'] = initiatorName || null;
 
     try {
       if (consumerKey) updates['mpesa.consumerKey'] = encrypt(consumerKey);
       if (consumerSecret) updates['mpesa.consumerSecret'] = encrypt(consumerSecret);
       if (passkey) updates['mpesa.passkey'] = encrypt(passkey);
+      if (securityCredential) updates['mpesa.securityCredential'] = encrypt(securityCredential);
+      else if (securityCredential === '') updates['mpesa.securityCredential'] = null;
     } catch (err) {
       return res.status(500).json({ success: false, message: 'Failed to encrypt credentials. Contact the app administrator.' });
     }
@@ -135,6 +145,8 @@ export const disconnectMpesa = async (req, res) => {
           'mpesa.consumerKey': null,
           'mpesa.consumerSecret': null,
           'mpesa.passkey': null,
+          'mpesa.initiatorName': null,
+          'mpesa.securityCredential': null,
           'mpesa.shortcode': null,
           'mpesa.businessName': null,
           'mpesa.configuredAt': null,

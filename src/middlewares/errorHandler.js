@@ -33,9 +33,14 @@ const errorHandler = (err, req, res, next) => {
     });
   }
 
-  res.status(err.status || 500).json({
+  const status = err.status || 500;
+  // Unexpected 500s can carry internals (driver errors, stack fragments) in
+  // err.message — never forward those to clients in production. Errors thrown
+  // with an explicit status are operational and their messages are user-safe.
+  const exposeMessage = err.status || process.env.NODE_ENV !== 'production';
+  res.status(status).json({
     success: false,
-    message: err.message || 'Something went wrong on our end. Please try again or contact support.',
+    message: (exposeMessage && err.message) || 'Something went wrong on our end. Please try again or contact support.',
   });
 };
 

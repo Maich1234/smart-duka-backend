@@ -13,6 +13,13 @@ const mpesaConfigSchema = new mongoose.Schema({
   consumerKey: { type: String },
   consumerSecret: { type: String },
   passkey: { type: String },
+  // Refund (Transaction Reversal) credentials — optional; refunds to M-Pesa
+  // stay disabled until both are set. initiatorName is the API operator
+  // username from the Daraja portal; securityCredential is the RSA-encrypted
+  // initiator password generated on the portal (stored AES-encrypted like the
+  // other secrets, decrypted only when a reversal request is sent).
+  initiatorName: { type: String, trim: true },
+  securityCredential: { type: String },
   configuredAt: { type: Date },
   configuredBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { _id: false });

@@ -5,6 +5,8 @@ import {
   initiatePayment,
   getTransactionStatus,
   handleCallback,
+  handleReversalResult,
+  handleReversalTimeout,
   verifyByReceipt,
 } from '../../controllers/mpesaController.js';
 import {
@@ -17,6 +19,10 @@ const router = express.Router();
 
 // Safaricom sends the callback here — must be publicly accessible (no JWT auth)
 router.post('/callback', handleCallback);
+
+// Transaction Reversal (refund) result + queue-timeout callbacks — also public
+router.post('/reversal-result', handleReversalResult);
+router.post('/reversal-result-timeout', handleReversalTimeout);
 
 // Staff can initiate STK Push during checkout
 router.post('/initiate', protect, staffOrOwner, validate(initiateSTKPushSchema), initiatePayment);

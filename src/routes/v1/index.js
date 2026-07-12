@@ -15,6 +15,9 @@ import paymentConfigRoutes from './paymentConfigRoutes.js';
 import otpRoutes from './otpRoutes.js';
 import mpesaRoutes from './mpesaRoutes.js';
 import presetsRoutes from './presetsRoutes.js';
+import shiftRoutes from './shiftRoutes.js';
+import summaryRoutes from './summaryRoutes.js';
+import subscriptionRoutes from './subscriptionRoutes.js';
 
 const router = express.Router();
 
@@ -34,5 +37,8 @@ router.use('/payment-config', paymentConfigRoutes);
 router.use('/otp', otpRoutes);
 router.use('/mpesa', mpesaRoutes);
 router.use('/presets', presetsRoutes);
+router.use('/shifts', shiftRoutes);
+router.use('/summaries', summaryRoutes);
+router.use('/subscriptions', subscriptionRoutes);
 
 export default router;

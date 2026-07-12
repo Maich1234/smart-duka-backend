@@ -1,13 +1,16 @@
 import User from '../models/User.js';
-import { DEFAULT_STAFF_PERMISSIONS } from '../constants/permissions.js';
+import { DEFAULT_STAFF_PERMISSIONS, withImpliedPermissions } from '../constants/permissions.js';
+import { parsePagination } from '../utils/pagination.js';
+import { escapeRegex } from '../utils/escapeRegex.js';
 
 export const getStaff = async (req, res) => {
-  const { page = 1, limit = 10, search, startDate, endDate } = req.query;
+  const { search, startDate, endDate } = req.query;
+  const { page, limit, skip } = parsePagination(req.query, { defaultLimit: 10 });
   const query = { role: 'staff', shop: req.user.shop._id };
   if (search) {
     query.$or = [
-      { name: { $regex: search, $options: 'i' } },
-      { email: { $regex: search, $options: 'i' } },
+      { name: { $regex: escapeRegex(search), $options: 'i' } },
+      { email: { $regex: escapeRegex(search), $options: 'i' } },
     ];
   }
   if (startDate || endDate) {
@@ -15,16 +18,14 @@ export const getStaff = async (req, res) => {
     if (startDate) query.createdAt.$gte = new Date(startDate);
     if (endDate) query.createdAt.$lte = new Date(endDate);
   }
-  const limitN = Math.min(parseInt(limit), 100);
-  const skip = (parseInt(page) - 1) * limitN;
   const [staff, total] = await Promise.all([
-    User.find(query).select('-password').sort({ createdAt: -1 }).skip(skip).limit(limitN),
+    User.find(query).select('-password').sort({ createdAt: -1 }).skip(skip).limit(limit),
     User.countDocuments(query),
   ]);
   res.json({
     success: true,
     data: staff,
-    pagination: { page: parseInt(page), limit: limitN, total, pages: Math.ceil(total / limitN) },
+    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
   });
 };
 
@@ -44,7 +45,7 @@ export const createStaff = async (req, res) => {
     role: 'staff',
     shop: req.user.shop._id,
     isActive: true,
-    permissions: DEFAULT_STAFF_PERMISSIONS,
+    permissions: withImpliedPermissions(req.body.permissions ?? DEFAULT_STAFF_PERMISSIONS),
   });
 
   const staffResponse = staff.toObject();
@@ -61,7 +62,7 @@ export const updateStaff = async (req, res) => {
   if (email) staff.email = email;
   if (phone) staff.phone = phone;
   if (isActive !== undefined) staff.isActive = isActive;
-  if (permissions) staff.permissions = permissions;
+  if (permissions) staff.permissions = withImpliedPermissions(permissions);
 
   await staff.save();
   const staffResponse = staff.toObject();
@@ -92,7 +93,8 @@ export const getStaffSales = async (req, res) => {
   const staff = await User.findOne({ _id: req.params.id, role: 'staff', shop: req.user.shop._id });
   if (!staff) return res.status(404).json({ success: false, message: 'Staff not found' });
 
-  const { page = 1, limit = 20, startDate, endDate } = req.query;
+  const { startDate, endDate } = req.query;
+  const { page, limit, skip } = parsePagination(req.query);
   const query = { staff: staff._id, shop: req.user.shop._id };
   if (startDate || endDate) {
     query.createdAt = {};
@@ -100,14 +102,15 @@ export const getStaffSales = async (req, res) => {
     if (endDate) query.createdAt.$lte = new Date(endDate);
   }
 
-  const skip = (parseInt(page) - 1) * parseInt(limit);
-  const sales = await Sale.find(query).skip(skip).limit(parseInt(limit)).sort({ createdAt: -1 });
-  const total = await Sale.countDocuments(query);
+  const [sales, total] = await Promise.all([
+    Sale.find(query).skip(skip).limit(limit).sort({ createdAt: -1 }),
+    Sale.countDocuments(query),
+  ]);
 
   res.json({
     success: true,
     data: sales,
-    pagination: { page: parseInt(page), limit: parseInt(limit), total, pages: Math.ceil(total / parseInt(limit)) },
+    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
   });
 };
 
@@ -116,7 +119,7 @@ export const updateStaffPermissions = async (req, res) => {
   const staff = await User.findOne({ _id: req.params.id, role: 'staff', shop: req.user.shop._id });
   if (!staff) return res.status(404).json({ success: false, message: 'Staff not found' });
 
-  staff.permissions = permissions;
+  staff.permissions = withImpliedPermissions(permissions);
   await staff.save();
   res.json({ success: true, data: staff.permissions });
 };

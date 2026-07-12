@@ -9,7 +9,7 @@ export const getOwnerDashboard = async (req, res) => {
   endOfDay.setHours(23, 59, 59, 999);
 
   const todaySales = await Sale.aggregate([
-    { $match: { shop: req.user.shop._id, createdAt: { $gte: startOfDay, $lte: endOfDay } } },
+    { $match: { shop: req.user.shop._id, status: { $nin: ['voided', 'refunded'] }, createdAt: { $gte: startOfDay, $lte: endOfDay } } },
     { $group: {
         _id: null,
         total: { $sum: '$totalAmount' },
@@ -70,7 +70,7 @@ export const getStaffDashboard = async (req, res) => {
   endOfDay.setHours(23, 59, 59, 999);
 
   const todaySales = await Sale.aggregate([
-    { $match: { shop: req.user.shop._id, staff: req.user._id, createdAt: { $gte: startOfDay, $lte: endOfDay } } },
+    { $match: { shop: req.user.shop._id, staff: req.user._id, status: { $nin: ['voided', 'refunded'] }, createdAt: { $gte: startOfDay, $lte: endOfDay } } },
     { $group: {
         _id: null,
         total: { $sum: '$totalAmount' },

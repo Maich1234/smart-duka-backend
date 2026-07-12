@@ -7,7 +7,7 @@ export const getShopConfig = async (req, res) => {
 };
 
 export const updateShopConfig = async (req, res) => {
-  const { name, address, phone, email, taxRate, currency, receiptThankYouNote, logoUrl, motto } = req.body;
+  const { name, address, phone, email, taxRate, currency, receiptThankYouNote, logoUrl, motto, shiftManagementEnabled } = req.body;
   const shop = await Shop.findById(req.user.shop._id);
   if (!shop) return res.status(404).json({ success: false, message: 'Shop not found' });
 
@@ -20,6 +20,7 @@ export const updateShopConfig = async (req, res) => {
   if (receiptThankYouNote !== undefined) shop.receiptThankYouNote = receiptThankYouNote;
   if (logoUrl !== undefined) shop.logoUrl = logoUrl;
   if (motto !== undefined) shop.motto = motto;
+  if (shiftManagementEnabled !== undefined) shop.shiftManagementEnabled = shiftManagementEnabled;
 
   await shop.save();
   res.json({ success: true, data: shop });
