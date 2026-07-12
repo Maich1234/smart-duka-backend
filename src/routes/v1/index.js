@@ -20,6 +20,7 @@ import summaryRoutes from './summaryRoutes.js';
 import subscriptionRoutes from './subscriptionRoutes.js';
 import aiRoutes from './aiRoutes.js';
 import adminRoutes from './adminRoutes.js';
+import notificationRoutes from './notificationRoutes.js';
 
 const router = express.Router();
 
@@ -44,5 +45,6 @@ router.use('/summaries', summaryRoutes);
 router.use('/subscriptions', subscriptionRoutes);
 router.use('/ai', aiRoutes);
 router.use('/admin', adminRoutes);
+router.use('/notifications', notificationRoutes);
 
 export default router;

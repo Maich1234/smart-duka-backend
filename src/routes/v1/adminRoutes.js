@@ -6,6 +6,7 @@ import { getPlatformConfig, updatePlatformConfig } from '../../controllers/admin
 import { listPromotions, createPromotion, updatePromotion } from '../../controllers/adminPromotionsController.js';
 import { listShops } from '../../controllers/adminShopsController.js';
 import { listAuditLogs } from '../../controllers/adminAuditController.js';
+import { listPushCampaigns, createPushCampaign, sendPushCampaign, cancelPushCampaign } from '../../controllers/adminPushController.js';
 import { protectAdmin } from '../../middlewares/adminAuth.js';
 import validate from '../../middlewares/validate.js';
 import { createRateLimitStore } from '../../utils/rateLimitStore.js';
@@ -16,6 +17,7 @@ import {
   createPromotionSchema,
   updatePromotionSchema,
   updatePlatformConfigSchema,
+  createPushCampaignSchema,
 } from '../../validations/adminValidation.js';
 
 const router = express.Router();
@@ -50,5 +52,10 @@ router.patch('/promotions/:id', validate(updatePromotionSchema), updatePromotion
 
 router.get('/shops', listShops);
 router.get('/audit', listAuditLogs);
+
+router.get('/push-campaigns', listPushCampaigns);
+router.post('/push-campaigns', validate(createPushCampaignSchema), createPushCampaign);
+router.post('/push-campaigns/:id/send', sendPushCampaign);
+router.patch('/push-campaigns/:id/cancel', cancelPushCampaign);
 
 export default router;

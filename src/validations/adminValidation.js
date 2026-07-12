@@ -78,6 +78,23 @@ export const updatePromotionSchema = Joi.object({
   active: Joi.boolean(),
 }).unknown(false).min(1);
 
+const segmentSchema = Joi.object({
+  type: Joi.string().valid('all', 'state', 'plan').required(),
+  states: Joi.array().items(Joi.string().valid('none', 'trialing', 'active', 'grace', 'locked'))
+    .when('type', { is: 'state', then: Joi.array().min(1).required(), otherwise: Joi.array().max(0) }),
+  planSlugs: Joi.array().items(Joi.string())
+    .when('type', { is: 'plan', then: Joi.array().min(1).required(), otherwise: Joi.array().max(0) }),
+  roles: Joi.array().items(Joi.string().valid('owner', 'staff')).min(1).default(['owner']),
+}).unknown(false);
+
+export const createPushCampaignSchema = Joi.object({
+  title: Joi.string().trim().required(),
+  body: Joi.string().trim().required(),
+  data: Joi.object().pattern(Joi.string(), Joi.string()).default(undefined),
+  segment: segmentSchema.required(),
+  scheduledAt: Joi.date().allow(null).default(null),
+}).unknown(false);
+
 // PlatformConfig is always a partial update (secrets are only sent when
 // actively being changed) — no defaults here either, for the same reason.
 export const updatePlatformConfigSchema = Joi.object({

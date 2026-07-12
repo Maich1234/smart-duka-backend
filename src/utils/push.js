@@ -1,13 +1,50 @@
 import { getMessaging } from 'firebase-admin/messaging';
 import { getFirebaseAdmin, isFirebaseConfigured } from '../config/firebaseAdmin.js';
 import User from '../models/User.js';
+import Notification from '../models/Notification.js';
+
+/** Fills {{name}}/{{shopName}}/etc from a per-recipient vars object. No-op when the string has no placeholders. */
+const interpolate = (str, vars = {}) =>
+  typeof str === 'string' ? str.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => vars[key] ?? match) : str;
+
+/** shop may be a populated doc, a bare ObjectId ref, or absent. */
+const shopIdOf = (user) => user.shop?._id ?? user.shop;
+const shopNameOf = (user) => (typeof user.shop === 'object' ? user.shop?.name : undefined) ?? '';
+
+/**
+ * Persists the in-app inbox record for a push, independent of whether the
+ * Firebase send itself succeeds — this is what makes the Notifications
+ * screen useful even when a device never had push permission granted.
+ * Never throws: a logging failure must not block the push.
+ */
+const persistNotification = async (user, { title, body, data }) =>
+  Notification.create({
+    user: user._id,
+    shop: shopIdOf(user),
+    title,
+    body,
+    data,
+    type: data?.type ?? 'general',
+  }).catch((err) => console.error('[push] failed to persist notification', err.message));
+
+const persistNotifications = async (records) =>
+  Notification.insertMany(records, { ordered: false }).catch((err) =>
+    console.error('[push] failed to persist notifications', err.message)
+  );
 
 /**
  * Sends a push notification to every device token registered for a user,
- * via the Firebase Admin SDK. Automatically prunes tokens Firebase reports
- * as invalid/unregistered so the list doesn't grow stale.
+ * via the Firebase Admin SDK, and records it in the recipient's in-app
+ * inbox. Automatically prunes tokens Firebase reports as
+ * invalid/unregistered so the list doesn't grow stale.
  */
 export const sendPushToUser = async (user, { title, body, data } = {}) => {
+  const vars = { name: user.name, shopName: shopNameOf(user) };
+  const finalTitle = interpolate(title, vars);
+  const finalBody = interpolate(body, vars);
+
+  await persistNotification(user, { title: finalTitle, body: finalBody, data });
+
   if (!isFirebaseConfigured()) {
     console.warn('Firebase Admin not configured — skipping push notification');
     return { sent: 0, failed: 0 };
@@ -19,7 +56,7 @@ export const sendPushToUser = async (user, { title, body, data } = {}) => {
   const app = getFirebaseAdmin();
   const response = await getMessaging(app).sendEachForMulticast({
     tokens,
-    notification: { title, body },
+    notification: { title: finalTitle, body: finalBody },
     data: data ? Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)])) : undefined,
   });
 
@@ -38,4 +75,83 @@ export const sendPushToUser = async (user, { title, body, data } = {}) => {
   }
 
   return { sent: response.successCount, failed: response.failureCount };
+};
+
+const MULTICAST_CHUNK_SIZE = 500; // Firebase's per-call message limit for sendEach
+
+/**
+ * Bulk variant of sendPushToUser for campaign-style sends to many users
+ * (possibly across many shops) at once. Unlike sendEachForMulticast, this
+ * builds one Message per token so title/body can be personalized per
+ * recipient via {{name}}/{{shopName}} — needed since a single admin
+ * campaign can fan out to users with different names/shops. Still records
+ * every recipient's (personalized) inbox entry and prunes invalid tokens.
+ */
+export const sendPushToUsers = async (users, { title, body, data } = {}) => {
+  const payloadData = data ? Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)])) : undefined;
+
+  // Interpolate once per user; reused for both the inbox record and the push.
+  const rendered = users.map((user) => ({
+    user,
+    title: interpolate(title, { name: user.name, shopName: shopNameOf(user) }),
+    body: interpolate(body, { name: user.name, shopName: shopNameOf(user) }),
+  }));
+
+  await persistNotifications(
+    rendered.map((r) => ({
+      user: r.user._id,
+      shop: shopIdOf(r.user),
+      title: r.title,
+      body: r.body,
+      data,
+      type: data?.type ?? 'general',
+    }))
+  );
+
+  if (!isFirebaseConfigured()) {
+    console.warn('Firebase Admin not configured — skipping push notification');
+    return { targeted: users.length, sent: 0, failed: 0 };
+  }
+
+  const messages = [];
+  const tokenOwners = [];
+  for (const { user, title: t, body: b } of rendered) {
+    for (const token of user.fcmTokens || []) {
+      messages.push({ token, notification: { title: t, body: b }, data: payloadData });
+      tokenOwners.push({ token, userId: user._id });
+    }
+  }
+  if (messages.length === 0) return { targeted: users.length, sent: 0, failed: 0 };
+
+  const app = getFirebaseAdmin();
+  const messaging = getMessaging(app);
+
+  let sent = 0;
+  let failed = 0;
+  const invalidByUser = new Map();
+
+  for (let i = 0; i < messages.length; i += MULTICAST_CHUNK_SIZE) {
+    const msgChunk = messages.slice(i, i + MULTICAST_CHUNK_SIZE);
+    const ownerChunk = tokenOwners.slice(i, i + MULTICAST_CHUNK_SIZE);
+    const response = await messaging.sendEach(msgChunk);
+    sent += response.successCount;
+    failed += response.failureCount;
+    response.responses.forEach((res, idx) => {
+      if (res.success) return;
+      const code = res.error?.code;
+      if (code === 'messaging/invalid-registration-token' || code === 'messaging/registration-token-not-registered') {
+        const key = String(ownerChunk[idx].userId);
+        if (!invalidByUser.has(key)) invalidByUser.set(key, []);
+        invalidByUser.get(key).push(ownerChunk[idx].token);
+      }
+    });
+  }
+
+  await Promise.all(
+    Array.from(invalidByUser.entries()).map(([userId, tokens]) =>
+      User.updateOne({ _id: userId }, { $pull: { fcmTokens: { $in: tokens } } })
+    )
+  );
+
+  return { targeted: users.length, sent, failed };
 };

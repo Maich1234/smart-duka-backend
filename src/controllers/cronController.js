@@ -3,11 +3,13 @@ import User from '../models/User.js';
 import NotificationLog from '../models/NotificationLog.js';
 import Subscription from '../models/Subscription.js';
 import PlatformConfig from '../models/PlatformConfig.js';
+import PushCampaign from '../models/PushCampaign.js';
 import { sendPushToUser } from '../utils/push.js';
 import { getDepletionAnalytics } from '../services/depletionService.js';
 import { generateDailySummary } from '../services/dailySummaryService.js';
 import { dueReminder } from '../services/subscriptionPricingService.js';
 import { detectSalesAnomaly } from '../services/intelligence/salesAnomalyService.js';
+import { claimAndDispatchCampaign } from '../services/pushCampaignService.js';
 
 const STOCKOUT_CRITICAL_DAYS = 3;
 
@@ -215,4 +217,29 @@ export const subscriptionReminders = async (req, res) => {
   }
 
   res.json({ success: true, processed: candidates.length, notified: notified.length, failed, results: notified });
+};
+
+/**
+ * Sends every admin-scheduled push campaign whose scheduledAt has arrived.
+ * Runs every 15 minutes via Vercel Cron. Uses the same atomic claim as the
+ * admin "Send now" endpoint (claimAndDispatchCampaign), so a campaign never
+ * gets sent twice even if a manual send races this run.
+ */
+export const pushCampaignDispatch = async (req, res) => {
+  if (!verifyCronSecret(req)) {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
+  }
+
+  const due = await PushCampaign.find({
+    status: 'scheduled',
+    scheduledAt: { $ne: null, $lte: new Date() },
+  }).select('_id');
+
+  const results = [];
+  for (const { _id } of due) {
+    const campaign = await claimAndDispatchCampaign(_id);
+    if (campaign) results.push({ campaign: String(_id), status: campaign.status, stats: campaign.stats });
+  }
+
+  res.json({ success: true, processed: due.length, dispatched: results.length, results });
 };

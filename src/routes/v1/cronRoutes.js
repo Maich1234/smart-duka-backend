@@ -1,5 +1,5 @@
 import express from 'express';
-import { dailySalesCheck, depletionAlerts, dailyBusinessSummary, subscriptionReminders } from '../../controllers/cronController.js';
+import { dailySalesCheck, depletionAlerts, dailyBusinessSummary, subscriptionReminders, pushCampaignDispatch } from '../../controllers/cronController.js';
 
 const router = express.Router();
 
@@ -9,5 +9,6 @@ router.get('/daily-sales-check', dailySalesCheck);
 router.get('/depletion-alerts', depletionAlerts);
 router.get('/daily-summary', dailyBusinessSummary);
 router.get('/subscription-reminders', subscriptionReminders);
+router.get('/push-campaign-dispatch', pushCampaignDispatch);
 
 export default router;
