@@ -6,7 +6,6 @@ import { sendOTPEmail } from '../../utils/email.js';
 export const changePassword = async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   const user = await User.findById(req.user._id);
-
   const isMatch = await user.comparePassword(currentPassword);
   if (!isMatch) {
     return res.status(401).json({ success: false, message: 'Current password is incorrect' });
@@ -38,7 +37,7 @@ export const forgotPassword = async (req, res) => {
 
 export const verifyOTP = async (req, res) => {
   const { email, otp } = req.body;
-
+  
   const otpRecord = await OTP.findOne({ email, otp });
   if (!otpRecord) {
     return res.status(400).json({ success: false, message: 'Invalid OTP' });
@@ -49,13 +48,14 @@ export const verifyOTP = async (req, res) => {
     return res.status(400).json({ success: false, message: 'OTP expired' });
   }
 
-  await OTP.deleteOne({ _id: otpRecord._id });
+  // Don't consume the OTP here — clients verify first, then call
+  // reset-password with the same code, which re-validates and deletes it.
+  // Consuming on verify made every subsequent reset fail with "Invalid OTP".
   res.json({ success: true, message: 'OTP verified' });
 };
 
 export const resetPassword = async (req, res) => {
   const { email, otp, newPassword } = req.body;
-
   const otpRecord = await OTP.findOne({ email, otp });
   if (!otpRecord) {
     return res.status(400).json({ success: false, message: 'Invalid OTP' });

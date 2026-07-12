@@ -1,4 +1,5 @@
 const validate = (schema, property = 'body') => {
+  
   return (req, res, next) => {
     const dataToValidate = req[property];
     const { error, value } = schema.validate(dataToValidate, { abortEarly: false, stripUnknown: true });
