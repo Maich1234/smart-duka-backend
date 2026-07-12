@@ -19,6 +19,7 @@ import shiftRoutes from './shiftRoutes.js';
 import summaryRoutes from './summaryRoutes.js';
 import subscriptionRoutes from './subscriptionRoutes.js';
 import aiRoutes from './aiRoutes.js';
+import adminRoutes from './adminRoutes.js';
 
 const router = express.Router();
 
@@ -42,5 +43,6 @@ router.use('/shifts', shiftRoutes);
 router.use('/summaries', summaryRoutes);
 router.use('/subscriptions', subscriptionRoutes);
 router.use('/ai', aiRoutes);
+router.use('/admin', adminRoutes);
 
 export default router;

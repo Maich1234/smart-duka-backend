@@ -1,0 +1,57 @@
+import PlatformConfig from '../models/PlatformConfig.js';
+import { encrypt, isEncrypted } from '../services/encryptionService.js';
+
+/**
+ * GET /admin/platform-config — secret fields are NEVER sent to the frontend,
+ * even encrypted. Only a "configured" boolean per secret, derived from
+ * isEncrypted() on the stored value.
+ */
+export const getPlatformConfig = async (req, res) => {
+  const platform = await PlatformConfig.get();
+  const mpesa = platform.mpesa ?? {};
+  res.json({
+    success: true,
+    data: {
+      mpesa: {
+        enabled: mpesa.enabled ?? false,
+        environment: mpesa.environment ?? 'sandbox',
+        businessName: mpesa.businessName ?? '',
+        shortcode: mpesa.shortcode ?? '',
+        consumerKeyConfigured: isEncrypted(mpesa.consumerKey),
+        consumerSecretConfigured: isEncrypted(mpesa.consumerSecret),
+        passkeyConfigured: isEncrypted(mpesa.passkey),
+        configuredAt: mpesa.configuredAt ?? null,
+      },
+      gracePeriodDays: platform.gracePeriodDays,
+      reminderDaysBefore: platform.reminderDaysBefore,
+    },
+  });
+};
+
+/**
+ * PATCH /admin/platform-config — credential fields are only re-encrypted and
+ * overwritten when a non-empty value is actually sent; an absent or empty
+ * field always means "leave the existing credential unchanged" (never
+ * silently wipes a working credential from a partial form submit).
+ */
+export const updatePlatformConfig = async (req, res) => {
+  const platform = await PlatformConfig.get();
+  const { enabled, environment, businessName, shortcode, consumerKey, consumerSecret, passkey, gracePeriodDays, reminderDaysBefore } = req.body;
+
+  const mpesa = platform.mpesa?.toObject ? platform.mpesa.toObject() : { ...(platform.mpesa ?? {}) };
+  if (enabled !== undefined) mpesa.enabled = enabled;
+  if (environment !== undefined) mpesa.environment = environment;
+  if (businessName !== undefined) mpesa.businessName = businessName;
+  if (shortcode !== undefined) mpesa.shortcode = shortcode;
+  if (consumerKey) mpesa.consumerKey = encrypt(consumerKey);
+  if (consumerSecret) mpesa.consumerSecret = encrypt(consumerSecret);
+  if (passkey) mpesa.passkey = encrypt(passkey);
+  if (consumerKey || consumerSecret || passkey || enabled !== undefined) mpesa.configuredAt = new Date();
+  platform.mpesa = mpesa;
+
+  if (gracePeriodDays !== undefined) platform.gracePeriodDays = gracePeriodDays;
+  if (reminderDaysBefore !== undefined) platform.reminderDaysBefore = reminderDaysBefore;
+
+  await platform.save();
+  return getPlatformConfig(req, res);
+};
