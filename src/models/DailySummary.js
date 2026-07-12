@@ -72,6 +72,23 @@ const dailySummarySchema = new mongoose.Schema({
   /** Rule-based, human-readable takeaways rendered in the report UI. */
   insights: [{ type: String }],
   generatedAt: { type: Date, default: Date.now },
+  /**
+   * Cached Gemini explanation of this day's BusinessSnapshot. `fingerprint`
+   * is a cheap digest of today's revenue/transactions/expenses/profit at the
+   * time this was generated — NOT this doc's own `generatedAt`, which bumps
+   * on every dashboard/summary read regardless of whether anything actually
+   * changed. Only regenerate via Gemini when the fingerprint no longer
+   * matches today's current totals (i.e. a new sale/expense/refund landed).
+   * No separate cache collection needed.
+   */
+  aiInsight: {
+    summary: { type: String },
+    priority: { type: String, enum: ['low', 'medium', 'high'] },
+    actions: [{ type: String }],
+    health: { type: Number },
+    fingerprint: { type: String },
+    generatedAt: { type: Date },
+  },
 }, {
   timestamps: true,
 });

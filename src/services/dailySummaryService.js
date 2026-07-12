@@ -6,8 +6,10 @@ import Shift from '../models/Shift.js';
 import MpesaTransaction from '../models/MpesaTransaction.js';
 import AuditLog from '../models/AuditLog.js';
 import DailySummary from '../models/DailySummary.js';
+import { generateDailyInsights } from './intelligence/insightEngine.js';
 
 const SLOW_MOVER_WINDOW_DAYS = 7;
+const TRAILING_INSIGHT_DAYS = 7;
 
 /** [startOfDay, endOfDay) for a YYYY-MM-DD string (UTC, matching the other crons). */
 const dayWindow = (dateStr) => {
@@ -17,44 +19,6 @@ const dayWindow = (dateStr) => {
 };
 
 const REVENUE_STATUSES = ['completed', 'refund_pending'];
-
-/** Rule-based takeaways — plain sentences the owner can act on. */
-const buildInsights = ({ totals, refunds, voids, shifts, inventory, bestSellers, mpesaReconciliation }) => {
-  const insights = [];
-  if (totals.revenue === 0) {
-    insights.push('No sales were recorded today.');
-    return insights;
-  }
-  if (bestSellers[0]) {
-    insights.push(`${bestSellers[0].name} led the day with ${bestSellers[0].quantity} sold.`);
-  }
-  if (totals.grossProfit > 0) {
-    const margin = Math.round((totals.grossProfit / totals.revenue) * 100);
-    insights.push(`Estimated gross margin: ${margin}% of revenue.`);
-  }
-  if (shifts.totalDiscrepancy < 0) {
-    insights.push(`Cash drawers were short by ${Math.abs(shifts.totalDiscrepancy).toFixed(0)} across today's shifts — worth a look.`);
-  } else if (shifts.count > 0 && shifts.totalDiscrepancy === 0) {
-    insights.push('Every drawer balanced to the shilling today.');
-  }
-  if (shifts.unclosed > 0) {
-    insights.push(`${shifts.unclosed} shift${shifts.unclosed === 1 ? ' is' : 's are'} still open — remind staff to clock out.`);
-  }
-  const refundRate = totals.transactions > 0 ? refunds.count / totals.transactions : 0;
-  if (refundRate > 0.05) {
-    insights.push(`Refunds hit ${Math.round(refundRate * 100)}% of transactions today — above the healthy range.`);
-  }
-  if (voids.count > 2) {
-    insights.push(`${voids.count} sales were voided today; frequent voids can signal training gaps or misuse.`);
-  }
-  if (inventory.lowStockCount > 0) {
-    insights.push(`${inventory.lowStockCount} product${inventory.lowStockCount === 1 ? ' is' : 's are'} at or below their low-stock alert.`);
-  }
-  if (Math.abs(mpesaReconciliation.delta) > 1) {
-    insights.push(`M-PESA records differ from recorded sales by ${Math.abs(mpesaReconciliation.delta).toFixed(0)} — reconcile before banking.`);
-  }
-  return insights;
-};
 
 /**
  * Compiles (and upserts) the end-of-day business summary for a shop.
@@ -79,6 +43,7 @@ export const generateDailySummary = async (shopId, dateStr) => {
     adjustmentAgg,
     mpesaAgg,
     soldRecently,
+    trailingSummaries,
   ] = await Promise.all([
     // Revenue + transaction counts per payment method
     Sale.aggregate([
@@ -147,6 +112,12 @@ export const generateDailySummary = async (shopId, dateStr) => {
       { $unwind: '$items' },
       { $group: { _id: '$items.productId' } },
     ]),
+    // Most-recent-first, excluding today — feeds the trailing-average
+    // comparisons in insightEngine.generateDailyInsights.
+    DailySummary.find({ shop, date: { $lt: dateStr } })
+      .sort({ date: -1 })
+      .limit(TRAILING_INSIGHT_DAYS)
+      .lean(),
   ]);
 
   const byMethod = { cash: { count: 0, total: 0 }, mpesa: { count: 0, total: 0 }, card: { count: 0, total: 0 } };
@@ -219,7 +190,7 @@ export const generateDailySummary = async (shopId, dateStr) => {
     },
     generatedAt: new Date(),
   };
-  doc.insights = buildInsights(doc);
+  doc.insights = generateDailyInsights(doc, trailingSummaries);
 
   return DailySummary.findOneAndUpdate(
     { shop, date: dateStr },

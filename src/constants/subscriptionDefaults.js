@@ -73,6 +73,7 @@ export const DEFAULT_PLANS = [
       'cloud_backup',
       'advanced_analytics',
       'priority_support',
+      'ai_insights',
     ],
     badge: 'Recommended',
     priceComparison: 'Save over 50% compared to per-staff pricing.',
