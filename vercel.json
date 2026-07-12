@@ -32,6 +32,10 @@
   {
    "path": "/api/v1/cron/push-campaign-dispatch",
    "schedule": "*/15 * * * *"
+  },
+  {
+   "path": "/api/v1/cron/subscription-payment-reconcile",
+   "schedule": "*/5 * * * *"
   }
  ]
 }

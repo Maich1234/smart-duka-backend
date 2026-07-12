@@ -2,6 +2,7 @@ import Shop from '../models/Shop.js';
 import User from '../models/User.js';
 import NotificationLog from '../models/NotificationLog.js';
 import Subscription from '../models/Subscription.js';
+import SubscriptionPayment from '../models/SubscriptionPayment.js';
 import PlatformConfig from '../models/PlatformConfig.js';
 import PushCampaign from '../models/PushCampaign.js';
 import { sendPushToUser } from '../utils/push.js';
@@ -10,6 +11,7 @@ import { generateDailySummary } from '../services/dailySummaryService.js';
 import { dueReminder } from '../services/subscriptionPricingService.js';
 import { detectSalesAnomaly } from '../services/intelligence/salesAnomalyService.js';
 import { claimAndDispatchCampaign } from '../services/pushCampaignService.js';
+import { reconcilePayment } from './subscriptionController.js';
 
 const STOCKOUT_CRITICAL_DAYS = 3;
 
@@ -242,4 +244,37 @@ export const pushCampaignDispatch = async (req, res) => {
   }
 
   res.json({ success: true, processed: due.length, dispatched: results.length, results });
+};
+
+/**
+ * Safety net for the "paid but never activated" class of bug: re-verifies
+ * against Safaricom any subscription payment that hasn't been fully
+ * activated yet — whether it's still `pending` (the async callback may
+ * simply never arrive) or was locally marked `timeout` (we gave up
+ * waiting; Safaricom may have still completed it moments later). Runs
+ * every 5 minutes via Vercel Cron.
+ */
+export const subscriptionPaymentReconcile = async (req, res) => {
+  if (!verifyCronSecret(req)) {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
+  }
+
+  const cutoff = new Date(Date.now() - 2 * 60 * 1000);
+  const candidates = await SubscriptionPayment.find({
+    status: { $in: ['pending', 'timeout'] },
+    createdAt: { $lt: cutoff },
+    $or: [{ periodEnd: { $exists: false } }, { periodEnd: null }],
+  });
+
+  const results = [];
+  for (const payment of candidates) {
+    try {
+      const { changed } = await reconcilePayment(payment);
+      if (changed) results.push({ payment: String(payment._id), status: payment.status });
+    } catch (err) {
+      console.error('[cron] subscription payment reconcile failed for', String(payment._id), err.message);
+    }
+  }
+
+  res.json({ success: true, processed: candidates.length, reconciled: results.length, results });
 };

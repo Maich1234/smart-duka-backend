@@ -558,10 +558,16 @@ export const getPaymentStatus = async (req, res) => {
  * then on success extends the subscription: the paid period starts when the
  * trial ends ("your subscription only starts after your trial ends"), or
  * stacks on the current paid period, or starts now — whichever is latest.
+ *
+ * The response is sent only once processing is fully complete (not before).
+ * A payment's DB status must never say "success" while the subscription
+ * itself hasn't actually been activated yet — on serverless hosting,
+ * "respond first, keep working after" risks the function being frozen
+ * mid-activation, leaving a payment permanently marked successful with the
+ * subscription never actually unlocked. Safaricom's callback timeout budget
+ * comfortably covers the single DB round trip this now takes before replying.
  */
 export const handleMpesaCallback = async (req, res) => {
-  res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
-
   try {
     const provider = getPaymentProvider('mpesa');
     const parsed = provider.parseCallback(req.body);
@@ -596,7 +602,7 @@ export const handleMpesaCallback = async (req, res) => {
 
     if (!payment) {
       console.error('[Subscriptions Callback] Unknown or already-settled providerRef:', parsed.providerRef);
-      return;
+      return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
     }
 
     if (status === 'success') {
@@ -610,13 +616,27 @@ export const handleMpesaCallback = async (req, res) => {
       entityId: payment._id,
       details: { resultCode: parsed.resultCode, receipt: parsed.receipt, amount: payment.amount },
     }).catch(() => {});
+
+    return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
   } catch (err) {
     console.error('[Subscriptions Callback] Processing error:', err.message);
+    // Still 200 — Safaricom retries on non-200, and a retry would just replay
+    // the same (already-logged) failure. The reconciliation cron/recheck
+    // endpoint is the real recovery path for whatever went wrong here.
+    return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
   }
 };
 
-/** Extends the subscription for a payment that just succeeded. */
+/**
+ * Extends the subscription for a payment that just succeeded. Idempotent —
+ * safe to call more than once for the same payment (the reconciliation path
+ * may re-run this for a payment whose activation is uncertain) — a payment
+ * only ever gets `periodEnd` set once real processing has happened, so a
+ * second call is a no-op rather than double-crediting a promo redemption.
+ */
 async function applySuccessfulPayment(payment) {
+  if (payment.periodEnd) return;
+
   const subscription = await Subscription.findById(payment.subscription);
   if (!subscription) {
     console.error('[Subscriptions Callback] Payment has no subscription:', payment._id);
@@ -651,3 +671,173 @@ async function applySuccessfulPayment(payment) {
     await Promotion.updateOne({ _id: payment.promotion }, { $inc: { redemptionCount: 1 } });
   }
 }
+
+const DEFINITIVE_FAILURE_CODES = new Set(['1032', '1037', '1001', '1', '2001', '1025']);
+
+/**
+ * Re-verifies a payment directly against Safaricom's STK Push Query — the
+ * safety net for whenever the async callback never arrives at all, or
+ * arrived but activation didn't complete (the bug this whole reconciliation
+ * path exists to recover from). Safe to call on any payment that hasn't
+ * been fully activated yet, regardless of its current status: `pending`,
+ * `timeout`, or a `success` whose activation silently failed.
+ *
+ * `receiptHint` (e.g. from a user-pasted M-Pesa SMS) is stored as the
+ * receipt when Safaricom's status query itself can't supply one — unlike
+ * the callback, the query response never includes the receipt number.
+ */
+export async function reconcilePayment(payment, { receiptHint } = {}) {
+  if (payment.periodEnd) {
+    return { payment, changed: false };
+  }
+
+  const provider = getPaymentProvider(payment.provider);
+  if (!provider.queryStatus) {
+    return { payment, changed: false };
+  }
+
+  let result;
+  try {
+    result = await provider.queryStatus({ checkoutRequestId: payment.providerRef });
+  } catch (err) {
+    console.error('[Subscriptions] reconcilePayment query failed:', err.message);
+    return { payment, changed: false };
+  }
+
+  if (result.success) {
+    payment.status = 'success';
+    payment.resultCode = result.resultCode;
+    payment.errorMessage = null;
+    payment.receipt = payment.receipt ?? receiptHint ?? null;
+    payment.transactionDate = payment.transactionDate ?? new Date();
+    await payment.save();
+    await applySuccessfulPayment(payment);
+    return { payment, changed: true };
+  }
+
+  if (result.resultCode && DEFINITIVE_FAILURE_CODES.has(result.resultCode)) {
+    const status = result.resultCode === '1032' ? 'cancelled' : 'failed';
+    payment.status = status;
+    payment.resultCode = result.resultCode;
+    payment.errorMessage = result.resultDesc ?? 'Payment did not complete.';
+    await payment.save();
+    return { payment, changed: true };
+  }
+
+  // Inconclusive (still processing on Safaricom's side, or the query itself
+  // errored) — leave the payment exactly as it was; a later reconcile
+  // attempt (cron or another manual recheck) will re-verify.
+  return { payment, changed: false };
+}
+
+/** POST /subscriptions/pay/:paymentId/recheck — on-demand reconciliation. */
+export const recheckPayment = async (req, res) => {
+  try {
+    const shopId = shopIdOf(req);
+    const payment = await SubscriptionPayment.findOne({ _id: req.params.paymentId, shop: shopId });
+    if (!payment) {
+      return res.status(404).json({ success: false, message: 'Payment not found' });
+    }
+
+    await reconcilePayment(payment);
+
+    return res.json({
+      success: true,
+      data: {
+        paymentId: payment._id,
+        status: payment.status,
+        amount: payment.amount,
+        currency: payment.currency,
+        receipt: payment.receipt ?? null,
+        periodEnd: payment.periodEnd ?? null,
+        errorMessage: payment.errorMessage ?? null,
+      },
+    });
+  } catch (err) {
+    console.error('[Subscriptions] recheckPayment error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to recheck the payment.' });
+  }
+};
+
+// Matches the receipt code Safaricom puts at the very start of every M-Pesa
+// confirmation SMS, e.g. "QGH7XXXXX Confirmed. Ksh500.00 sent to...".
+const MPESA_RECEIPT_PATTERN = /^([A-Z0-9]{8,12})\s+Confirmed/i;
+const MPESA_AMOUNT_PATTERN = /Ksh\s?([\d,]+\.\d{2})/i;
+
+/**
+ * POST /subscriptions/reconcile — recovery path for "I paid but I'm still
+ * locked out", triggered by the owner pasting their M-Pesa confirmation SMS.
+ * Never trusts the pasted text on its own: it only ever re-verifies a
+ * payment WE already initiated against Safaricom directly (via
+ * reconcilePayment) — the pasted receipt is used to pick the right payment
+ * and to record the receipt number (which the status-query API can't
+ * supply), never as standalone proof.
+ */
+export const reconcileByMessage = async (req, res) => {
+  try {
+    const shopId = shopIdOf(req);
+    const message = req.body.message ?? '';
+
+    const receiptMatch = message.match(MPESA_RECEIPT_PATTERN);
+    if (!receiptMatch) {
+      return res.status(400).json({
+        success: false,
+        message: "Couldn't find an M-Pesa confirmation code in that message. Paste the full SMS from Safaricom.",
+      });
+    }
+    const receipt = receiptMatch[1].toUpperCase();
+    const amountMatch = message.match(MPESA_AMOUNT_PATTERN);
+    const pastedAmount = amountMatch ? Number(amountMatch[1].replace(/,/g, '')) : null;
+
+    const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    // An exact receipt match (callback already recorded it, just didn't
+    // activate) beats guessing from recency.
+    const candidate = await SubscriptionPayment.findOne({ shop: shopId, receipt })
+      ?? await SubscriptionPayment.findOne({
+        shop: shopId,
+        createdAt: { $gte: since },
+        $or: [{ periodEnd: { $exists: false } }, { periodEnd: null }],
+      }).sort({ createdAt: -1 });
+
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        message: "We couldn't find a matching payment attempt from the last 48 hours. Start a new payment, or contact support with this M-Pesa code.",
+      });
+    }
+
+    if (candidate.receipt && candidate.receipt !== receipt) {
+      return res.status(409).json({
+        success: false,
+        message: `This code doesn't match our most recent payment attempt (receipt ${candidate.receipt}). Contact support with both codes if you believe this is wrong.`,
+      });
+    }
+    if (pastedAmount != null && Math.abs(pastedAmount - candidate.amount) > 1) {
+      return res.status(409).json({
+        success: false,
+        message: `That receipt is for Ksh ${pastedAmount}, but the pending payment was for Ksh ${candidate.amount}. Contact support if this looks wrong.`,
+      });
+    }
+
+    await reconcilePayment(candidate, { receiptHint: receipt });
+
+    return res.json({
+      success: true,
+      data: {
+        paymentId: candidate._id,
+        status: candidate.status,
+        amount: candidate.amount,
+        currency: candidate.currency,
+        receipt: candidate.receipt ?? null,
+        periodEnd: candidate.periodEnd ?? null,
+        errorMessage: candidate.errorMessage ?? null,
+      },
+      message: candidate.periodEnd
+        ? 'Payment verified — your subscription is active.'
+        : 'We checked with M-Pesa but this payment isn’t confirmed yet. Try again in a minute.',
+    });
+  } catch (err) {
+    console.error('[Subscriptions] reconcileByMessage error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to reconcile the payment.' });
+  }
+};

@@ -33,3 +33,7 @@ export const previewQuerySchema = Joi.object({
 export const validatePromoSchema = Joi.object({
   code: promoCode.required(),
 }).unknown(false);
+
+export const reconcileByMessageSchema = Joi.object({
+  message: Joi.string().trim().min(1).max(500).required(),
+}).unknown(false);

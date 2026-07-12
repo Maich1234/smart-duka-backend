@@ -1,5 +1,5 @@
 import PlatformConfig from '../../models/PlatformConfig.js';
-import { initiateSTKPush, parseSTKCallback, normalizeKenyanPhone } from '../mpesaService.js';
+import { initiateSTKPush, parseSTKCallback, querySTKStatus, normalizeKenyanPhone } from '../mpesaService.js';
 
 /**
  * Collects subscription payments into SmartDuka's own Daraja account
@@ -59,6 +59,23 @@ export default {
       resultCode: parsed.resultCode,
       resultDesc: parsed.resultDesc,
       receipt: parsed.mpesaReceiptNumber ?? null,
+    };
+  },
+
+  /**
+   * Asks Safaricom directly what happened to a given STK push — the
+   * reconciliation path for payments whose async callback never arrived (or
+   * arrived but activation failed before it could be recorded). Unlike the
+   * callback, the query response never includes the M-Pesa receipt number.
+   */
+  async queryStatus({ checkoutRequestId }) {
+    const config = await this.getConfig();
+    const data = await querySTKStatus({ config, checkoutRequestId });
+    const resultCode = data?.ResultCode != null ? String(data.ResultCode) : null;
+    return {
+      resultCode,
+      resultDesc: data?.ResultDesc ?? data?.errorMessage ?? null,
+      success: resultCode === '0',
     };
   },
 };

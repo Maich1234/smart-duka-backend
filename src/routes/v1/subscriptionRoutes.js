@@ -11,12 +11,15 @@ import {
   initiatePayment,
   getPaymentStatus,
   handleMpesaCallback,
+  recheckPayment,
+  reconcileByMessage,
 } from '../../controllers/subscriptionController.js';
 import {
   activateTrialSchema,
   initiatePaymentSchema,
   previewQuerySchema,
   validatePromoSchema,
+  reconcileByMessageSchema,
 } from '../../validations/subscriptionValidation.js';
 
 const router = express.Router();
@@ -37,5 +40,7 @@ router.post('/trial', protect, ownerOnly, validate(activateTrialSchema), activat
 router.post('/cancel', protect, ownerOnly, cancelSubscription);
 router.post('/pay', protect, ownerOnly, validate(initiatePaymentSchema), initiatePayment);
 router.get('/pay/:paymentId', protect, ownerOnly, getPaymentStatus);
+router.post('/pay/:paymentId/recheck', protect, ownerOnly, recheckPayment);
+router.post('/reconcile', protect, ownerOnly, validate(reconcileByMessageSchema), reconcileByMessage);
 
 export default router;
