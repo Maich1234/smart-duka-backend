@@ -79,11 +79,15 @@ export const updatePromotionSchema = Joi.object({
 }).unknown(false).min(1);
 
 const segmentSchema = Joi.object({
-  type: Joi.string().valid('all', 'state', 'plan').required(),
+  type: Joi.string().valid('all', 'state', 'plan', 'location').required(),
   states: Joi.array().items(Joi.string().valid('none', 'trialing', 'active', 'grace', 'locked'))
     .when('type', { is: 'state', then: Joi.array().min(1).required(), otherwise: Joi.array().max(0) }),
   planSlugs: Joi.array().items(Joi.string())
     .when('type', { is: 'plan', then: Joi.array().min(1).required(), otherwise: Joi.array().max(0) }),
+  country: Joi.string().uppercase()
+    .when('type', { is: 'location', then: Joi.string().required(), otherwise: Joi.string().allow(null).default(null) }),
+  counties: Joi.array().items(Joi.string())
+    .when('type', { is: 'location', then: Joi.array().min(1).required(), otherwise: Joi.array().max(0) }),
   roles: Joi.array().items(Joi.string().valid('owner', 'staff')).min(1).default(['owner']),
 }).unknown(false);
 

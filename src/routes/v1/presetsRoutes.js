@@ -1,5 +1,6 @@
 import express from 'express';
 import { COUNTRIES, CURRENCIES, UNITS_OF_MEASURE } from '../../constants/presets.js';
+import { getCounties, getSubcounties } from '../../controllers/presetsController.js';
 
 const router = express.Router();
 
@@ -14,5 +15,9 @@ router.get('/', (_req, res) => {
     },
   });
 });
+
+// DB-backed (see Location model) — seeded via scripts/seedLocations.mjs.
+router.get('/counties', getCounties);
+router.get('/subcounties', getSubcounties);
 
 export default router;

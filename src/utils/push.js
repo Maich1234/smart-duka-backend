@@ -10,6 +10,8 @@ const interpolate = (str, vars = {}) =>
 /** shop may be a populated doc, a bare ObjectId ref, or absent. */
 const shopIdOf = (user) => user.shop?._id ?? user.shop;
 const shopNameOf = (user) => (typeof user.shop === 'object' ? user.shop?.name : undefined) ?? '';
+const shopLocationOf = (user) => (typeof user.shop === 'object' ? user.shop?.county : undefined) ?? '';
+const personalizationVars = (user) => ({ name: user.name, shopName: shopNameOf(user), location: shopLocationOf(user) });
 
 /**
  * Persists the in-app inbox record for a push, independent of whether the
@@ -39,7 +41,7 @@ const persistNotifications = async (records) =>
  * invalid/unregistered so the list doesn't grow stale.
  */
 export const sendPushToUser = async (user, { title, body, data } = {}) => {
-  const vars = { name: user.name, shopName: shopNameOf(user) };
+  const vars = personalizationVars(user);
   const finalTitle = interpolate(title, vars);
   const finalBody = interpolate(body, vars);
 
@@ -91,11 +93,10 @@ export const sendPushToUsers = async (users, { title, body, data } = {}) => {
   const payloadData = data ? Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)])) : undefined;
 
   // Interpolate once per user; reused for both the inbox record and the push.
-  const rendered = users.map((user) => ({
-    user,
-    title: interpolate(title, { name: user.name, shopName: shopNameOf(user) }),
-    body: interpolate(body, { name: user.name, shopName: shopNameOf(user) }),
-  }));
+  const rendered = users.map((user) => {
+    const vars = personalizationVars(user);
+    return { user, title: interpolate(title, vars), body: interpolate(body, vars) };
+  });
 
   await persistNotifications(
     rendered.map((r) => ({

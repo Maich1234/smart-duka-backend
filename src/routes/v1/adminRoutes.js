@@ -7,6 +7,7 @@ import { listPromotions, createPromotion, updatePromotion } from '../../controll
 import { listShops } from '../../controllers/adminShopsController.js';
 import { listAuditLogs } from '../../controllers/adminAuditController.js';
 import { listPushCampaigns, createPushCampaign, sendPushCampaign, cancelPushCampaign } from '../../controllers/adminPushController.js';
+import { getCounties, getSubcounties } from '../../controllers/presetsController.js';
 import { protectAdmin } from '../../middlewares/adminAuth.js';
 import validate from '../../middlewares/validate.js';
 import { createRateLimitStore } from '../../utils/rateLimitStore.js';
@@ -57,5 +58,10 @@ router.get('/push-campaigns', listPushCampaigns);
 router.post('/push-campaigns', validate(createPushCampaignSchema), createPushCampaign);
 router.post('/push-campaigns/:id/send', sendPushCampaign);
 router.patch('/push-campaigns/:id/cancel', cancelPushCampaign);
+
+// Same Location-backed lookups as GET /presets/counties|subcounties, mirrored
+// here since the admin web app calls through adminApi (separate base URL/auth).
+router.get('/locations/counties', getCounties);
+router.get('/locations/subcounties', getSubcounties);
 
 export default router;

@@ -5,11 +5,15 @@ import mongoose from 'mongoose';
 // push-campaign-dispatch cron. Owners who've turned off push notifications
 // have no fcmTokens registered, so they're naturally excluded from targeting.
 const segmentSchema = new mongoose.Schema({
-  type: { type: String, enum: ['all', 'state', 'plan'], required: true },
+  type: { type: String, enum: ['all', 'state', 'plan', 'location'], required: true },
   // Access states from subscriptionPricingService.deriveAccess, when type === 'state'.
   states: { type: [String], default: [] },
   // SubscriptionPlan slugs, when type === 'plan'.
   planSlugs: { type: [String], default: [] },
+  // When type === 'location': country code (Shop.country) + county display
+  // names (Shop.county) to match against.
+  country: { type: String, default: null },
+  counties: { type: [String], default: [] },
   // Which User roles within the matched shops receive this campaign.
   roles: { type: [String], enum: ['owner', 'staff'], default: ['owner'] },
 }, { _id: false });

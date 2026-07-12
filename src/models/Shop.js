@@ -33,6 +33,19 @@ const shopSchema = new mongoose.Schema({
     trim: true,
     uppercase: true,
   },
+  // Denormalized display names (not refs) from the Location collection —
+  // matches how `address` already works, and keeps push-campaign area
+  // targeting a plain string match instead of a join.
+  county: {
+    type: String,
+    default: '',
+    trim: true,
+  },
+  subCounty: {
+    type: String,
+    default: '',
+    trim: true,
+  },
   currency: {
     type: String,
     default: 'KES',

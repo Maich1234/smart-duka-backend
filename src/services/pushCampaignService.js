@@ -31,20 +31,28 @@ async function shopIdsForStates(states) {
     .map((shop) => shop._id);
 }
 
+/** Shop ids in a given country whose county matches one of the given names. */
+async function shopIdsForLocation({ country, counties }) {
+  const shops = await Shop.find({ country, county: { $in: counties } }).select('_id').lean();
+  return shops.map((s) => s._id);
+}
+
 /** Resolves a campaign's segment definition into the Users to push to. `shop` is
- *  populated (name only) so title/body can interpolate {{shopName}} per recipient. */
+ *  populated with the fields {{shopName}}/{{location}} interpolation needs. */
 export async function resolveSegmentTargets(segment) {
   const roles = segment.roles?.length ? segment.roles : ['owner'];
+  const shopFields = 'name county subCounty country';
 
   if (segment.type === 'all') {
-    return User.find({ role: { $in: roles }, isActive: true }).populate('shop', 'name');
+    return User.find({ role: { $in: roles }, isActive: true }).populate('shop', shopFields);
   }
 
-  const shopIds = segment.type === 'plan'
-    ? await shopIdsForPlans(segment.planSlugs)
-    : await shopIdsForStates(segment.states);
+  let shopIds;
+  if (segment.type === 'plan') shopIds = await shopIdsForPlans(segment.planSlugs);
+  else if (segment.type === 'location') shopIds = await shopIdsForLocation(segment);
+  else shopIds = await shopIdsForStates(segment.states);
 
-  return User.find({ shop: { $in: shopIds }, role: { $in: roles }, isActive: true }).populate('shop', 'name');
+  return User.find({ shop: { $in: shopIds }, role: { $in: roles }, isActive: true }).populate('shop', shopFields);
 }
 
 /** Sends an already-claimed campaign and records the outcome. */
