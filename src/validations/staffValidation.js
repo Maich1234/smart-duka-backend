@@ -12,6 +12,9 @@ export const createStaffSchema = Joi.object({
   // request (required for offline queueing — a follow-up permissions call
   // can't reference a server id that doesn't exist yet). Omitted → defaults.
   permissions: Joi.array().items(Joi.string().valid(...PERMISSION_VALUES)),
+  // Set once the owner has seen and accepted the seat-price-increase modal —
+  // see computeSeatAdditionImpact in staffController.
+  priceConfirmed: Joi.boolean().optional(),
 }).unknown(false);
 
 export const updateStaffSchema = Joi.object({

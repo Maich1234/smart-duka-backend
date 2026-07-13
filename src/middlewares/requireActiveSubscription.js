@@ -5,17 +5,20 @@ import { deriveAccess } from '../services/subscriptionPricingService.js';
 const ACCESS_ALLOWED = ['trialing', 'active', 'grace'];
 
 /**
- * Gates a route by subscription plan feature flag. First enforcement of
- * this kind in the backend — every other feature is gated client-side only
- * (deriveAccess feeds UI banners, nothing blocks the API). That's fine when
- * a bypassed check just shows the wrong screen; it isn't fine here, since
- * each ungated call would burn real Gemini API spend per shop.
+ * Gates a route behind an active subscription (trialing/active/grace) —
+ * plan-tier is irrelevant, since AI insights and every other paid feature
+ * are available to any shop that's paying (or trialing), not just a
+ * specific tier. First enforcement of this kind in the backend — every
+ * other feature is gated client-side only (deriveAccess feeds UI banners,
+ * nothing blocks the API). That's fine when a bypassed check just shows the
+ * wrong screen; it isn't fine here, since each ungated call would burn real
+ * Gemini API spend per shop.
  */
-export const requireFeature = (flag) => async (req, res, next) => {
+export const requireActiveSubscription = async (req, res, next) => {
   try {
     const shopId = req.user.shop._id ?? req.user.shop;
     const [subscription, platform] = await Promise.all([
-      Subscription.findOne({ shop: shopId }).populate('plan').lean(),
+      Subscription.findOne({ shop: shopId }).lean(),
       PlatformConfig.get(),
     ]);
 
@@ -23,13 +26,10 @@ export const requireFeature = (flag) => async (req, res, next) => {
     if (!ACCESS_ALLOWED.includes(access.state)) {
       return res.status(403).json({ success: false, message: 'Your subscription needs to be active to use this feature.' });
     }
-    if (!subscription.plan?.features?.includes(flag)) {
-      return res.status(403).json({ success: false, message: 'This feature is not included in your current plan.' });
-    }
 
     next();
   } catch (err) {
-    console.error('[requireFeature] error:', err.message);
+    console.error('[requireActiveSubscription] error:', err.message);
     return res.status(500).json({ success: false, message: 'Failed to verify subscription access.' });
   }
 };

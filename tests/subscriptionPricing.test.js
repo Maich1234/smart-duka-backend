@@ -6,6 +6,7 @@ import {
   yearlyTotalForPlan,
   applyPromotion,
   computePrice,
+  computeSeatAdditionImpact,
 } from '../src/services/subscriptionPricingService.js';
 import Promotion from '../src/models/Promotion.js';
 
@@ -97,6 +98,27 @@ test('computePrice picks the tier when no plan is forced', () => {
   const price = computePrice({ plans, staffCount: 3, billingCycle: 'monthly' });
   assert.equal(price.plan.slug, 'starter');
   assert.equal(price.amountDue, 630);
+});
+
+test('computeSeatAdditionImpact flags a bill increase on a per-staff plan', () => {
+  const impact = computeSeatAdditionImpact(starter, 2, 'monthly');
+  assert.equal(impact.currentAmount, 420);
+  assert.equal(impact.projectedAmount, 630);
+  assert.equal(impact.increased, true);
+});
+
+test('computeSeatAdditionImpact is a no-op inside a flat plan\'s included seats', () => {
+  const impact = computeSeatAdditionImpact(business, 5, 'monthly');
+  assert.equal(impact.currentAmount, 2000);
+  assert.equal(impact.projectedAmount, 2000);
+  assert.equal(impact.increased, false);
+});
+
+test('computeSeatAdditionImpact flags overflow past a flat plan\'s max staff', () => {
+  const impact = computeSeatAdditionImpact(business, 20, 'monthly');
+  assert.equal(impact.currentAmount, 2000);
+  assert.equal(impact.projectedAmount, 2100);
+  assert.equal(impact.increased, true);
 });
 
 test('promotion redeemability windows and caps', () => {

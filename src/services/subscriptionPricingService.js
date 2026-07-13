@@ -35,6 +35,18 @@ export function monthlyTotalForPlan(plan, staffCount) {
   return Math.round(total);
 }
 
+/**
+ * What adding one more billable seat does to the shop's bill on its current
+ * plan — the check behind the "this will increase your bill" confirmation
+ * shown before a new staff account is created.
+ */
+export function computeSeatAdditionImpact(plan, currentStaffCount, billingCycle = 'monthly') {
+  const totalFor = (count) => (billingCycle === 'yearly' ? yearlyTotalForPlan(plan, count) : monthlyTotalForPlan(plan, count));
+  const currentAmount = totalFor(currentStaffCount);
+  const projectedAmount = totalFor(currentStaffCount + 1);
+  return { currentAmount, projectedAmount, increased: projectedAmount > currentAmount };
+}
+
 /** Yearly total: explicit override, else monthly × 12 less the yearly discount. */
 export function yearlyTotalForPlan(plan, staffCount) {
   if (plan.yearlyPrice != null && plan.billingType === 'flat' && staffCount <= plan.maxStaff) {

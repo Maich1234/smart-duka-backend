@@ -1,7 +1,9 @@
 import User from '../models/User.js';
+import Subscription from '../models/Subscription.js';
 import { DEFAULT_STAFF_PERMISSIONS, withImpliedPermissions } from '../constants/permissions.js';
 import { parsePagination } from '../utils/pagination.js';
 import { escapeRegex } from '../utils/escapeRegex.js';
+import { getBillableUserCount, computeSeatAdditionImpact } from '../services/subscriptionPricingService.js';
 
 export const getStaff = async (req, res) => {
   const { search, startDate, endDate } = req.query;
@@ -36,9 +38,29 @@ export const getStaffById = async (req, res) => {
 };
 
 export const createStaff = async (req, res) => {
-  const { email } = req.body;
+  const { email, priceConfirmed } = req.body;
   const existingUser = await User.findOne({ email });
   if (existingUser) return res.status(400).json({ success: false, message: 'Email already exists' });
+
+  const shopId = req.user.shop._id;
+  const subscription = await Subscription.findOne({ shop: shopId }).populate('plan').lean();
+  if (subscription?.plan) {
+    const currentStaffCount = await getBillableUserCount(shopId);
+    const impact = computeSeatAdditionImpact(subscription.plan, currentStaffCount, subscription.billingCycle);
+    if (impact.increased && !priceConfirmed) {
+      return res.status(409).json({
+        success: false,
+        code: 'SEAT_PRICE_CONFIRMATION_REQUIRED',
+        message: `Adding this team member raises your ${subscription.billingCycle} bill from ${impact.currentAmount} to ${impact.projectedAmount} ${subscription.plan.currency}. Confirm to continue.`,
+        data: {
+          currentAmount: impact.currentAmount,
+          projectedAmount: impact.projectedAmount,
+          currency: subscription.plan.currency,
+          billingCycle: subscription.billingCycle,
+        },
+      });
+    }
+  }
 
   const staff = await User.create({
     ...req.body,
