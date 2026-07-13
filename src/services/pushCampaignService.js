@@ -6,6 +6,7 @@ import PlatformConfig from '../models/PlatformConfig.js';
 import PushCampaign from '../models/PushCampaign.js';
 import { deriveAccess } from './subscriptionPricingService.js';
 import { sendPushToUsers } from '../utils/push.js';
+import { isFirebaseConfigured } from '../config/firebaseAdmin.js';
 
 /** Shop ids currently subscribed to one of the given plan slugs. */
 async function shopIdsForPlans(planSlugs) {
@@ -61,12 +62,23 @@ export async function dispatchCampaign(campaign) {
     const users = await resolveSegmentTargets(campaign.segment);
     const data = campaign.data && campaign.data.size ? Object.fromEntries(campaign.data) : undefined;
     const result = await sendPushToUsers(users, { title: campaign.title, body: campaign.body, data });
-    campaign.status = 'sent';
-    campaign.sentAt = new Date();
     campaign.stats = result;
+    campaign.sentAt = new Date();
+    if (result.targeted > 0 && !isFirebaseConfigured()) {
+      // sendPushToUsers still creates the in-app inbox entries — only the
+      // Firebase push itself was skipped — but "sent: 0/N" under a green
+      // "sent" badge reads as success. Surface it as a real failure instead
+      // of leaving the admin to notice the zero in a numbers column.
+      campaign.status = 'failed';
+      campaign.error = 'Firebase Admin is not configured on this server — no push notifications were delivered (in-app inbox entries were still created).';
+    } else {
+      campaign.status = 'sent';
+      campaign.error = null;
+    }
   } catch (err) {
     console.error('[PushCampaign] dispatch failed:', err.message);
     campaign.status = 'failed';
+    campaign.error = err.message;
   }
   await campaign.save();
   return campaign;

@@ -15,7 +15,20 @@ import { reconcilePayment } from './subscriptionController.js';
 
 const STOCKOUT_CRITICAL_DAYS = 3;
 
+let warnedMissingCronSecret = false;
+
 const verifyCronSecret = (req) => {
+  if (!process.env.CRON_SECRET) {
+    // Every cron hit — including Vercel's own scheduler — will 401 forever
+    // until this is set. Distinct from a bad/missing Authorization header so
+    // this doesn't read as a generic auth failure in the logs. Logged once
+    // per cold start rather than per-request to avoid spamming.
+    if (!warnedMissingCronSecret) {
+      console.error('[cron] CRON_SECRET is not set on this server — every cron request will be rejected until it is configured.');
+      warnedMissingCronSecret = true;
+    }
+    return false;
+  }
   const provided = req.headers.authorization?.replace('Bearer ', '');
   return !!provided && provided === process.env.CRON_SECRET;
 };
@@ -33,28 +46,36 @@ export const dailySalesCheck = async (req, res) => {
 
   const shops = await Shop.find({ isActive: true });
   const notified = [];
+  const failed = [];
   const todayStr = new Date().toISOString().slice(0, 10);
 
   for (const shop of shops) {
-    const anomaly = await detectSalesAnomaly(shop._id);
-    if (!anomaly) continue;
+    // One failing shop must not sink the whole batch — record and move on;
+    // the next run regenerates it.
+    try {
+      const anomaly = await detectSalesAnomaly(shop._id);
+      if (!anomaly) continue;
 
-    const alreadySent = await NotificationLog.findOne({ shop: shop._id, type: 'daily_sales_anomaly', key: todayStr });
-    if (alreadySent) continue;
+      const alreadySent = await NotificationLog.findOne({ shop: shop._id, type: 'daily_sales_anomaly', key: todayStr });
+      if (alreadySent) continue;
 
-    const { direction, z, todayTotal, avg, pctDiff } = anomaly;
-    const title = direction === 'high' ? '📈 Sales are unusually high today' : '📉 Sales are unusually low today';
-    const body = `Today's sales are ${Math.abs(pctDiff)}% ${direction === 'high' ? 'above' : 'below'} your usual average.`;
+      const { direction, z, todayTotal, avg, pctDiff } = anomaly;
+      const title = direction === 'high' ? '📈 Sales are unusually high today' : '📉 Sales are unusually low today';
+      const body = `Today's sales are ${Math.abs(pctDiff)}% ${direction === 'high' ? 'above' : 'below'} your usual average.`;
 
-    const owners = await User.find({ shop: shop._id, role: 'owner' });
-    for (const owner of owners) {
-      await sendPushToUser(owner, { title, body, data: { type: 'daily_sales_anomaly' } });
+      const owners = await User.find({ shop: shop._id, role: 'owner' });
+      for (const owner of owners) {
+        await sendPushToUser(owner, { title, body, data: { type: 'daily_sales_anomaly' } });
+      }
+      await NotificationLog.create({ shop: shop._id, type: 'daily_sales_anomaly', key: todayStr });
+      notified.push({ shop: shop._id, z, todayTotal, avg });
+    } catch (err) {
+      console.error('[cron] daily sales check failed for shop', String(shop._id), err.message);
+      failed.push(String(shop._id));
     }
-    await NotificationLog.create({ shop: shop._id, type: 'daily_sales_anomaly', key: todayStr });
-    notified.push({ shop: shop._id, z, todayTotal, avg });
   }
 
-  res.json({ success: true, processed: shops.length, notified: notified.length, results: notified });
+  res.json({ success: true, processed: shops.length, notified: notified.length, failed, results: notified });
 };
 
 /**
@@ -70,30 +91,38 @@ export const depletionAlerts = async (req, res) => {
 
   const shops = await Shop.find({ isActive: true });
   const notified = [];
+  const failed = [];
   const todayStr = new Date().toISOString().slice(0, 10);
 
   for (const shop of shops) {
-    const analytics = await getDepletionAnalytics(shop._id, { windowDays: 30 });
-    const critical = analytics.items.filter((i) => i.daysUntilStockout != null && i.daysUntilStockout <= STOCKOUT_CRITICAL_DAYS);
-    if (critical.length === 0) continue;
+    // One failing shop must not sink the whole batch — record and move on;
+    // the next run regenerates it.
+    try {
+      const analytics = await getDepletionAnalytics(shop._id, { windowDays: 30 });
+      const critical = analytics.items.filter((i) => i.daysUntilStockout != null && i.daysUntilStockout <= STOCKOUT_CRITICAL_DAYS);
+      if (critical.length === 0) continue;
 
-    const alreadySent = await NotificationLog.findOne({ shop: shop._id, type: 'depletion_alert', key: todayStr });
-    if (alreadySent) continue;
+      const alreadySent = await NotificationLog.findOne({ shop: shop._id, type: 'depletion_alert', key: todayStr });
+      if (alreadySent) continue;
 
-    const names = critical.slice(0, 3).map((c) => c.name).join(', ');
-    const extra = critical.length > 3 ? ` and ${critical.length - 3} more` : '';
-    const title = `⚠️ ${critical.length} product${critical.length === 1 ? '' : 's'} running low`;
-    const body = `${names}${extra} will run out within ${STOCKOUT_CRITICAL_DAYS} days at current sales pace.`;
+      const names = critical.slice(0, 3).map((c) => c.name).join(', ');
+      const extra = critical.length > 3 ? ` and ${critical.length - 3} more` : '';
+      const title = `⚠️ ${critical.length} product${critical.length === 1 ? '' : 's'} running low`;
+      const body = `${names}${extra} will run out within ${STOCKOUT_CRITICAL_DAYS} days at current sales pace.`;
 
-    const owners = await User.find({ shop: shop._id, role: 'owner' });
-    for (const owner of owners) {
-      await sendPushToUser(owner, { title, body, data: { type: 'depletion_alert' } });
+      const owners = await User.find({ shop: shop._id, role: 'owner' });
+      for (const owner of owners) {
+        await sendPushToUser(owner, { title, body, data: { type: 'depletion_alert' } });
+      }
+      await NotificationLog.create({ shop: shop._id, type: 'depletion_alert', key: todayStr });
+      notified.push({ shop: shop._id, count: critical.length });
+    } catch (err) {
+      console.error('[cron] depletion alerts failed for shop', String(shop._id), err.message);
+      failed.push(String(shop._id));
     }
-    await NotificationLog.create({ shop: shop._id, type: 'depletion_alert', key: todayStr });
-    notified.push({ shop: shop._id, count: critical.length });
   }
 
-  res.json({ success: true, processed: shops.length, notified: notified.length, results: notified });
+  res.json({ success: true, processed: shops.length, notified: notified.length, failed, results: notified });
 };
 
 /**

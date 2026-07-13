@@ -34,10 +34,16 @@ const pushCampaignSchema = new mongoose.Schema({
     enum: ['scheduled', 'sending', 'sent', 'failed', 'cancelled'],
     default: 'scheduled',
   },
-  // null = eligible to send as soon as "Send now" or the dispatcher claims it.
+  // null = not deferred — the admin page follows creation with an immediate
+  // POST /:id/send rather than waiting on scheduledAt. A future date is
+  // picked up later by the push-campaign-dispatch cron.
   scheduledAt: { type: Date, default: null },
   sentAt: { type: Date, default: null },
   stats: { type: statsSchema, default: () => ({}) },
+  // Set when status is 'failed' — e.g. Firebase Admin wasn't configured, or
+  // the dispatch threw. Lets the admin page explain a 0/N send instead of
+  // just showing an unexplained "failed" badge.
+  error: { type: String, default: null },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'AdminUser' },
 }, { timestamps: true });
 
