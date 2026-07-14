@@ -252,9 +252,12 @@ export const subscriptionReminders = async (req, res) => {
 
 /**
  * Sends every admin-scheduled push campaign whose scheduledAt has arrived.
- * Runs every 15 minutes via Vercel Cron. Uses the same atomic claim as the
- * admin "Send now" endpoint (claimAndDispatchCampaign), so a campaign never
- * gets sent twice even if a manual send races this run.
+ * Runs once daily via Vercel Cron — the Hobby plan only allows daily cron
+ * jobs, so a campaign scheduled for a specific time of day can go out up to
+ * ~24h late; move this to an external scheduler (or upgrade to Pro) if
+ * tighter timing is needed. Uses the same atomic claim as the admin "Send
+ * now" endpoint (claimAndDispatchCampaign), so a campaign never gets sent
+ * twice even if a manual send races this run.
  */
 export const pushCampaignDispatch = async (req, res) => {
   if (!verifyCronSecret(req)) {
@@ -284,8 +287,11 @@ export const pushCampaignDispatch = async (req, res) => {
  * marked `success` by the callback while the activation step that follows
  * it failed (the callback claims the payment before calling
  * applySuccessfulPayment, so a crash in between leaves `success` with no
- * `periodEnd` — exactly the state this cron exists to catch). Runs every 5
- * minutes via Vercel Cron.
+ * `periodEnd` — exactly the state this cron exists to catch). Runs once
+ * daily via Vercel Cron — the Hobby plan only allows daily cron jobs, so a
+ * stuck payment can take up to ~24h to self-heal; the owner-facing recheck
+ * and paste-M-Pesa-SMS recovery paths (and the admin reconcile endpoint)
+ * don't wait on this and work immediately.
  */
 export const subscriptionPaymentReconcile = async (req, res) => {
   if (!verifyCronSecret(req)) {
