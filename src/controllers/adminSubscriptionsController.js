@@ -1,3 +1,4 @@
+import User from '../models/User.js';
 import Shop from '../models/Shop.js';
 import Subscription from '../models/Subscription.js';
 import SubscriptionPayment from '../models/SubscriptionPayment.js';
@@ -5,6 +6,33 @@ import PlatformConfig from '../models/PlatformConfig.js';
 import { deriveAccess } from '../services/subscriptionPricingService.js';
 import { reconcilePayment } from './subscriptionController.js';
 import { logAudit } from '../services/auditLogService.js';
+
+/**
+ * GET /admin/shops/lookup?email= — resolves a shop from an owner/staff login
+ * email. Shop.email is a separate business-contact field (blank unless the
+ * owner filled it in via shop settings, and never set at signup) — the
+ * account's real login email lives on User, which is what support actually
+ * has when a customer reports a problem with "their account".
+ */
+export const lookupShopByUser = async (req, res) => {
+  const email = (req.query.email ?? '').toString().toLowerCase().trim();
+  if (!email) {
+    return res.status(400).json({ success: false, message: 'email query param is required' });
+  }
+
+  const user = await User.findOne({ email }).select('name email role shop isActive').populate('shop', 'name email').lean();
+  if (!user) {
+    return res.status(404).json({ success: false, message: 'No user found with that email' });
+  }
+
+  res.json({
+    success: true,
+    data: {
+      user: { _id: user._id, name: user.name, email: user.email, role: user.role, isActive: user.isActive },
+      shop: user.shop,
+    },
+  });
+};
 
 /**
  * GET /admin/shops/:id/subscription — subscription state plus recent payment

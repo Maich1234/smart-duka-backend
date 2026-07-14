@@ -5,7 +5,7 @@ import { listPlans, createPlan, updatePlan } from '../../controllers/adminPlansC
 import { getPlatformConfig, updatePlatformConfig } from '../../controllers/adminPlatformConfigController.js';
 import { listPromotions, createPromotion, updatePromotion } from '../../controllers/adminPromotionsController.js';
 import { listShops } from '../../controllers/adminShopsController.js';
-import { getShopSubscription, reconcileShopPayment } from '../../controllers/adminSubscriptionsController.js';
+import { lookupShopByUser, getShopSubscription, reconcileShopPayment } from '../../controllers/adminSubscriptionsController.js';
 import { listAuditLogs } from '../../controllers/adminAuditController.js';
 import { listPushCampaigns, createPushCampaign, sendPushCampaign, cancelPushCampaign } from '../../controllers/adminPushController.js';
 import { getCounties, getSubcounties } from '../../controllers/presetsController.js';
@@ -53,6 +53,7 @@ router.post('/promotions', validate(createPromotionSchema), createPromotion);
 router.patch('/promotions/:id', validate(updatePromotionSchema), updatePromotion);
 
 router.get('/shops', listShops);
+router.get('/shops/lookup', lookupShopByUser);
 router.get('/shops/:id/subscription', getShopSubscription);
 router.post('/subscriptions/payments/:paymentId/reconcile', reconcileShopPayment);
 router.get('/audit', listAuditLogs);
