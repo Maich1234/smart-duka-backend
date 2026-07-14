@@ -279,9 +279,13 @@ export const pushCampaignDispatch = async (req, res) => {
  * Safety net for the "paid but never activated" class of bug: re-verifies
  * against Safaricom any subscription payment that hasn't been fully
  * activated yet — whether it's still `pending` (the async callback may
- * simply never arrive) or was locally marked `timeout` (we gave up
- * waiting; Safaricom may have still completed it moments later). Runs
- * every 5 minutes via Vercel Cron.
+ * simply never arrive), was locally marked `timeout` (we gave up waiting;
+ * Safaricom may have still completed it moments later), or was already
+ * marked `success` by the callback while the activation step that follows
+ * it failed (the callback claims the payment before calling
+ * applySuccessfulPayment, so a crash in between leaves `success` with no
+ * `periodEnd` — exactly the state this cron exists to catch). Runs every 5
+ * minutes via Vercel Cron.
  */
 export const subscriptionPaymentReconcile = async (req, res) => {
   if (!verifyCronSecret(req)) {
@@ -290,7 +294,7 @@ export const subscriptionPaymentReconcile = async (req, res) => {
 
   const cutoff = new Date(Date.now() - 2 * 60 * 1000);
   const candidates = await SubscriptionPayment.find({
-    status: { $in: ['pending', 'timeout'] },
+    status: { $in: ['pending', 'timeout', 'success'] },
     createdAt: { $lt: cutoff },
     $or: [{ periodEnd: { $exists: false } }, { periodEnd: null }],
   });
