@@ -5,6 +5,7 @@ const DUPLICATE_KEY_MESSAGES = {
   checkoutRequestId: 'A payment with this reference already exists.',
   phone: 'This phone number is already registered.',
   name: 'A record with this name already exists.',
+  'shop + name': 'You already have a product with this name.',
 };
 
 const errorHandler = (err, req, res, next) => {

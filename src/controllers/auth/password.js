@@ -2,6 +2,8 @@ import User from '../../models/User.js';
 import OTP from '../../models/OTP.js';
 import { generateOTP } from '../../utils/generateOTP.js';
 import { sendOTPEmail } from '../../utils/email.js';
+import { revokeAllSessions } from '../../services/refreshTokenService.js';
+import { logAudit } from '../../services/auditLogService.js';
 
 export const changePassword = async (req, res) => {
   const { currentPassword, newPassword } = req.body;
@@ -13,6 +15,11 @@ export const changePassword = async (req, res) => {
 
   user.password = newPassword;
   await user.save();
+
+  // A changed password should end every other device's session too — the
+  // old password is exactly what an unauthorized device would still have.
+  await revokeAllSessions(user._id, 'password_change');
+  await logAudit({ shopId: user.shop, userId: user._id, action: 'auth.password_change', entityType: 'RefreshToken', req });
 
   res.json({ success: true, message: 'Password changed successfully' });
 };
@@ -75,6 +82,9 @@ export const resetPassword = async (req, res) => {
   await user.save();
 
   await OTP.deleteOne({ _id: otpRecord._id });
+
+  await revokeAllSessions(user._id, 'password_change');
+  await logAudit({ shopId: user.shop, userId: user._id, action: 'auth.password_change', entityType: 'RefreshToken', req });
 
   res.json({ success: true, message: 'Password reset successfully' });
 };

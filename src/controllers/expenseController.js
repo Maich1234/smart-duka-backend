@@ -1,6 +1,7 @@
 import Expense from '../models/Expense.js';
 import { getActiveShift } from '../services/shiftService.js';
 import { parsePagination } from '../utils/pagination.js';
+import { getExpenseSummaryData } from '../services/expenseSummaryService.js';
 
 export const getExpenses = async (req, res) => {
   if (req.user.role !== 'owner' && !req.user.permissions?.includes('manage_expenses')) {
@@ -44,29 +45,9 @@ export const getExpenseSummary = async (req, res) => {
   }
 
   const { startDate, endDate } = req.query;
-  const query = { shop: req.user.shop._id };
+  const summary = await getExpenseSummaryData(req.user.shop._id, { startDate, endDate });
 
-  if (startDate || endDate) {
-    query.date = {};
-    if (startDate) query.date.$gte = new Date(startDate);
-    if (endDate) query.date.$lte = new Date(endDate);
-  }
-
-  // Aggregate in the database — loading every expense document into memory
-  // to sum it does not scale past a few thousand records.
-  const grouped = await Expense.aggregate([
-    { $match: query },
-    { $group: { _id: '$category', amount: { $sum: '$amount' } } },
-  ]);
-  const total = grouped.reduce((sum, g) => sum + g.amount, 0);
-
-  res.json({
-    success: true,
-    data: {
-      total,
-      byCategory: grouped.map((g) => ({ category: g._id, amount: g.amount })),
-    },
-  });
+  res.json({ success: true, data: summary });
 };
 
 export const createExpense = async (req, res) => {

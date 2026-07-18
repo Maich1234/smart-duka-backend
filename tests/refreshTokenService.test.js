@@ -6,6 +6,7 @@ import {
   issueRefreshToken,
   rotateRefreshToken,
   revokeRefreshToken,
+  revokeAllSessions,
   RefreshTokenError,
 } from '../src/services/refreshTokenService.js';
 
@@ -49,6 +50,44 @@ test('rotate: replayed (already revoked) token kills the whole session family', 
   assert.ok(familyRevoked);
 });
 
+test('rotate: replay of a token revoked for an intentional reason (e.g. superseded by a new device login) does NOT cascade-revoke the new session', async () => {
+  mock.method(RefreshToken, 'findOneAndUpdate', async () => null);
+  mock.method(RefreshToken, 'findOne', async () => ({
+    user: 'user-1',
+    revokedAt: new Date(),
+    revokedReason: 'superseded_by_new_device',
+  }));
+  const updateMany = mock.method(RefreshToken, 'updateMany', async () => ({}));
+
+  await assert.rejects(rotateRefreshToken('d'.repeat(96)), (err) => {
+    assert.ok(err instanceof RefreshTokenError);
+    assert.equal(err.code, 'SESSION_REVOKED_ELSEWHERE');
+    return true;
+  });
+  // The whole point of the fix: a stale device retrying its dead refresh
+  // token after being superseded must not nuke the device that superseded it.
+  assert.equal(updateMany.mock.callCount(), 0);
+});
+
+test('rotate: replay of an organically-rotated token still cascades (real theft signal)', async () => {
+  mock.method(RefreshToken, 'findOneAndUpdate', async () => null);
+  mock.method(RefreshToken, 'findOne', async () => ({
+    user: 'user-1',
+    revokedAt: new Date(),
+    revokedReason: 'rotated',
+  }));
+  let familyRevoked = false;
+  mock.method(RefreshToken, 'updateMany', async (filter, update) => {
+    assert.equal(filter.user, 'user-1');
+    assert.equal(update.$set.revokedReason, 'token_reuse_detected');
+    familyRevoked = true;
+    return {};
+  });
+
+  await assert.rejects(rotateRefreshToken('e'.repeat(96)), RefreshTokenError);
+  assert.ok(familyRevoked);
+});
+
 test('rotate: unknown token rejects without touching other sessions', async () => {
   mock.method(RefreshToken, 'findOneAndUpdate', async () => null);
   mock.method(RefreshToken, 'findOne', async () => null);
@@ -67,4 +106,20 @@ test('revoke: ignores unknown tokens quietly', async () => {
   mock.method(RefreshToken, 'updateOne', async () => ({ matchedCount: 0 }));
   await assert.doesNotReject(revokeRefreshToken('whatever'));
   await assert.doesNotReject(revokeRefreshToken(undefined));
+});
+
+test('revokeAllSessions: sets revokedAt and revokedReason together for every active session', async () => {
+  let capturedFilter;
+  let capturedUpdate;
+  mock.method(RefreshToken, 'updateMany', async (filter, update) => {
+    capturedFilter = filter;
+    capturedUpdate = update;
+    return {};
+  });
+
+  await revokeAllSessions('user-1', 'admin_force_logout');
+
+  assert.deepEqual(capturedFilter, { user: 'user-1', revokedAt: null });
+  assert.equal(capturedUpdate.$set.revokedReason, 'admin_force_logout');
+  assert.ok(capturedUpdate.$set.revokedAt instanceof Date);
 });

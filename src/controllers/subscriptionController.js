@@ -14,6 +14,8 @@ import {
 } from '../services/subscriptionPricingService.js';
 import { getPaymentProvider, listPaymentProviders } from '../services/payments/index.js';
 import { logAudit } from '../services/auditLogService.js';
+import { activateSeatPayment, cleanupFailedSeatPayment } from '../services/seatActivationService.js';
+import { MPESA_RECEIPT_PATTERN, MPESA_AMOUNT_PATTERN } from '../utils/mpesaReceipt.js';
 
 const shopIdOf = (req) => req.user.shop._id ?? req.user.shop;
 
@@ -44,7 +46,7 @@ async function resolvePromotion(code) {
  * The subscription STK callback needs its own public URL. Prefer the
  * dedicated env var; otherwise derive it from the sale-payment callback URL.
  */
-function getSubscriptionCallbackUrl() {
+export function getSubscriptionCallbackUrl() {
   if (process.env.SUBSCRIPTION_MPESA_CALLBACK_URL) return process.env.SUBSCRIPTION_MPESA_CALLBACK_URL;
   const saleCallback = process.env.MPESA_CALLBACK_URL;
   if (saleCallback?.includes('/mpesa/callback')) {
@@ -607,6 +609,8 @@ export const handleMpesaCallback = async (req, res) => {
 
     if (status === 'success') {
       await applySuccessfulPayment(payment);
+    } else {
+      await cleanupFailedSeatPayment(payment);
     }
 
     logAudit({
@@ -634,7 +638,8 @@ export const handleMpesaCallback = async (req, res) => {
  * only ever gets `periodEnd` set once real processing has happened, so a
  * second call is a no-op rather than double-crediting a promo redemption.
  */
-async function applySuccessfulPayment(payment) {
+export async function applySuccessfulPayment(payment) {
+  if (payment.purpose === 'seat_addition') return activateSeatPayment(payment);
   if (payment.periodEnd) return;
 
   const subscription = await Subscription.findById(payment.subscription);
@@ -687,7 +692,11 @@ const DEFINITIVE_FAILURE_CODES = new Set(['1032', '1037', '1001', '1', '2001', '
  * the callback, the query response never includes the receipt number.
  */
 export async function reconcilePayment(payment, { receiptHint } = {}) {
-  if (payment.periodEnd) {
+  // Subscription payments mark completion via periodEnd; seat-addition
+  // payments never set it (there's no period to extend), so they're
+  // considered resolved once their status says success.
+  const alreadyResolved = payment.purpose === 'seat_addition' ? payment.status === 'success' : !!payment.periodEnd;
+  if (alreadyResolved) {
     return { payment, changed: false };
   }
 
@@ -721,6 +730,7 @@ export async function reconcilePayment(payment, { receiptHint } = {}) {
     payment.resultCode = result.resultCode;
     payment.errorMessage = result.resultDesc ?? 'Payment did not complete.';
     await payment.save();
+    await cleanupFailedSeatPayment(payment);
     return { payment, changed: true };
   }
 
@@ -758,11 +768,6 @@ export const recheckPayment = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to recheck the payment.' });
   }
 };
-
-// Matches the receipt code Safaricom puts at the very start of every M-Pesa
-// confirmation SMS, e.g. "QGH7XXXXX Confirmed. Ksh500.00 sent to...".
-const MPESA_RECEIPT_PATTERN = /^([A-Z0-9]{8,12})\s+Confirmed/i;
-const MPESA_AMOUNT_PATTERN = /Ksh\s?([\d,]+\.\d{2})/i;
 
 /**
  * POST /subscriptions/reconcile — recovery path for "I paid but I'm still

@@ -161,6 +161,17 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
       }
       variant.quantity -= quantity;
       productCache.set(product._id.toString(), product);
+
+      // Commission is a fixed split of the excess between the variant's
+      // listed price and the owner's base price — configurable variants
+      // don't support price overrides, so this is fully deterministic.
+      let commissionAmount = 0;
+      if (variant.commission?.enabled && variant.commission.basePrice != null) {
+        const excess = Math.max(0, variant.sellingPrice - variant.commission.basePrice);
+        const sharePercent = variant.commission.employeeSharePercent ?? 100;
+        commissionAmount = Math.round(excess * (sharePercent / 100) * quantity * 100) / 100;
+      }
+
       return {
         unitPrice: variant.sellingPrice,
         subtotal: variant.sellingPrice * quantity,
@@ -168,6 +179,7 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
         variantId: variant._id,
         variantName: variant.name,
         productType,
+        commissionAmount,
       };
     }
 

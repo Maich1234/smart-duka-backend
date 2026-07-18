@@ -21,3 +21,7 @@ export const generateText = async (prompt) => {
   const response = await ai.models.generateContent({ model: MODEL, contents: prompt });
   return response.text;
 };
+
+/** Opens a multi-turn, tool-calling-capable chat session — used by the chat orchestrator. */
+export const createChatSession = ({ config, history } = {}) =>
+  getClient().chats.create({ model: MODEL, config, history });

@@ -1,4 +1,5 @@
 import Joi from 'joi';
+import { ADMIN_PERMISSION_VALUES } from '../constants/adminPermissions.js';
 
 export const adminLoginSchema = Joi.object({
   email: Joi.string().email().lowercase().trim().required(),
@@ -98,6 +99,25 @@ export const createPushCampaignSchema = Joi.object({
   segment: segmentSchema.required(),
   scheduledAt: Joi.date().allow(null).default(null),
 }).unknown(false);
+
+export const createAdminUserSchema = Joi.object({
+  name: Joi.string().trim().required(),
+  email: Joi.string().email().lowercase().trim().required(),
+  password: Joi.string().min(6).required(),
+  role: Joi.string().valid('super_admin', 'admin').default('admin'),
+  permissions: Joi.array().items(Joi.string().valid(...ADMIN_PERMISSION_VALUES)).default([]),
+}).unknown(false);
+
+// No defaults — same reasoning as updatePlanSchema/updatePromotionSchema: a
+// PATCH only ever contains what the caller actually sent.
+export const updateAdminUserSchema = Joi.object({
+  name: Joi.string().trim(),
+  email: Joi.string().email().lowercase().trim(),
+  password: Joi.string().min(6),
+  role: Joi.string().valid('super_admin', 'admin'),
+  permissions: Joi.array().items(Joi.string().valid(...ADMIN_PERMISSION_VALUES)),
+  active: Joi.boolean(),
+}).unknown(false).min(1);
 
 // PlatformConfig is always a partial update (secrets are only sent when
 // actively being changed) — no defaults here either, for the same reason.

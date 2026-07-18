@@ -1,9 +1,12 @@
 /**
- * Bootstraps a SmartDuka internal admin account. There is no self-serve
- * admin registration by design — this is the only way to create one.
+ * Bootstraps a SmartDuka internal admin account. Most accounts are now
+ * created via the admin-management API (super_admin only, see
+ * adminManagementController.js); this script remains as a break-glass
+ * bootstrap path independent of the API/DB app layer — e.g. for creating
+ * the first super_admin, or recovering if every super_admin is locked out.
  *
  * Usage:
- *   node scripts/createAdminUser.mjs --email a@smartduka.co --password ... --name "Ada Owner"
+ *   node scripts/createAdminUser.mjs --email a@smartduka.co --password ... --name "Ada Owner" [--role super_admin] [--permissions plans,shops]
  *   node scripts/createAdminUser.mjs --email a@smartduka.co --password ... --name "Ada" --force   # reset password on an existing email
  */
 import 'dotenv/config';
@@ -20,13 +23,20 @@ const flag = (name) => {
 const email = flag('email');
 const password = flag('password');
 const name = flag('name');
+const roleFlag = flag('role');
+const permissionsFlag = flag('permissions');
+const role = roleFlag || 'admin';
+const permissions = permissionsFlag ? permissionsFlag.split(',').map((p) => p.trim()).filter(Boolean) : [];
 
 async function main() {
   if (!email || !password || !name) {
-    throw new Error('Usage: node scripts/createAdminUser.mjs --email <email> --password <password> --name <name> [--force]');
+    throw new Error('Usage: node scripts/createAdminUser.mjs --email <email> --password <password> --name <name> [--role super_admin|admin] [--permissions a,b] [--force]');
   }
   if (password.length < 6) {
     throw new Error('Password must be at least 6 characters.');
+  }
+  if (role !== 'super_admin' && role !== 'admin') {
+    throw new Error('--role must be "super_admin" or "admin".');
   }
 
   await mongoose.connect(process.env.MONGO_URI);
@@ -41,13 +51,17 @@ async function main() {
     existing.password = password;
     existing.name = name;
     existing.active = true;
+    // Only touch role/permissions if explicitly passed — a plain password
+    // reset shouldn't silently change an existing admin's access.
+    if (roleFlag) existing.role = role;
+    if (permissionsFlag) existing.permissions = permissions;
     await existing.save();
     console.log(`Password reset for existing admin "${email}".`);
     return;
   }
 
-  await AdminUser.create({ email, password, name });
-  console.log(`Admin account created: ${email}`);
+  await AdminUser.create({ email, password, name, role, permissions });
+  console.log(`Admin account created: ${email} (role: ${role})`);
 }
 
 main()

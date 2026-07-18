@@ -4,10 +4,22 @@ import { getActiveShift } from '../services/shiftService.js';
 import { parsePagination } from '../utils/pagination.js';
 import { escapeRegex } from '../utils/escapeRegex.js';
 
-const stripCostPrice = (product) => {
+// Strips shop-margin-revealing fields for staff responses. `commission.basePrice`
+// is as sensitive as costPrice (it's the owner's floor for the variant), so it's
+// replaced with a derived `commissionPreview` (KES/unit) instead of passed through —
+// staff only ever learn what they personally stand to earn, never the split itself.
+// `showCommission` mirrors the shop's `showStaffCommission` toggle; when off, no
+// commission data reaches staff at all.
+const sanitizeForStaff = (product, showCommission) => {
   delete product.costPrice;
   if (Array.isArray(product.variants)) {
-    product.variants = product.variants.map(({ costPrice, ...rest }) => rest);
+    product.variants = product.variants.map(({ costPrice, commission, ...rest }) => {
+      if (showCommission && commission?.enabled && commission.basePrice != null) {
+        const excess = Math.max(0, rest.sellingPrice - commission.basePrice);
+        rest.commissionPreview = Math.round(excess * ((commission.employeeSharePercent ?? 100) / 100) * 100) / 100;
+      }
+      return rest;
+    });
   }
   return product;
 };
@@ -19,6 +31,17 @@ const validateBundleItems = async (bundleItems, shop) => {
   const count = await Product.countDocuments({ _id: { $in: ids }, shop });
   if (count !== new Set(ids.map(String)).size) {
     return 'One or more bundle items are invalid or belong to a different shop';
+  }
+  return null;
+};
+
+/** Ensures every enabled variant commission's base price doesn't exceed its selling price. */
+const validateVariantCommissions = (variants) => {
+  if (!variants?.length) return null;
+  for (const v of variants) {
+    if (v.commission?.enabled && v.commission.basePrice > v.sellingPrice) {
+      return `Commission base price for variant "${v.name}" cannot exceed its selling price`;
+    }
   }
   return null;
 };
@@ -46,7 +69,7 @@ export const getProducts = async (req, res) => {
 
   const sanitizedProducts = products.map((product) => {
     const p = product.toObject();
-    return req.user.role === 'staff' ? stripCostPrice(p) : p;
+    return req.user.role === 'staff' ? sanitizeForStaff(p, req.user.shop?.showStaffCommission) : p;
   });
 
   res.json({
@@ -68,7 +91,7 @@ export const getProductById = async (req, res) => {
   }
 
   const productObj = product.toObject();
-  res.json({ success: true, data: req.user.role === 'staff' ? stripCostPrice(productObj) : productObj });
+  res.json({ success: true, data: req.user.role === 'staff' ? sanitizeForStaff(productObj, req.user.shop?.showStaffCommission) : productObj });
 };
 
 export const createProduct = async (req, res) => {
@@ -79,6 +102,11 @@ export const createProduct = async (req, res) => {
   const bundleError = await validateBundleItems(req.body.bundleItems, req.user.shop._id);
   if (bundleError) {
     return res.status(400).json({ success: false, message: bundleError });
+  }
+
+  const commissionError = validateVariantCommissions(req.body.variants);
+  if (commissionError) {
+    return res.status(400).json({ success: false, message: commissionError });
   }
 
   const product = await Product.create({ ...req.body, shop: req.user.shop._id });
@@ -98,6 +126,11 @@ export const updateProduct = async (req, res) => {
   const bundleError = await validateBundleItems(req.body.bundleItems, req.user.shop._id);
   if (bundleError) {
     return res.status(400).json({ success: false, message: bundleError });
+  }
+
+  const commissionError = validateVariantCommissions(req.body.variants);
+  if (commissionError) {
+    return res.status(400).json({ success: false, message: commissionError });
   }
 
   const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });

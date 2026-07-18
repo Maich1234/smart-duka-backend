@@ -66,6 +66,19 @@ const subscriptionPaymentSchema = new mongoose.Schema({
     required: true,
   },
   idempotencyKey: { type: String, index: true },
+  // What this charge is for. 'seat_addition' payments don't extend the
+  // subscription period — they unlock one specific pending staff account
+  // (see seatActivationService.js) — while 'subscription' payments are a
+  // full renewal/plan-change, handled by applySuccessfulPayment.
+  purpose: { type: String, enum: ['subscription', 'seat_addition'], default: 'subscription', index: true },
+  // The staff account this seat-addition payment unlocks. Created isActive:false
+  // up front (reserves the email, excluded from billable headcount) and flipped
+  // to isActive:true only once this payment succeeds.
+  pendingStaff: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+  },
 }, { timestamps: true });
 
 // Unique idempotency key per shop — sparse so documents without the key are not constrained

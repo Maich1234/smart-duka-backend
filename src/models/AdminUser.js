@@ -1,9 +1,12 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import { ADMIN_PERMISSION_VALUES } from '../constants/adminPermissions.js';
 
 // SmartDuka's own internal staff — distinct from the shop-tenant User model.
-// No `shop` field: admins aren't scoped to a tenant. Accounts are created
-// only via scripts/createAdminUser.mjs (no self-serve registration).
+// No `shop` field: admins aren't scoped to a tenant. Most accounts are
+// created via the admin-management API (super_admin only, see
+// adminManagementController.js); scripts/createAdminUser.mjs remains as a
+// break-glass bootstrap path independent of the API/DB app layer.
 const adminUserSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -25,6 +28,23 @@ const adminUserSchema = new mongoose.Schema({
   active: {
     type: Boolean,
     default: true,
+  },
+  // super_admin implicitly has full access everywhere — `permissions` is
+  // only consulted (via requirePermission) for role === 'admin'.
+  role: {
+    type: String,
+    enum: ['super_admin', 'admin'],
+    default: 'admin',
+  },
+  permissions: {
+    type: [String],
+    enum: ADMIN_PERMISSION_VALUES,
+    default: [],
+  },
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'AdminUser',
+    default: null,
   },
 }, {
   timestamps: true,

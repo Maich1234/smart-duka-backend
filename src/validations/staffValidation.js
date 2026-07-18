@@ -12,9 +12,21 @@ export const createStaffSchema = Joi.object({
   // request (required for offline queueing — a follow-up permissions call
   // can't reference a server id that doesn't exist yet). Omitted → defaults.
   permissions: Joi.array().items(Joi.string().valid(...PERMISSION_VALUES)),
-  // Set once the owner has seen and accepted the seat-price-increase modal —
-  // see computeSeatAdditionImpact in staffController.
-  priceConfirmed: Joi.boolean().optional(),
+}).unknown(false);
+
+// POST /staff/seat-payment — same staff draft as createStaffSchema, plus the
+// M-Pesa number to charge for the seat.
+export const initiateSeatPaymentSchema = Joi.object({
+  name: Joi.string().required(),
+  email: Joi.string().email().lowercase().trim().required(),
+  password: Joi.string().min(6).required(),
+  phone: Joi.string().optional().allow(''),
+  permissions: Joi.array().items(Joi.string().valid(...PERMISSION_VALUES)),
+  phoneNumber: Joi.string().required(),
+}).unknown(false);
+
+export const seatPaymentReconcileSchema = Joi.object({
+  message: Joi.string().required(),
 }).unknown(false);
 
 export const updateStaffSchema = Joi.object({

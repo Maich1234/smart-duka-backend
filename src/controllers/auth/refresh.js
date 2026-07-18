@@ -27,7 +27,7 @@ export const refresh = async (req, res) => {
     });
   } catch (err) {
     if (err instanceof RefreshTokenError) {
-      return res.status(401).json({ success: false, message: err.message });
+      return res.status(401).json({ success: false, message: err.message, code: err.code });
     }
     throw err;
   }
@@ -40,6 +40,6 @@ export const refresh = async (req, res) => {
  * exactly the authority needed to revoke it.
  */
 export const logout = async (req, res) => {
-  await revokeRefreshToken(req.body?.refreshToken);
+  await revokeRefreshToken(req.body?.refreshToken, 'manual_logout');
   res.json({ success: true, message: 'Logged out' });
 };

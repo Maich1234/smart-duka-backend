@@ -6,8 +6,10 @@ Focus on helping the owner increase profit and avoid running out of stock.
 Avoid technical or financial jargon — write for a shop owner, not an accountant.
 Prefer concrete, actionable next steps over vague observations.
 
+The business's health score is already calculated for you in the data below — explain it, never recalculate or restate a different number for it.
+
 Respond with ONLY a JSON object matching this exact shape, no other text, no markdown fences:
-{"summary": string, "priority": "low"|"medium"|"high", "actions": string[], "health": number}`;
+{"summary": string, "priority": "low"|"medium"|"high", "actions": string[]}`;
 
 /** Builds the full prompt sent to Gemini: fixed system contract + the day's context. */
 export const buildPrompt = (context) => `${SYSTEM_PROMPT}

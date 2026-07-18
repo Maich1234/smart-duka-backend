@@ -21,11 +21,20 @@ export const login = async (req, res) => {
   const token = generateAdminToken(admin._id);
   res.json({
     success: true,
-    data: { id: admin._id, name: admin.name, email: admin.email, token },
+    data: { id: admin._id, name: admin.name, email: admin.email, role: admin.role, permissions: admin.permissions, token },
   });
 };
 
 /** GET /admin/auth/me */
 export const getProfile = async (req, res) => {
-  res.json({ success: true, data: { id: req.admin._id, name: req.admin.name, email: req.admin.email } });
+  res.json({
+    success: true,
+    data: {
+      id: req.admin._id,
+      name: req.admin.name,
+      email: req.admin.email,
+      role: req.admin.role,
+      permissions: req.admin.permissions,
+    },
+  });
 };

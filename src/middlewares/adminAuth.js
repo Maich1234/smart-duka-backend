@@ -34,3 +34,17 @@ export const protectAdmin = async (req, res, next) => {
     return res.status(401).json({ success: false, message: 'Not authorized, token failed' });
   }
 };
+
+/** Gates admin-account management itself — never grantable via `permissions`, only role. */
+export const requireSuperAdmin = (req, res, next) => {
+  if (req.admin?.role === 'super_admin') return next();
+  return res.status(403).json({ success: false, message: 'Access denied. Super admin only.' });
+};
+
+/** Gates a module's routes. super_admin bypasses; 'admin' needs the module key in their permissions array. */
+export const requirePermission = (moduleKey) => (req, res, next) => {
+  if (req.admin?.role === 'super_admin' || req.admin?.permissions?.includes(moduleKey)) {
+    return next();
+  }
+  return res.status(403).json({ success: false, message: 'Access denied. You do not have permission to access this resource.' });
+};

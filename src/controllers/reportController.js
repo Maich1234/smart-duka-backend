@@ -1,130 +1,32 @@
 import Sale from '../models/Sale.js';
 import Rating from '../models/Rating.js';
 import Expense from '../models/Expense.js';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-function startOfDay(date) {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function startOfWeek(date) {
-  const d = startOfDay(date);
-  const day = d.getDay(); // 0 = Sunday
-  const diff = (day === 0 ? -6 : 1) - day; // shift to Monday
-  d.setDate(d.getDate() + diff);
-  return d;
-}
-
-function startOfMonth(date) {
-  const d = new Date(date);
-  return new Date(d.getFullYear(), d.getMonth(), 1);
-}
-
-/**
- * Builds the bucket boundaries for a period, oldest first. Buckets with no
- * sales still appear (zero-filled) so owners can see gaps, not just totals.
- */
-function buildBuckets(period, now) {
-  if (period === 'weekly') {
-    const buckets = [];
-    const currentWeekStart = startOfWeek(now);
-    for (let i = 7; i >= 0; i--) {
-      const start = new Date(currentWeekStart.getTime() - i * 7 * DAY_MS);
-      const end = new Date(start.getTime() + 7 * DAY_MS);
-      buckets.push({ start, end, label: `Wk of ${start.toISOString().slice(0, 10)}` });
-    }
-    return buckets;
-  }
-
-  if (period === 'monthly') {
-    const buckets = [];
-    const base = startOfMonth(now);
-    for (let i = 5; i >= 0; i--) {
-      const start = new Date(base.getFullYear(), base.getMonth() - i, 1);
-      const end = new Date(base.getFullYear(), base.getMonth() - i + 1, 1);
-      buckets.push({
-        start,
-        end,
-        label: start.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-      });
-    }
-    return buckets;
-  }
-
-  // daily — last 7 days
-  const buckets = [];
-  const today = startOfDay(now);
-  for (let i = 6; i >= 0; i--) {
-    const start = new Date(today.getTime() - i * DAY_MS);
-    const end = new Date(start.getTime() + DAY_MS);
-    buckets.push({
-      start,
-      end,
-      label: start.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }),
-    });
-  }
-  return buckets;
-}
+import { getSalesTrendSeries } from '../services/salesTrendService.js';
 
 export const getSalesReport = async (req, res) => {
   const period = ['daily', 'weekly', 'monthly'].includes(req.query.period) ? req.query.period : 'daily';
   const now = new Date();
-  const buckets = buildBuckets(period, now);
+
+  // The trend series is aggregated in the database ($bucket per period, via
+  // the shared salesTrendService also used by the chat get_sales_trend
+  // tool) — the previous implementation loaded every sale in the whole
+  // range (up to 6 months) into memory, which does not scale for a busy shop.
+  const { buckets, series } = await getSalesTrendSeries(req.user.shop._id, { period, now });
   const rangeStart = buckets[0].start;
-  const rangeEnd = buckets[buckets.length - 1].end;
 
   // Summary/top-products/by-staff/ratings reflect only the *current* bucket
   // (today / this week / this month) — not the whole multi-bucket trend
   // window — so the numbers actually change when switching daily/weekly/
   // monthly instead of staying a rolling sum that looks identical whenever
-  // all the shop's history fits inside every window.
+  // all the shop's history fits inside every window. Full docs are only
+  // loaded for the current bucket, whose items[] the top-products and
+  // by-staff sections genuinely need.
   const currentBucket = buckets[buckets.length - 1];
-
-  // The trend series is aggregated in the database ($bucket per period) —
-  // the previous implementation loaded every sale in the whole range (up to
-  // 6 months) into memory, which does not scale for a busy shop. Full docs
-  // are only loaded for the current bucket, whose items[] the top-products
-  // and by-staff sections genuinely need.
-  const [bucketAgg, currentPeriodSales] = await Promise.all([
-    Sale.aggregate([
-      { $match: { shop: req.user.shop._id, status: { $nin: ['voided', 'refunded'] }, createdAt: { $gte: rangeStart, $lt: rangeEnd } } },
-      {
-        $bucket: {
-          groupBy: '$createdAt',
-          boundaries: [...buckets.map((b) => b.start), rangeEnd],
-          output: {
-            total: { $sum: '$totalAmount' },
-            cashTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'cash'] }, '$totalAmount', 0] } },
-            mpesaTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'mpesa'] }, '$totalAmount', 0] } },
-            transactionCount: { $sum: 1 },
-          },
-        },
-      },
-    ]),
-    Sale.find({
-      shop: req.user.shop._id,
-      status: { $nin: ['voided', 'refunded'] },
-      createdAt: { $gte: currentBucket.start, $lt: currentBucket.end },
-    }).select('totalAmount paymentMethod items createdAt staff').populate('staff', 'name'),
-  ]);
-
-  // $bucket keys each group by its lower boundary; zero-fill buckets with no
-  // sales so owners can see gaps, not just totals.
-  const aggByBucketStart = new Map(bucketAgg.map((b) => [new Date(b._id).getTime(), b]));
-  const series = buckets.map((bucket) => {
-    const agg = aggByBucketStart.get(bucket.start.getTime());
-    return {
-      label: bucket.label,
-      date: bucket.start.toISOString(),
-      total: agg?.total ?? 0,
-      cashTotal: agg?.cashTotal ?? 0,
-      mpesaTotal: agg?.mpesaTotal ?? 0,
-      transactionCount: agg?.transactionCount ?? 0,
-    };
-  });
+  const currentPeriodSales = await Sale.find({
+    shop: req.user.shop._id,
+    status: { $nin: ['voided', 'refunded'] },
+    createdAt: { $gte: currentBucket.start, $lt: currentBucket.end },
+  }).select('totalAmount paymentMethod items createdAt staff').populate('staff', 'name');
 
   const summary = currentPeriodSales.reduce(
     (acc, sale) => ({
@@ -162,9 +64,10 @@ export const getSalesReport = async (req, res) => {
   const staffTotals = new Map();
   for (const sale of currentPeriodSales) {
     const staffName = sale.staff?.name || 'Unknown';
-    const existing = staffTotals.get(staffName) || { staffName, total: 0, transactionCount: 0 };
+    const existing = staffTotals.get(staffName) || { staffName, total: 0, transactionCount: 0, commissionTotal: 0 };
     existing.total += sale.totalAmount;
     existing.transactionCount += 1;
+    existing.commissionTotal += sale.items.reduce((sum, item) => sum + (item.commissionAmount || 0), 0);
     staffTotals.set(staffName, existing);
   }
   const byStaff = Array.from(staffTotals.values()).sort((a, b) => b.total - a.total);

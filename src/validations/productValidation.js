@@ -8,6 +8,13 @@ const bundleItemSchema = Joi.object({
   quantity: Joi.number().positive().required(),
 });
 
+const commissionSchema = Joi.object({
+  enabled: Joi.boolean().default(false),
+  basePrice: Joi.number().min(0)
+    .when('enabled', { is: true, then: Joi.required(), otherwise: Joi.optional() }),
+  employeeSharePercent: Joi.number().min(0).max(100).default(100),
+});
+
 const variantSchema = Joi.object({
   name: Joi.string().required().trim(),
   sellingPrice: Joi.number().min(0).required(),
@@ -15,6 +22,7 @@ const variantSchema = Joi.object({
   quantity: Joi.number().min(0).default(0),
   sku: Joi.string().trim().allow(''),
   lowStockAlert: Joi.number().min(0).default(5),
+  commission: commissionSchema.optional(),
 });
 
 const promotionSchema = Joi.object({

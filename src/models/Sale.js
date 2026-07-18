@@ -35,6 +35,14 @@ const saleItemSchema = new mongoose.Schema({
   appliedPromotionLabel: {
     type: String,
   },
+  // Snapshot of the employee commission earned on this line, computed at
+  // sale time from the variant's commission config so later config changes
+  // never retroactively alter historical earnings.
+  commissionAmount: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
   // Snapshot fields — optional, only populated for the product types that need them.
   variantId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -65,6 +73,13 @@ const saleSchema = new mongoose.Schema({
   totalAmount: {
     type: Number,
     required: true,
+    min: 0,
+  },
+  // Sum of items[].commissionAmount — denormalized for fast per-staff/period
+  // commission aggregation without unwinding items on every query.
+  totalCommission: {
+    type: Number,
+    default: 0,
     min: 0,
   },
   paymentMethod: {

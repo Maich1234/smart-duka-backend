@@ -5,6 +5,7 @@ import MpesaTransaction from '../models/MpesaTransaction.js';
 import PaymentConfig from '../models/PaymentConfig.js';
 import { signReceiptToken } from '../utils/receiptToken.js';
 import { resolveSaleLine, SaleLineError } from '../services/pricingEngine.js';
+import { getCommissionSummary } from '../services/commissionService.js';
 import { restoreSaleStock } from '../services/saleStockService.js';
 import { initiateReversal } from '../services/mpesaService.js';
 import { logAudit } from '../services/auditLogService.js';
@@ -61,6 +62,7 @@ export const createSale = async (req, res) => {
 
   try {
     let totalAmount = 0;
+    let totalCommission = 0;
     const saleItems = [];
     // Keeps every product/bundle-component doc touched during this sale in
     // memory so it's mutated and saved exactly once, even when referenced
@@ -92,6 +94,7 @@ export const createSale = async (req, res) => {
       }
 
       totalAmount += resolved.subtotal;
+      totalCommission += resolved.commissionAmount || 0;
       saleItems.push({
         productId: product._id,
         productName: product.name,
@@ -100,6 +103,7 @@ export const createSale = async (req, res) => {
         subtotal: resolved.subtotal,
         discountAmount: resolved.discountAmount || 0,
         appliedPromotionLabel: resolved.appliedPromotionLabel,
+        commissionAmount: resolved.commissionAmount || 0,
         variantId: resolved.variantId,
         variantName: resolved.variantName,
         unitOfMeasure: resolved.unitOfMeasure,
@@ -115,6 +119,7 @@ export const createSale = async (req, res) => {
       shop,
       items: saleItems,
       totalAmount,
+      totalCommission,
       paymentMethod,
       staff: req.user._id,
       ...(activeShift ? { shift: activeShift._id } : {}),
@@ -409,7 +414,15 @@ export const getSales = async (req, res) => {
   if (startDate || endDate) {
     query.createdAt = {};
     if (startDate) query.createdAt.$gte = new Date(startDate);
-    if (endDate) query.createdAt.$lte = new Date(endDate);
+    if (endDate) {
+      // The client sends the selected calendar day (typically local
+      // midnight) — treat it as inclusive of that whole day, not an exact
+      // instant, otherwise every sale made after midnight on the end date
+      // (i.e. virtually all of them) gets excluded.
+      const endOfDay = new Date(endDate);
+      endOfDay.setDate(endOfDay.getDate() + 1);
+      query.createdAt.$lt = endOfDay;
+    }
   }
   if (paymentMethod) query.paymentMethod = paymentMethod;
 
@@ -543,4 +556,19 @@ export const getMySales = async (req, res) => {
     data: sales,
     pagination: { page, limit, total, pages: Math.ceil(total / limit) },
   });
+};
+
+export const getMyCommission = async (req, res) => {
+  // Owners always have visibility into their own numbers; staff only see
+  // this once the shop owner has opted in via showStaffCommission.
+  if (req.user.role === 'staff' && !req.user.shop?.showStaffCommission) {
+    return res.status(403).json({
+      success: false,
+      message: 'Your shop owner has not enabled commission visibility yet.',
+    });
+  }
+
+  const { startDate, endDate } = req.query;
+  const summary = await getCommissionSummary(req.user.shop._id, req.user._id, { startDate, endDate });
+  res.json({ success: true, data: summary });
 };

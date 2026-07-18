@@ -80,6 +80,14 @@ const shopSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  // Owner-controlled feature flag: when on, staff can see a live commission
+  // preview while making a sale and view their own earned-commission totals.
+  // When off, both surfaces stay hidden and product responses omit any
+  // commission data for staff.
+  showStaffCommission: {
+    type: Boolean,
+    default: false,
+  },
 }, { timestamps: true });
 
 export default mongoose.model('Shop', shopSchema);

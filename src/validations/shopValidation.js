@@ -13,5 +13,7 @@ export const updateShopConfigSchema = Joi.object({
   currency: Joi.string().valid(...VALID_CURRENCY_CODES).optional(),
   receiptThankYouNote: Joi.string().allow('').max(150).optional(),
   motto: Joi.string().allow('').max(200).optional(),
+  logoUrl: Joi.string().allow('').trim().optional(),
   shiftManagementEnabled: Joi.boolean().optional(),
+  showStaffCommission: Joi.boolean().optional(),
 }).unknown(false);

@@ -1,5 +1,5 @@
 import express from 'express';
-import { createSale, getSales, getSaleById, getMySales, getSalesStats, voidSale, refundSale } from '../../controllers/saleController.js';
+import { createSale, getSales, getSaleById, getMySales, getMyCommission, getSalesStats, voidSale, refundSale } from '../../controllers/saleController.js';
 import { protect, staffOrOwner } from '../../middlewares/auth.js';
 import validate from '../../middlewares/validate.js';
 import idempotency from '../../middlewares/idempotency.js';
@@ -22,6 +22,7 @@ router.post('/:id/refund', staffOrOwner, idempotency, refundSale);
 router.get('/stats', staffOrOwner, getSalesStats);
 router.get('/', staffOrOwner, validate(saleQuerySchema, 'query'), getSales);
 router.get('/me', staffOrOwner, getMySales);
+router.get('/commissions/me', staffOrOwner, getMyCommission);
 router.get('/:id', staffOrOwner, getSaleById);
 
 export default router;
