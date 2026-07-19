@@ -25,6 +25,11 @@ export const createPlanSchema = Joi.object({
   priceComparison: Joi.string().trim().allow('').default(''),
   active: Joi.boolean().default(true),
   displayOrder: Joi.number().default(0),
+  chatLimits: Joi.object({
+    maxConversations: Joi.number().integer().min(0).allow(null).default(null),
+    maxNewConversationsPerDay: Joi.number().integer().min(0).allow(null).default(null),
+    maxMessagesPerDay: Joi.number().integer().min(0).allow(null).default(null),
+  }).default({ maxConversations: null, maxNewConversationsPerDay: null, maxMessagesPerDay: null }),
 }).unknown(false);
 
 // Deliberately NOT derived from createPlanSchema via .fork() — that schema is
@@ -52,6 +57,11 @@ export const updatePlanSchema = Joi.object({
   priceComparison: Joi.string().trim().allow(''),
   active: Joi.boolean(),
   displayOrder: Joi.number(),
+  chatLimits: Joi.object({
+    maxConversations: Joi.number().integer().min(0).allow(null),
+    maxNewConversationsPerDay: Joi.number().integer().min(0).allow(null),
+    maxMessagesPerDay: Joi.number().integer().min(0).allow(null),
+  }),
 }).unknown(false).min(1);
 
 export const createPromotionSchema = Joi.object({

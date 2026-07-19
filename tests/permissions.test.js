@@ -29,3 +29,21 @@ test('handles empty and undefined input', () => {
   assert.deepEqual(withImpliedPermissions([]), []);
   assert.deepEqual(withImpliedPermissions(), []);
 });
+
+test('purchasing permissions are registered under the Purchasing category', () => {
+  const purchasingPerms = ALL_PERMISSIONS.filter((p) => p.category === 'Purchasing').map((p) => p.value);
+  assert.deepEqual(purchasingPerms, [
+    'view_purchases',
+    'create_purchases',
+    'edit_purchases',
+    'delete_purchases',
+    'view_purchase_prices',
+    'update_inventory_on_purchase',
+    'require_purchase_approval',
+  ]);
+});
+
+test('edit_purchases and delete_purchases imply view_purchases', () => {
+  assert.ok(withImpliedPermissions(['edit_purchases']).includes('view_purchases'));
+  assert.ok(withImpliedPermissions(['delete_purchases']).includes('view_purchases'));
+});

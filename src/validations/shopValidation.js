@@ -16,4 +16,7 @@ export const updateShopConfigSchema = Joi.object({
   logoUrl: Joi.string().allow('').trim().optional(),
   shiftManagementEnabled: Joi.boolean().optional(),
   showStaffCommission: Joi.boolean().optional(),
+  purchasingEnabled: Joi.boolean().optional(),
+  purchaseCostAllocationMethod: Joi.string().valid('quantity', 'value', 'none').optional(),
+  aiEnabled: Joi.boolean().optional(),
 }).unknown(false);

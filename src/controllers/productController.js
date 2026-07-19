@@ -47,7 +47,7 @@ const validateVariantCommissions = (variants) => {
 };
 
 export const getProducts = async (req, res) => {
-  const { search, category } = req.query;
+  const { search, category, excludeTypes } = req.query;
   const { page, limit, skip } = parsePagination(req.query);
   const query = { shop: req.user.shop._id };
 
@@ -60,6 +60,12 @@ export const getProducts = async (req, res) => {
 
   if (category) {
     query.category = { $regex: escapeRegex(category), $options: 'i' };
+  }
+
+  // Used by the Purchasing product picker to hide types that can't be
+  // purchased directly (bundle/service — see purchaseStockService.js).
+  if (excludeTypes) {
+    query.productType = { $nin: String(excludeTypes).split(',').map((t) => t.trim()).filter(Boolean) };
   }
 
   const [products, total] = await Promise.all([

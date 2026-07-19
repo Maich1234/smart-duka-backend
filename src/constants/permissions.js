@@ -13,15 +13,25 @@ export const ALL_PERMISSIONS = [
   { value: 'manage_staff', label: 'Manage Staff', category: 'Admin' },
   { value: 'edit_shop_settings', label: 'Edit Shop Settings', category: 'Admin' },
   { value: 'manage_expenses', label: 'Manage Expenses', category: 'Admin' },
+  { value: 'view_purchases', label: 'View Purchases', category: 'Purchasing' },
+  { value: 'create_purchases', label: 'Create Purchases', category: 'Purchasing' },
+  { value: 'edit_purchases', label: 'Edit Purchases', category: 'Purchasing' },
+  { value: 'delete_purchases', label: 'Delete Purchases', category: 'Purchasing' },
+  { value: 'view_purchase_prices', label: 'View Purchase Prices', category: 'Purchasing' },
+  { value: 'update_inventory_on_purchase', label: 'Update Inventory', category: 'Purchasing' },
+  { value: 'require_purchase_approval', label: 'Require Owner Approval Before Inventory Updates', category: 'Purchasing' },
 ];
 
 export const DEFAULT_STAFF_PERMISSIONS = ['view_products', 'record_sale', 'view_sales'];
 
 // Permissions that only make sense alongside another one. Refunding other
 // staff members' sales requires being able to see those sales, so granting
-// 'refund_all_sales' silently grants 'view_all_sales' too.
+// 'refund_all_sales' silently grants 'view_all_sales' too. Same idea for
+// purchasing: editing/deleting a purchase requires being able to see it.
 export const PERMISSION_DEPENDENCIES = {
   refund_all_sales: ['view_all_sales'],
+  edit_purchases: ['view_purchases'],
+  delete_purchases: ['view_purchases'],
 };
 
 /** Expands a permission list with every dependency it implies (deduplicated). */

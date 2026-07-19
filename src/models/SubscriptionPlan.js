@@ -46,6 +46,14 @@ const subscriptionPlanSchema = new mongoose.Schema({
   priceComparison: { type: String, default: '', trim: true },
   active: { type: Boolean, default: true },
   displayOrder: { type: Number, default: 0 },
+  // Per-tier AI chat quotas — null means unlimited. Enforced server-side by
+  // enforceChatLimits (see middlewares/enforceChatLimits.js), not just shown
+  // as copy like `features` above.
+  chatLimits: {
+    maxConversations: { type: Number, default: null, min: 0 },
+    maxNewConversationsPerDay: { type: Number, default: null, min: 0 },
+    maxMessagesPerDay: { type: Number, default: null, min: 0 },
+  },
 }, { timestamps: true });
 
 export default mongoose.model('SubscriptionPlan', subscriptionPlanSchema);

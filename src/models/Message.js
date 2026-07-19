@@ -39,5 +39,8 @@ const messageSchema = new mongoose.Schema({
 
 messageSchema.index({ conversation: 1, turnIndex: 1 });
 messageSchema.index({ conversation: 1, shop: 1, kind: 1, createdAt: -1 });
+// Serves enforceChatLimits' shop-wide "messages sent today" count, which has
+// no `conversation` to filter on — the index above can't serve that query.
+messageSchema.index({ shop: 1, kind: 1, createdAt: 1 });
 
 export default mongoose.model('Message', messageSchema);

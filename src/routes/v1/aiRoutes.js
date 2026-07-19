@@ -9,6 +9,9 @@ import {
 } from '../../controllers/aiChatController.js';
 import { protect, ownerOnly } from '../../middlewares/auth.js';
 import { requireActiveSubscription } from '../../middlewares/requireActiveSubscription.js';
+import { requireFeature } from '../../middlewares/requireFeature.js';
+import { requireAiEnabled } from '../../middlewares/requireAiEnabled.js';
+import { enforceChatLimits } from '../../middlewares/enforceChatLimits.js';
 import validate from '../../middlewares/validate.js';
 import idempotency from '../../middlewares/idempotency.js';
 import { createRateLimitStore } from '../../utils/rateLimitStore.js';
@@ -18,7 +21,7 @@ const router = express.Router();
 
 router.use(protect, ownerOnly);
 
-router.get('/insight', requireActiveSubscription, getBusinessInsight);
+router.get('/insight', requireActiveSubscription, requireFeature('ai_insights'), requireAiEnabled, getBusinessInsight);
 
 // /ai/insight has no rate limiter because its per-(shop,day,fingerprint)
 // cache is self-limiting. A chat turn has no equivalent cap — every message
@@ -36,7 +39,7 @@ const chatLimiter = rateLimit({
 // idempotency: a client-side timeout-then-retry on a multi-round tool-calling
 // turn would otherwise silently re-run the whole loop and burn a second full
 // round of Gemini spend for the same question.
-router.post('/chat', requireActiveSubscription, chatLimiter, idempotency, validate(postChatMessageSchema), postChatMessage);
+router.post('/chat', requireActiveSubscription, requireFeature('ai_insights'), requireAiEnabled, chatLimiter, idempotency, validate(postChatMessageSchema), enforceChatLimits, postChatMessage);
 router.get('/chat/conversations', requireActiveSubscription, listConversations);
 router.get('/chat/conversations/:id', requireActiveSubscription, getConversation);
 // Not subscription-gated — a lapsed owner can still archive their own data.

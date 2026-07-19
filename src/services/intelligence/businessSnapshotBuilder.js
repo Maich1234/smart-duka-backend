@@ -5,7 +5,12 @@ import { calculateHealthScore } from './healthScoreCalculator.js';
 import { getDepletionAnalytics } from '../depletionService.js';
 import { detectSalesAnomaly } from './salesAnomalyService.js';
 
-const SNAPSHOT_VERSION = 1;
+// Bump whenever the shape changes — the mobile app's SQLite cache stores
+// this alongside each insight and discards rows whose version is stale, so
+// a schema change can't otherwise crash the Insights screen against
+// pre-update cached data (see utils/aiInsightCache.ts on the mobile app).
+// v2: added health.confidence/sufficient/requirements.
+const SNAPSHOT_VERSION = 2;
 const TREND_WINDOW_DAYS = 30;
 
 const todayStr = () => new Date().toISOString().slice(0, 10);

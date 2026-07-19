@@ -88,6 +88,31 @@ const shopSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  // Owner-controlled feature flag: when off, the Purchasing module is
+  // completely hidden from navigation for every staff member (and the owner).
+  purchasingEnabled: {
+    type: Boolean,
+    default: false,
+  },
+  // How additional purchase costs (transport, packaging, ...) are spread
+  // across a purchase's line items when updating each product's average
+  // cost. A shop-wide default (not chosen per purchase) so recording a
+  // purchase stays fast — each Purchase snapshots whichever method was
+  // active when it was created. 'none' = costs are tracked for reporting but
+  // never blended into product cost.
+  purchaseCostAllocationMethod: {
+    type: String,
+    enum: ['quantity', 'value', 'none'],
+    default: 'none',
+  },
+  // Owner-controlled feature flag: when on, Gemini-powered features (Daily
+  // Insight, Business Consultant chat, and future procurement intelligence)
+  // are available; when off, no business data is sent to Gemini. Independent
+  // of subscription tier — a subscriber can still opt out of AI processing.
+  aiEnabled: {
+    type: Boolean,
+    default: true,
+  },
 }, { timestamps: true });
 
 export default mongoose.model('Shop', shopSchema);

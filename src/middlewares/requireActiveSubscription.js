@@ -18,7 +18,7 @@ export const requireActiveSubscription = async (req, res, next) => {
   try {
     const shopId = req.user.shop._id ?? req.user.shop;
     const [subscription, platform] = await Promise.all([
-      Subscription.findOne({ shop: shopId }).lean(),
+      Subscription.findOne({ shop: shopId }).populate('plan').lean(),
       PlatformConfig.get(),
     ]);
 
@@ -27,6 +27,9 @@ export const requireActiveSubscription = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Your subscription needs to be active to use this feature.' });
     }
 
+    // Expose the already-fetched, plan-populated doc so downstream
+    // middlewares (enforceChatLimits, requireFeature) don't need a second query.
+    req.subscription = subscription;
     next();
   } catch (err) {
     console.error('[requireActiveSubscription] error:', err.message);
