@@ -10,8 +10,22 @@ import { restoreSaleStock } from '../services/saleStockService.js';
 import { initiateReversal } from '../services/mpesaService.js';
 import { logAudit } from '../services/auditLogService.js';
 import { getActiveShift } from '../services/shiftService.js';
-import { parsePagination } from '../utils/pagination.js';
+import { parsePagination, paginatedResult } from '../utils/pagination.js';
 import { escapeRegex } from '../utils/escapeRegex.js';
+
+/**
+ * A client-facing rejection (out of stock, unknown product) raised from inside
+ * a transaction body so the transaction aborts cleanly. Carries no transient-
+ * error label, so withTransaction propagates it instead of retrying — unlike a
+ * WriteConflict, retrying "out of stock" would never succeed.
+ */
+class SaleRejection extends Error {
+  constructor(status, message) {
+    super(message);
+    this.name = 'SaleRejection';
+    this.status = status;
+  }
+}
 
 export const createSale = async (req, res) => {
   if (req.user.role !== 'owner' && !req.user.permissions?.includes('record_sale')) {
@@ -58,81 +72,88 @@ export const createSale = async (req, res) => {
     }
   }
   const session = await mongoose.startSession();
-  session.startTransaction();
 
   try {
-    let totalAmount = 0;
-    let totalCommission = 0;
-    const saleItems = [];
-    // Keeps every product/bundle-component doc touched during this sale in
-    // memory so it's mutated and saved exactly once, even when referenced
-    // by more than one cart line (e.g. shared bundle components).
-    const productCache = new Map();
+    let sale;
+    let saleItems;
 
-    for (const item of items) {
-      const product = await Product.findOne({ _id: item.productId, shop }).session(session);
-      if (!product) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(400).json({
-          success: false,
-          message: `Product with ID ${item.productId} not found in this shop`,
+    // withTransaction (not a bare startTransaction/commitTransaction pair)
+    // because MongoDB raises a WriteConflict whenever two transactions touch
+    // the same product document concurrently — two tills ringing up the same
+    // fast-moving SKU at the same moment. Manual commits surface that as a
+    // 500 at the counter; withTransaction retries transient errors for us.
+    // The body must therefore be idempotent and re-runnable: every mutation
+    // below is derived fresh from `items` on each attempt.
+    await session.withTransaction(async () => {
+      let totalAmount = 0;
+      let totalCommission = 0;
+      saleItems = [];
+      // Keeps every product/bundle-component doc touched during this sale in
+      // memory so it's mutated and saved exactly once, even when referenced
+      // by more than one cart line (e.g. shared bundle components). Rebuilt
+      // per attempt — reusing docs across retries would replay stale versions.
+      const productCache = new Map();
+
+      // One round trip for the whole basket instead of one per line. A 20-item
+      // cart used to be 20 sequential queries holding the transaction (and its
+      // locks) open the entire time, which itself provoked write conflicts.
+      const productIds = [...new Set(items.map((i) => String(i.productId)))];
+      const products = await Product.find({ _id: { $in: productIds }, shop }).session(session);
+      for (const product of products) productCache.set(product._id.toString(), product);
+
+      for (const item of items) {
+        const product = productCache.get(String(item.productId));
+        if (!product) {
+          throw new SaleRejection(400, `Product with ID ${item.productId} not found in this shop`);
+        }
+
+        let resolved;
+        try {
+          resolved = await resolveSaleLine(product, item, { shop, session, productCache });
+        } catch (err) {
+          if (err instanceof SaleLineError) throw new SaleRejection(err.status, err.message);
+          throw err;
+        }
+
+        totalAmount += resolved.subtotal;
+        totalCommission += resolved.commissionAmount || 0;
+        saleItems.push({
+          productId: product._id,
+          productName: product.name,
+          quantity: resolved.quantity,
+          unitPrice: resolved.unitPrice,
+          subtotal: resolved.subtotal,
+          discountAmount: resolved.discountAmount || 0,
+          appliedPromotionLabel: resolved.appliedPromotionLabel,
+          commissionAmount: resolved.commissionAmount || 0,
+          variantId: resolved.variantId,
+          variantName: resolved.variantName,
+          unitOfMeasure: resolved.unitOfMeasure,
+          productType: resolved.productType,
         });
       }
-      productCache.set(product._id.toString(), product);
 
-      let resolved;
-      try {
-        resolved = await resolveSaleLine(product, item, { shop, session, productCache });
-      } catch (err) {
-        await session.abortTransaction();
-        session.endSession();
-        if (err instanceof SaleLineError) {
-          return res.status(err.status).json({ success: false, message: err.message });
-        }
-        throw err;
+      for (const doc of productCache.values()) {
+        await doc.save({ session });
       }
 
-      totalAmount += resolved.subtotal;
-      totalCommission += resolved.commissionAmount || 0;
-      saleItems.push({
-        productId: product._id,
-        productName: product.name,
-        quantity: resolved.quantity,
-        unitPrice: resolved.unitPrice,
-        subtotal: resolved.subtotal,
-        discountAmount: resolved.discountAmount || 0,
-        appliedPromotionLabel: resolved.appliedPromotionLabel,
-        commissionAmount: resolved.commissionAmount || 0,
-        variantId: resolved.variantId,
-        variantName: resolved.variantName,
-        unitOfMeasure: resolved.unitOfMeasure,
-        productType: resolved.productType,
-      });
-    }
-
-    for (const doc of productCache.values()) {
-      await doc.save({ session });
-    }
-
-    const [sale] = await Sale.create([{
-      shop,
-      items: saleItems,
-      totalAmount,
-      totalCommission,
-      paymentMethod,
-      staff: req.user._id,
-      ...(activeShift ? { shift: activeShift._id } : {}),
-      ...(mpesaTx ? {
-        mpesaTransactionId: mpesaTx._id,
-        mpesaReceiptNumber: mpesaTx.mpesaReceiptNumber,
-      } : mpesaReceiptNumber ? {
-        // Offline manual entry — receipt number recorded as-is; no linked transaction yet
-        mpesaReceiptNumber,
-      } : {}),
-    }], { session });
-
-    await session.commitTransaction();
+      [sale] = await Sale.create([{
+        shop,
+        items: saleItems,
+        totalAmount,
+        totalCommission,
+        paymentMethod,
+        staff: req.user._id,
+        ...(activeShift ? { shift: activeShift._id } : {}),
+        ...(mpesaTx ? {
+          mpesaTransactionId: mpesaTx._id,
+          mpesaReceiptNumber: mpesaTx.mpesaReceiptNumber,
+        } : mpesaReceiptNumber ? {
+          // Offline manual entry — receipt number recorded as-is; no linked transaction yet
+          mpesaReceiptNumber,
+        } : {}),
+      }], { session });
+    });
 
     // Link the M-Pesa transaction to this sale outside the session (best-effort)
     if (mpesaTx) {
@@ -143,7 +164,9 @@ export const createSale = async (req, res) => {
     saleObj.receiptToken = signReceiptToken(sale._id);
     res.status(201).json({ success: true, data: saleObj, message: 'Sale recorded successfully' });
   } catch (error) {
-    await session.abortTransaction();
+    if (error instanceof SaleRejection) {
+      return res.status(error.status).json({ success: false, message: error.message });
+    }
     throw error;
   } finally {
     session.endSession();
@@ -455,20 +478,13 @@ export const getSales = async (req, res) => {
     });
   }
 
-  const [sales, total] = await Promise.all([
-    Sale.find(query)
-      .populate('staff', 'name email')
-      .skip(skip)
-      .limit(limit)
-      .sort({ createdAt: -1 }),
-    Sale.countDocuments(query),
-  ]);
+  const result = await paginatedResult(
+    { page, limit, skip },
+    (s, l) => Sale.find(query).populate('staff', 'name email').skip(s).limit(l).sort({ createdAt: -1 }),
+    () => Sale.countDocuments(query),
+  );
 
-  res.json({
-    success: true,
-    data: sales,
-    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
-  });
+  res.json({ success: true, ...result });
 };
 
 export const getSaleById = async (req, res) => {
@@ -544,18 +560,13 @@ export const getSalesStats = async (req, res) => {
 
 export const getMySales = async (req, res) => {
   const { page, limit, skip } = parsePagination(req.query);
-  const [sales, total] = await Promise.all([
-    Sale.find({ staff: req.user._id, shop: req.user.shop._id })
-      .skip(skip)
-      .limit(limit)
-      .sort({ createdAt: -1 }),
-    Sale.countDocuments({ staff: req.user._id, shop: req.user.shop._id }),
-  ]);
-  res.json({
-    success: true,
-    data: sales,
-    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
-  });
+  const query = { staff: req.user._id, shop: req.user.shop._id };
+  const result = await paginatedResult(
+    { page, limit, skip },
+    (s, l) => Sale.find(query).skip(s).limit(l).sort({ createdAt: -1 }),
+    () => Sale.countDocuments(query),
+  );
+  res.json({ success: true, ...result });
 };
 
 export const getMyCommission = async (req, res) => {

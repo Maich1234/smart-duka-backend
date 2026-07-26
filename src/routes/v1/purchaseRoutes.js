@@ -10,6 +10,7 @@ import {
   getPurchaseAnalyticsHandler,
 } from '../../controllers/purchaseController.js';
 import { protect, staffOrOwner } from '../../middlewares/auth.js';
+import { requirePaidShop } from '../../middlewares/requirePaidShop.js';
 import validate from '../../middlewares/validate.js';
 import idempotency from '../../middlewares/idempotency.js';
 import {
@@ -32,9 +33,9 @@ router.get('/:id', staffOrOwner, getPurchaseById);
 // idempotency: every mutating route can be retried by the mobile offline
 // queue after a network failure — without dedupe a purchase that committed
 // but timed out on the response would be recorded (and stock applied) twice.
-router.post('/', staffOrOwner, idempotency, validate(createPurchaseSchema), createPurchase);
-router.put('/:id', staffOrOwner, idempotency, validate(updatePurchaseSchema), updatePurchase);
-router.delete('/:id', staffOrOwner, idempotency, deletePurchase);
-router.post('/:id/approve', staffOrOwner, idempotency, approvePurchase);
+router.post('/', staffOrOwner, requirePaidShop, idempotency, validate(createPurchaseSchema), createPurchase);
+router.put('/:id', staffOrOwner, requirePaidShop, idempotency, validate(updatePurchaseSchema), updatePurchase);
+router.delete('/:id', staffOrOwner, requirePaidShop, idempotency, deletePurchase);
+router.post('/:id/approve', staffOrOwner, requirePaidShop, idempotency, approvePurchase);
 
 export default router;

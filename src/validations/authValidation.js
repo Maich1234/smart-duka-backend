@@ -27,6 +27,12 @@ export const registerSchema = Joi.object({
   shopName: Joi.string().required(),
   address: Joi.string().optional(),
   phone: Joi.string().optional(),
+  // Must be literally true. `.valid(true)` rather than a plain boolean so
+  // sending false is a validation failure rather than a silently unticked box.
+  acceptedTerms: Joi.boolean().valid(true).required().messages({
+    'any.only': 'Please accept the Terms of Service and Privacy Policy to create an account.',
+    'any.required': 'Please accept the Terms of Service and Privacy Policy to create an account.',
+  }),
 });
 
 export const forgotPasswordSchema = Joi.object({
@@ -51,4 +57,11 @@ export const resetPasswordSchema = Joi.object({
 export const verifyEmailSchema = Joi.object({
   email: Joi.string().email().lowercase().trim().required(),
   code: Joi.string().length(6).required(),
+}).unknown(false);
+
+// Deletion is irreversible and, for an owner, cascades to the whole shop —
+// so it takes both the account password and a typed confirmation.
+export const deleteAccountSchema = Joi.object({
+  password: Joi.string().required(),
+  confirm: Joi.string().valid('DELETE').required(),
 }).unknown(false);

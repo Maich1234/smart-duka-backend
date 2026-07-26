@@ -140,5 +140,13 @@ export const updatePlatformConfigSchema = Joi.object({
   consumerSecret: Joi.string().trim().allow(''),
   passkey: Joi.string().trim().allow(''),
   gracePeriodDays: Joi.number().min(0),
+  staffGraceExtraDays: Joi.number().min(0),
   reminderDaysBefore: Joi.array().items(Joi.number().min(0)),
 }).unknown(false).min(1);
+
+// Support-granted breathing room for one shop. Capped at 30 days so a
+// mis-typed value can't hand out a free year.
+export const grantGraceExtensionSchema = Joi.object({
+  days: Joi.number().integer().min(0).max(30).required(),
+  reason: Joi.string().max(200).allow('').optional(),
+}).unknown(false);

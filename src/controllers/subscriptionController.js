@@ -12,6 +12,11 @@ import {
   computePrice,
   deriveAccess,
 } from '../services/subscriptionPricingService.js';
+import {
+  getAccruedSeatTotal,
+  describeSeatAdjustments,
+  clearSeatAdjustments,
+} from '../services/seatBillingService.js';
 import { getPaymentProvider, listPaymentProviders } from '../services/payments/index.js';
 import { logAudit } from '../services/auditLogService.js';
 import { activateSeatPayment, cleanupFailedSeatPayment } from '../services/seatActivationService.js';
@@ -204,10 +209,16 @@ export const getMySubscription = async (req, res) => {
         staffCount,
         billingCycle: subscription.billingCycle,
       });
+      // Mid-period head-count changes are postpaid — their prorated cost
+      // rides on this invoice instead of having been charged on the spot.
+      const seatCharges = getAccruedSeatTotal(subscription);
       renewal = {
         planSlug: price.plan.slug,
         billingCycle: price.billingCycle,
-        amountDue: price.amountDue,
+        basePrice: price.amountDue,
+        seatCharges,
+        seatAdjustments: describeSeatAdjustments(subscription),
+        amountDue: price.amountDue + seatCharges,
         staffCount: price.staffCount,
         currency: price.currency,
       };
@@ -396,7 +407,12 @@ export const initiatePayment = async (req, res) => {
     }
 
     const price = computePrice({ plans, plan, staffCount, billingCycle, promotion });
-    if (price.amountDue <= 0) {
+    // Accrued mid-period seat changes settle on this invoice. Added after the
+    // promotion so a discount code applies to the plan price, not to seats
+    // already consumed.
+    const seatCharges = getAccruedSeatTotal(subscription);
+    const amountDue = price.amountDue + seatCharges;
+    if (amountDue <= 0) {
       return res.status(400).json({ success: false, message: 'Nothing to pay — the promo covers the full amount. Contact support to apply it.' });
     }
 
@@ -433,7 +449,7 @@ export const initiatePayment = async (req, res) => {
     try {
       charge = await provider.charge({
         phoneNumber,
-        amount: price.amountDue,
+        amount: amountDue,
         reference: 'SMARTDUKA',
         description: `Smart Duka ${plan.name} (${billingCycle})`,
         callbackUrl,
@@ -461,7 +477,7 @@ export const initiatePayment = async (req, res) => {
         plan: plan._id,
         billingCycle,
         staffCount,
-        amount: price.amountDue,
+        amount: amountDue,
         currency: price.currency,
         provider: provider.key,
         providerRef: charge.providerRef,
@@ -496,7 +512,7 @@ export const initiatePayment = async (req, res) => {
       action: 'subscription.payment.initiated',
       entityType: 'SubscriptionPayment',
       entityId: payment._id,
-      details: { amount: price.amountDue, billingCycle, planSlug: plan.slug, provider: provider.key, promoCode: promotion?.code },
+      details: { amount: amountDue, seatCharges, billingCycle, planSlug: plan.slug, provider: provider.key, promoCode: promotion?.code },
       req,
     }).catch(() => {});
 
@@ -505,7 +521,7 @@ export const initiatePayment = async (req, res) => {
       data: {
         paymentId: payment._id,
         status: 'pending',
-        amount: price.amountDue,
+        amount: amountDue,
         currency: price.currency,
         billingCycle,
         planSlug: plan.slug,
@@ -666,6 +682,9 @@ export async function applySuccessfulPayment(payment) {
   subscription.paymentReference = payment.receipt ?? payment.providerRef;
   subscription.promotion = payment.promotion ?? subscription.promotion;
   subscription.cancelledAt = null;
+  // Accrued mid-period seat changes were folded into this payment's amount —
+  // settle them so they can't be billed twice on the following invoice.
+  clearSeatAdjustments(subscription);
   await subscription.save();
 
   payment.periodStart = periodStart;

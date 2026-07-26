@@ -1,13 +1,25 @@
 import mongoose from 'mongoose';
 import User from '../../models/User.js';
 import Shop from '../../models/Shop.js';
+import { CURRENT_TERMS_VERSION } from '../../constants/legal.js';
 import { sendVerificationEmail } from '../../utils/emailVerification.js';
 
 export const register = async (req, res) => {
-  const { name, email, password, shopName, address, phone } = req.body;
+  const { name, email, password, shopName, address, phone, acceptedTerms } = req.body;
 
   if (!name || !email || !password || !shopName) {
     return res.status(400).json({ success: false, message: 'Missing required fields: name, email, password, shopName' });
+  }
+
+  // Enforced server-side, not just by a disabled button: the checkbox is only
+  // meaningful if an account cannot exist without it. Recorded below with the
+  // version accepted, so we can prove what this person agreed to and when.
+  if (acceptedTerms !== true) {
+    return res.status(400).json({
+      success: false,
+      code: 'TERMS_NOT_ACCEPTED',
+      message: 'Please accept the Terms of Service and Privacy Policy to create an account.',
+    });
   }
 
   const existingUser = await User.findOne({ email });
@@ -23,7 +35,16 @@ export const register = async (req, res) => {
     const userId = new mongoose.Types.ObjectId();
 
     const [user] = await User.create([{
-      _id: userId, name, email, password, role: 'owner', shop: shopId, isActive: true, isEmailVerified: false,
+      _id: userId,
+      name,
+      email,
+      password,
+      role: 'owner',
+      shop: shopId,
+      isActive: true,
+      isEmailVerified: false,
+      termsAcceptedAt: new Date(),
+      termsVersion: CURRENT_TERMS_VERSION,
     }], { session });
     await Shop.create([{ _id: shopId, name: shopName, address: address || '', phone: phone || '', owner: userId }], { session });
 

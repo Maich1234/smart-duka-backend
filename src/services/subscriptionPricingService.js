@@ -121,6 +121,9 @@ export function deriveAccess(subscription, gracePeriodDays = 3, now = new Date()
     return { state: 'none', daysLeft: 0, graceDaysLeft: 0, expiresAt: null, cancelled: false };
   }
 
+  // Support-granted breathing room extends the window for this shop only.
+  gracePeriodDays += subscription.graceExtensionDays ?? 0;
+
   const cancelled = subscription.status === 'cancelled';
   // The latest date access has been granted to.
   const paidEnd = subscription.currentPeriodEnd ? new Date(subscription.currentPeriodEnd) : null;

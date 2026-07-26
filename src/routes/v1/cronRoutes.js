@@ -6,6 +6,7 @@ import {
   subscriptionReminders,
   pushCampaignDispatch,
   subscriptionPaymentReconcile,
+  accountDeletions,
 } from '../../controllers/cronController.js';
 
 const router = express.Router();
@@ -18,5 +19,6 @@ router.get('/daily-summary', dailyBusinessSummary);
 router.get('/subscription-reminders', subscriptionReminders);
 router.get('/push-campaign-dispatch', pushCampaignDispatch);
 router.get('/subscription-payment-reconcile', subscriptionPaymentReconcile);
+router.get('/account-deletions', accountDeletions);
 
 export default router;

@@ -16,6 +16,9 @@ import {
   unregisterDeviceToken,
   refresh,
   logout,
+  deleteAccount,
+  previewAccountDeletion,
+  cancelAccountDeletion,
 } from '../../controllers/auth/index.js';
 import { protect } from '../../middlewares/auth.js';
 import validate from '../../middlewares/validate.js';
@@ -29,6 +32,7 @@ import {
   resetPasswordSchema,
   resendVerificationEmailSchema,
   verifyEmailSchema,
+  deleteAccountSchema,
 } from '../../validations/authValidation.js';
 
 const router = express.Router();
@@ -93,5 +97,12 @@ router.post('/change-password', protect, validate(changePasswordSchema), changeP
 router.post('/resend-verification', protect, resendVerificationEmail);
 router.post('/device-token', protect, registerDeviceToken);
 router.delete('/device-token', protect, unregisterDeviceToken);
+
+// Account deletion (Google Play requirement). Rate-limited like the other
+// password-checking endpoints: the confirmation is password-gated, so an
+// unlimited endpoint would be a credential oracle.
+router.get('/me/deletion-preview', protect, previewAccountDeletion);
+router.post('/me/restore', protect, cancelAccountDeletion);
+router.delete('/me', protect, passwordResetLimiter, validate(deleteAccountSchema), deleteAccount);
 
 export default router;

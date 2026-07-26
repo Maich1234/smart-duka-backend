@@ -23,8 +23,17 @@ const platformConfigSchema = new mongoose.Schema({
   mpesa: { type: platformMpesaSchema, default: () => ({}) },
   // Future providers (managed from the super-admin page):
   // card: { ... }, bank: { ... }
-  // Days of continued access after trial/period expiry before the app locks.
+  // Days of continued access after trial/period expiry before the owner is
+  // sent to the paywall.
   gracePeriodDays: { type: Number, default: 3, min: 0 },
+  // Extra days, on top of gracePeriodDays, during which *staff* can still
+  // record sales after the owner has been locked out.
+  //
+  // A duka that cannot take money churns; a duka that cannot see its
+  // analytics renews. So the till is the last thing to stop working, not the
+  // first — the owner hits the paywall on day 0 and the shop keeps trading
+  // while they find the money.
+  staffGraceExtraDays: { type: Number, default: 7, min: 0 },
   // How many days before expiry to push renewal reminders.
   reminderDaysBefore: { type: [Number], default: [7, 3] },
 }, { timestamps: true });

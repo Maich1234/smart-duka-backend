@@ -23,6 +23,7 @@ export const getPlatformConfig = async (req, res) => {
         configuredAt: mpesa.configuredAt ?? null,
       },
       gracePeriodDays: platform.gracePeriodDays,
+      staffGraceExtraDays: platform.staffGraceExtraDays,
       reminderDaysBefore: platform.reminderDaysBefore,
     },
   });
@@ -36,7 +37,7 @@ export const getPlatformConfig = async (req, res) => {
  */
 export const updatePlatformConfig = async (req, res) => {
   const platform = await PlatformConfig.get();
-  const { enabled, environment, businessName, shortcode, consumerKey, consumerSecret, passkey, gracePeriodDays, reminderDaysBefore } = req.body;
+  const { enabled, environment, businessName, shortcode, consumerKey, consumerSecret, passkey, gracePeriodDays, staffGraceExtraDays, reminderDaysBefore } = req.body;
 
   const mpesa = platform.mpesa?.toObject ? platform.mpesa.toObject() : { ...(platform.mpesa ?? {}) };
   if (enabled !== undefined) mpesa.enabled = enabled;
@@ -50,6 +51,7 @@ export const updatePlatformConfig = async (req, res) => {
   platform.mpesa = mpesa;
 
   if (gracePeriodDays !== undefined) platform.gracePeriodDays = gracePeriodDays;
+  if (staffGraceExtraDays !== undefined) platform.staffGraceExtraDays = staffGraceExtraDays;
   if (reminderDaysBefore !== undefined) platform.reminderDaysBefore = reminderDaysBefore;
 
   await platform.save();

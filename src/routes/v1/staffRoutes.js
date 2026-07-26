@@ -11,7 +11,12 @@ import {
   getStaffCommission,
   updateStaffPermissions,
   checkStaffEmailAvailability,
+  previewSeatAddition,
 } from '../../controllers/staffController.js';
+// Seat purchase is retired: seats are postpaid and prorated onto the next
+// invoice (see seatBillingService). These endpoints stay mounted only long
+// enough for in-flight payments made by older app builds to reconcile — no
+// current client initiates one. Remove after one release.
 import {
   initiateSeatPayment,
   getSeatPaymentStatus,
@@ -39,6 +44,7 @@ router.use(ownerOnly);
 router.get('/permissions', getAllPermissions);
 router.get('/', getStaff);
 router.get('/check-email', checkStaffEmailAvailability);
+router.get('/seat-preview', previewSeatAddition);
 router.post('/seat-payment', idempotency, validate(initiateSeatPaymentSchema), initiateSeatPayment);
 router.get('/seat-payment/:paymentId', getSeatPaymentStatus);
 router.post('/seat-payment/:paymentId/recheck', recheckSeatPayment);

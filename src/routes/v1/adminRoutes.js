@@ -5,7 +5,7 @@ import { listPlans, createPlan, updatePlan } from '../../controllers/adminPlansC
 import { getPlatformConfig, updatePlatformConfig } from '../../controllers/adminPlatformConfigController.js';
 import { listPromotions, createPromotion, updatePromotion } from '../../controllers/adminPromotionsController.js';
 import { listShops } from '../../controllers/adminShopsController.js';
-import { lookupShopByUser, getShopSubscription, reconcileShopPayment } from '../../controllers/adminSubscriptionsController.js';
+import { lookupShopByUser, getShopSubscription, reconcileShopPayment, grantGraceExtension } from '../../controllers/adminSubscriptionsController.js';
 import { listAuditLogs } from '../../controllers/adminAuditController.js';
 import { listPushCampaigns, createPushCampaign, sendPushCampaign, cancelPushCampaign } from '../../controllers/adminPushController.js';
 import { getCounties, getSubcounties } from '../../controllers/presetsController.js';
@@ -24,6 +24,7 @@ import {
   createPushCampaignSchema,
   createAdminUserSchema,
   updateAdminUserSchema,
+  grantGraceExtensionSchema,
 } from '../../validations/adminValidation.js';
 
 const router = express.Router();
@@ -59,6 +60,7 @@ router.patch('/promotions/:id', requirePermission('promotions'), validate(update
 router.get('/shops', requirePermission('shops'), listShops);
 router.get('/shops/lookup', requirePermission('shops'), lookupShopByUser);
 router.get('/shops/:id/subscription', requirePermission('shops'), getShopSubscription);
+router.post('/shops/:id/grace-extension', requirePermission('shops'), validate(grantGraceExtensionSchema), grantGraceExtension);
 router.post('/subscriptions/payments/:paymentId/reconcile', requirePermission('shops'), reconcileShopPayment);
 router.get('/audit', requirePermission('audit'), listAuditLogs);
 

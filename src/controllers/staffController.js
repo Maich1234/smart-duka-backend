@@ -4,7 +4,8 @@ import RefreshToken from '../models/RefreshToken.js';
 import { DEFAULT_STAFF_PERMISSIONS, withImpliedPermissions } from '../constants/permissions.js';
 import { parsePagination } from '../utils/pagination.js';
 import { escapeRegex } from '../utils/escapeRegex.js';
-import { getBillableUserCount, computeSeatAdditionImpact } from '../services/subscriptionPricingService.js';
+import { getBillableUserCount } from '../services/subscriptionPricingService.js';
+import { accrueSeatChange, computeSeatChange } from '../services/seatBillingService.js';
 import { resolveStaffEmailSlot } from './seatPaymentController.js';
 import { revokeAllSessions } from '../services/refreshTokenService.js';
 import { logAudit } from '../services/auditLogService.js';
@@ -72,27 +73,8 @@ export const createStaff = async (req, res) => {
   }
 
   const shopId = req.user.shop._id;
-  const subscription = await Subscription.findOne({ shop: shopId }).populate('plan').lean();
-  if (subscription?.plan) {
-    const currentStaffCount = await getBillableUserCount(shopId);
-    const impact = computeSeatAdditionImpact(subscription.plan, currentStaffCount, subscription.billingCycle);
-    if (impact.increased) {
-      // Activating this seat costs money — the client must go through
-      // POST /staff/seat-payment (M-Pesa STK push) instead of creating the
-      // staff row directly. See seatPaymentController.js.
-      return res.status(409).json({
-        success: false,
-        code: 'SEAT_PAYMENT_REQUIRED',
-        message: `Adding this team member raises your ${subscription.billingCycle} bill from ${impact.currentAmount} to ${impact.projectedAmount} ${subscription.plan.currency}. Payment is required to continue.`,
-        data: {
-          currentAmount: impact.currentAmount,
-          projectedAmount: impact.projectedAmount,
-          currency: subscription.plan.currency,
-          billingCycle: subscription.billingCycle,
-        },
-      });
-    }
-  }
+  const subscription = await Subscription.findOne({ shop: shopId }).populate('plan');
+  const beforeCount = await getBillableUserCount(shopId);
 
   const isEmailVerified = isSystemGeneratedEmail(email, req.user.shop.name);
   const staff = await User.create({
@@ -104,13 +86,75 @@ export const createStaff = async (req, res) => {
     permissions: withImpliedPermissions(req.body.permissions ?? DEFAULT_STAFF_PERMISSIONS),
   });
 
+  // Seats are postpaid: the account works immediately and the prorated cost
+  // of the extra seat lands on the next invoice. Never blocks on payment —
+  // an owner onboarding their first cashier must not hit a checkout wall,
+  // and the mobile app ships with no purchase flow at all.
+  const adjustment = subscription?.plan
+    ? await accrueSeatChange({
+      subscription,
+      plan: subscription.plan,
+      fromCount: beforeCount,
+      toCount: beforeCount + 1,
+      reason: 'staff_added',
+      staff,
+    })
+    : null;
+
   if (!isEmailVerified) {
     sendVerificationEmail(staff).catch((err) => console.error('[createStaff] verification email failed:', err.message));
   }
 
   const staffResponse = staff.toObject();
   delete staffResponse.password;
-  res.status(201).json({ success: true, data: staffResponse });
+  res.status(201).json({
+    success: true,
+    data: staffResponse,
+    // Disclosure, not a checkout — the client shows this as a note, and has
+    // no way to pay it here.
+    billing: adjustment
+      ? {
+        addedToNextInvoice: adjustment.proratedAmount,
+        currency: subscription.plan.currency,
+        nextInvoiceAt: subscription.currentPeriodEnd,
+      }
+      : null,
+  });
+};
+
+/**
+ * GET /staff/seat-preview — what adding one more team member will add to the
+ * next invoice. Purely informational: the client shows it as a note before
+ * the owner commits, and has no way to pay it. Replaces the old
+ * SEAT_PAYMENT_REQUIRED 409 + STK push, which charged a full billing period
+ * up front regardless of how much of it was left.
+ */
+export const previewSeatAddition = async (req, res) => {
+  const shopId = req.user.shop._id;
+  const subscription = await Subscription.findOne({ shop: shopId }).populate('plan').lean();
+  if (!subscription?.plan) {
+    return res.json({ success: true, data: { willCharge: false, amount: 0 } });
+  }
+
+  const currentCount = await getBillableUserCount(shopId);
+  const change = computeSeatChange({
+    plan: subscription.plan,
+    subscription,
+    fromCount: currentCount,
+    toCount: currentCount + 1,
+  });
+
+  res.json({
+    success: true,
+    data: {
+      willCharge: change.proratedAmount > 0,
+      amount: change.proratedAmount,
+      fullPeriodAmount: change.fullAmount,
+      currency: subscription.plan.currency,
+      nextInvoiceAt: subscription.currentPeriodEnd,
+      billingCycle: subscription.billingCycle,
+    },
+  });
 };
 
 export const checkStaffEmailAvailability = async (req, res) => {
@@ -122,10 +166,17 @@ export const checkStaffEmailAvailability = async (req, res) => {
 };
 
 export const updateStaff = async (req, res) => {
-  const staff = await User.findOne({ _id: req.params.id, role: 'staff', shop: req.user.shop._id });
+  const shopId = req.user.shop._id;
+  const staff = await User.findOne({ _id: req.params.id, role: 'staff', shop: shopId });
   if (!staff) return res.status(404).json({ success: false, message: 'Staff not found' });
 
   const { name, email, phone, isActive, permissions } = req.body;
+  // Toggling isActive changes billable head-count, so it has to be priced the
+  // same way createStaff prices a new seat. Without this, deactivate →
+  // reactivate was a free seat: the old seat-payment gate only ever guarded
+  // creation, leaving this endpoint as an open bypass.
+  const activationChanged = isActive !== undefined && isActive !== staff.isActive;
+
   if (name) staff.name = name;
   if (email) staff.email = email;
   if (phone) staff.phone = phone;
@@ -133,16 +184,64 @@ export const updateStaff = async (req, res) => {
   if (permissions) staff.permissions = withImpliedPermissions(permissions);
 
   await staff.save();
+
+  let adjustment = null;
+  if (activationChanged) {
+    const subscription = await Subscription.findOne({ shop: shopId }).populate('plan');
+    if (subscription?.plan) {
+      // Count is read *after* the save, so it already reflects the change.
+      const afterCount = await getBillableUserCount(shopId);
+      const beforeCount = isActive ? afterCount - 1 : afterCount + 1;
+      adjustment = await accrueSeatChange({
+        subscription,
+        plan: subscription.plan,
+        fromCount: beforeCount,
+        toCount: afterCount,
+        reason: isActive ? 'staff_reactivated' : 'staff_deactivated',
+        staff,
+      });
+    }
+  }
+
   const staffResponse = staff.toObject();
   delete staffResponse.password;
-  res.json({ success: true, data: staffResponse });
+  res.json({
+    success: true,
+    data: staffResponse,
+    billing: adjustment ? { addedToNextInvoice: adjustment.proratedAmount } : null,
+  });
 };
 
 export const deleteStaff = async (req, res) => {
-  const staff = await User.findOne({ _id: req.params.id, role: 'staff', shop: req.user.shop._id });
+  const shopId = req.user.shop._id;
+  const staff = await User.findOne({ _id: req.params.id, role: 'staff', shop: shopId });
   if (!staff) return res.status(404).json({ success: false, message: 'Staff not found' });
 
+  const wasActive = staff.isActive;
   await staff.deleteOne();
+
+  if (wasActive) {
+    const subscription = await Subscription.findOne({ shop: shopId }).populate('plan');
+    if (subscription) {
+      const afterCount = await getBillableUserCount(shopId);
+      if (subscription.plan) {
+        // Credit back the unused part of the period this seat was paid for.
+        await accrueSeatChange({
+          subscription,
+          plan: subscription.plan,
+          fromCount: afterCount + 1,
+          toCount: afterCount,
+          reason: 'staff_removed',
+          staff,
+        });
+      }
+      // Keep the snapshotted head-count honest — it used to drift permanently
+      // out of sync because removals never wrote it back.
+      subscription.staffCount = afterCount;
+      await subscription.save();
+    }
+  }
+
   res.json({ success: true, message: 'Staff deleted successfully' });
 };
 

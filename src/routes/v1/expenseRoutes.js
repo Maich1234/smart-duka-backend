@@ -7,6 +7,7 @@ import {
   deleteExpense,
 } from '../../controllers/expenseController.js';
 import { protect, staffOrOwner } from '../../middlewares/auth.js';
+import { requirePaidShop } from '../../middlewares/requirePaidShop.js';
 import validate from '../../middlewares/validate.js';
 import idempotency from '../../middlewares/idempotency.js';
 import { createExpenseSchema, updateExpenseSchema } from '../../validations/expenseValidation.js';
@@ -19,8 +20,8 @@ router.get('/summary', staffOrOwner, getExpenseSummary);
 // Role gate only checks authenticated staff-or-owner; create/update/delete each
 // enforce their own owner-or-permission (manage_expenses) check.
 // idempotency: creates are retried by the mobile offline queue — dedupe them.
-router.post('/', staffOrOwner, idempotency, validate(createExpenseSchema), createExpense);
-router.put('/:id', staffOrOwner, idempotency, validate(updateExpenseSchema), updateExpense);
-router.delete('/:id', staffOrOwner, deleteExpense);
+router.post('/', staffOrOwner, requirePaidShop, idempotency, validate(createExpenseSchema), createExpense);
+router.put('/:id', staffOrOwner, requirePaidShop, idempotency, validate(updateExpenseSchema), updateExpense);
+router.delete('/:id', staffOrOwner, requirePaidShop, deleteExpense);
 
 export default router;

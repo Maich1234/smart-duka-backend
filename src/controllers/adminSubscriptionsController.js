@@ -108,3 +108,56 @@ export const reconcileShopPayment = async (req, res) => {
     },
   });
 };
+
+/**
+ * POST /admin/shops/:id/grace-extension — grants one shop extra days before
+ * it locks, on top of the platform-wide grace period.
+ *
+ * Support's only lever used to be changing the global gracePeriodDays for
+ * every shop on the platform, or nothing at all. This is the "the owner is
+ * KES 200 short until Friday" case: real, common, and not worth losing a
+ * customer over. Set days to 0 to revoke an extension.
+ */
+export const grantGraceExtension = async (req, res) => {
+  const { days, reason } = req.body;
+
+  const subscription = await Subscription.findOne({ shop: req.params.id });
+  if (!subscription) {
+    return res.status(404).json({ success: false, message: 'This shop has no subscription to extend.' });
+  }
+
+  const previousDays = subscription.graceExtensionDays ?? 0;
+  subscription.graceExtensionDays = days;
+  subscription.graceExtensionGrantedAt = days > 0 ? new Date() : null;
+  subscription.graceExtensionGrantedBy = days > 0 ? req.admin._id : null;
+  subscription.graceExtensionReason = days > 0 ? (reason ?? '') : '';
+  await subscription.save();
+
+  const platform = await PlatformConfig.get();
+
+  logAudit({
+    shopId: subscription.shop,
+    action: days > 0 ? 'admin.subscription.grace_extended' : 'admin.subscription.grace_revoked',
+    entityType: 'Subscription',
+    entityId: subscription._id,
+    details: {
+      adminId: String(req.admin._id),
+      adminEmail: req.admin.email,
+      previousDays,
+      days,
+      reason: reason ?? '',
+    },
+    req,
+  }).catch(() => {});
+
+  res.json({
+    success: true,
+    data: {
+      graceExtensionDays: subscription.graceExtensionDays,
+      access: deriveAccess(subscription.toObject(), platform.gracePeriodDays),
+    },
+    message: days > 0
+      ? `This shop now has ${days} extra day${days === 1 ? '' : 's'} before it locks.`
+      : 'Grace extension removed.',
+  });
+};

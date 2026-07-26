@@ -1,6 +1,7 @@
 import express from 'express';
 import { createSale, getSales, getSaleById, getMySales, getMyCommission, getSalesStats, voidSale, refundSale } from '../../controllers/saleController.js';
 import { protect, staffOrOwner } from '../../middlewares/auth.js';
+import { requirePaidShop } from '../../middlewares/requirePaidShop.js';
 import validate from '../../middlewares/validate.js';
 import idempotency from '../../middlewares/idempotency.js';
 import { createSaleSchema, saleQuerySchema } from '../../validations/saleValidation.js';
@@ -11,7 +12,7 @@ router.use(protect);
 // idempotency: the mobile offline queue retries this request after network
 // failures — without dedupe a sale that committed but timed out on the
 // response would be recorded twice (double revenue, double stock decrement).
-router.post('/', staffOrOwner, idempotency, validate(createSaleSchema), createSale);
+router.post('/', staffOrOwner, requirePaidShop, idempotency, validate(createSaleSchema), createSale);
 // Owner (or staff granted 'void_sale') corrects a mis-recorded sale.
 // idempotency: void can be queued offline and retried — must not double-restore stock.
 router.post('/:id/void', staffOrOwner, idempotency, voidSale);

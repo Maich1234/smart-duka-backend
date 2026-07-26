@@ -5,3 +5,4 @@ export * from './password.js';
 export * from './emailVerification.js';
 export * from './deviceToken.js';
 export * from './refresh.js';
+export * from './deleteAccount.js';

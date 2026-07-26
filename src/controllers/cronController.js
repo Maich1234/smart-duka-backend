@@ -12,6 +12,7 @@ import { dueReminder } from '../services/subscriptionPricingService.js';
 import { detectSalesAnomaly } from '../services/intelligence/salesAnomalyService.js';
 import { claimAndDispatchCampaign } from '../services/pushCampaignService.js';
 import { reconcilePayment } from './subscriptionController.js';
+import { purgeScheduledDeletions, remindScheduledDeletions } from './auth/deleteAccount.js';
 
 const STOCKOUT_CRITICAL_DAYS = 3;
 
@@ -316,4 +317,27 @@ export const subscriptionPaymentReconcile = async (req, res) => {
   }
 
   res.json({ success: true, processed: candidates.length, reconciled: results.length, results });
+};
+
+/**
+ * GET /cron/account-deletions — completes account closures whose 14-day
+ * cooling-off window has expired, and reminds anyone in the last few days of
+ * theirs that it's still coming.
+ *
+ * Closure is only ever *scheduled* by DELETE /auth/me (see
+ * controllers/auth/deleteAccount.js) — this is the job that actually destroys
+ * the data, so a user who changes their mind, or taps by accident, always has
+ * a way back.
+ */
+export const accountDeletions = async (req, res) => {
+  if (!verifyCronSecret(req)) {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
+  }
+
+  const [purged, reminded] = await Promise.all([
+    purgeScheduledDeletions(),
+    remindScheduledDeletions(),
+  ]);
+
+  res.json({ success: true, purged, reminded });
 };
