@@ -94,6 +94,13 @@ export const getSalesTrendSeries = async (shopId, { period = 'daily', now = new 
           total: { $sum: '$totalAmount' },
           cashTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'cash'] }, '$totalAmount', 0] } },
           mpesaTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'mpesa'] }, '$totalAmount', 0] } },
+          // Anything that is neither — Airtel, bank, a custom button. Without
+          // this the cash+mpesa split silently failed to reconcile to `total`.
+          otherTotal: {
+            $sum: {
+              $cond: [{ $in: ['$paymentMethod', ['cash', 'mpesa']] }, 0, '$totalAmount'],
+            },
+          },
           transactionCount: { $sum: 1 },
         },
       },
@@ -111,6 +118,7 @@ export const getSalesTrendSeries = async (shopId, { period = 'daily', now = new 
       total: agg?.total ?? 0,
       cashTotal: agg?.cashTotal ?? 0,
       mpesaTotal: agg?.mpesaTotal ?? 0,
+      otherTotal: agg?.otherTotal ?? 0,
       transactionCount: agg?.transactionCount ?? 0,
     };
   });

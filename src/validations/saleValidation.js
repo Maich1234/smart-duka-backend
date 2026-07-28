@@ -1,4 +1,9 @@
 import Joi from 'joi';
+import { METHOD_KEY_PATTERN } from '../constants/salePaymentMethods.js';
+
+// Shape only — whether the shop actually offers this method is checked in the
+// controller, which is the only layer that can load the shop's config.
+const methodKey = Joi.string().trim().lowercase().pattern(METHOD_KEY_PATTERN);
 
 export const createSaleSchema = Joi.object({
   items: Joi.array()
@@ -14,7 +19,7 @@ export const createSaleSchema = Joi.object({
     )
     .min(1)
     .required(),
-  paymentMethod: Joi.string().valid('cash', 'mpesa', 'card').required(),
+  paymentMethod: methodKey.required(),
   // For M-Pesa sales: links the confirmed STK Push transaction to this sale
   mpesaTransactionId: Joi.string().optional(),
   // Offline fallback: receipt code staff typed from the customer's
@@ -27,7 +32,7 @@ export const saleQuerySchema = Joi.object({
   startDate: Joi.date(),
   endDate: Joi.date(),
   staffId: Joi.string(),
-  paymentMethod: Joi.string().valid('cash', 'mpesa', 'card'),
+  paymentMethod: methodKey,
   // Free-text search across invoice number and cashier name
   search: Joi.string().trim().max(60).allow(''),
   page: Joi.number().min(1).default(1),
