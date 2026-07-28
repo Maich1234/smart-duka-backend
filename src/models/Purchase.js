@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { MONEY_OUT_METHODS } from '../constants/paymentMethods.js';
 
 // Fixed category list, mirroring EXPENSE_CATEGORY_VALUES's export pattern —
 // these are costs of *acquiring* stock (transport, packaging, etc.) and are
@@ -123,6 +124,18 @@ const purchaseSchema = new mongoose.Schema({
     type: Number,
     required: true,
     min: 0,
+  },
+  // How the supplier was paid. 'credit' means nothing left the till — the
+  // stock arrived on account — so the Cashbook must skip these entirely rather
+  // than book cash that never moved. Settlement is not tracked yet; it arrives
+  // with the Creditors book (see docs/business-books.md §6).
+  //
+  // Defaults to 'cash' to keep every existing purchase and every offline-queued
+  // payload valid.
+  paymentMethod: {
+    type: String,
+    enum: MONEY_OUT_METHODS,
+    default: 'cash',
   },
   // Snapshot of the shop's cost-allocation default at creation time — if the
   // owner changes the shop default later, past purchases keep the method that

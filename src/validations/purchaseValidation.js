@@ -1,5 +1,6 @@
 import Joi from 'joi';
 import { PURCHASE_COST_CATEGORY_VALUES } from '../models/Purchase.js';
+import { MONEY_OUT_METHODS } from '../constants/paymentMethods.js';
 
 const purchaseItemInputSchema = Joi.object({
   productId: Joi.string().required(),
@@ -23,6 +24,10 @@ export const createPurchaseSchema = Joi.object({
   supplierName: Joi.string().trim().allow('').max(120).optional(), // manual walk-in label
   items: Joi.array().items(purchaseItemInputSchema).min(1).required(),
   additionalCosts: Joi.array().items(purchaseCostInputSchema).default([]),
+  // Optional, not required — these schemas are .unknown(false), so an older
+  // client or a payload queued offline before this field shipped must still be
+  // accepted. The model defaults it to 'cash'.
+  paymentMethod: Joi.string().valid(...MONEY_OUT_METHODS).optional(),
   purchaseDate: Joi.date().optional(),
 }).unknown(false);
 
@@ -31,6 +36,7 @@ export const updatePurchaseSchema = Joi.object({
   supplierName: Joi.string().trim().allow('').max(120),
   items: Joi.array().items(purchaseItemInputSchema).min(1),
   additionalCosts: Joi.array().items(purchaseCostInputSchema),
+  paymentMethod: Joi.string().valid(...MONEY_OUT_METHODS),
   purchaseDate: Joi.date(),
 }).unknown(false);
 

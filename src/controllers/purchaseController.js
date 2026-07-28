@@ -98,7 +98,7 @@ export const createPurchase = async (req, res) => {
     return res.status(403).json({ success: false, message: 'Permission denied' });
   }
 
-  const { supplierId, supplierName, items, additionalCosts, purchaseDate } = req.body;
+  const { supplierId, supplierName, items, additionalCosts, paymentMethod, purchaseDate } = req.body;
   const shop = req.user.shop._id;
 
   let supplierDoc = null;
@@ -140,6 +140,9 @@ export const createPurchase = async (req, res) => {
       status: requiresApproval ? 'pending_approval' : 'completed',
       inventoryUpdated: !requiresApproval,
       staff: req.user._id,
+      // Omitted by older clients and offline payloads queued before the field
+      // existed — the schema default ('cash') covers those.
+      ...(paymentMethod ? { paymentMethod } : {}),
       ...(purchaseDate ? { purchaseDate } : {}),
     }], { session });
 
@@ -272,7 +275,7 @@ export const updatePurchase = async (req, res) => {
     return res.status(400).json({ success: false, message: 'This purchase was cancelled and can no longer be edited.' });
   }
 
-  const { supplierId, supplierName, items, additionalCosts, purchaseDate } = req.body;
+  const { supplierId, supplierName, items, additionalCosts, paymentMethod, purchaseDate } = req.body;
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -299,6 +302,10 @@ export const updatePurchase = async (req, res) => {
       }
     } else if (supplierName !== undefined) {
       purchase.supplierName = supplierName;
+    }
+
+    if (paymentMethod !== undefined) {
+      purchase.paymentMethod = paymentMethod;
     }
 
     if (items) {

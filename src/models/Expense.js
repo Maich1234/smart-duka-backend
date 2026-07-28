@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { MONEY_OUT_METHODS } from '../constants/paymentMethods.js';
 
 const EXPENSE_CATEGORIES = ['rent', 'utilities', 'supplies', 'transport', 'salaries', 'marketing', 'other'];
 
@@ -22,6 +23,14 @@ const expenseSchema = new mongoose.Schema({
   description: {
     type: String,
     trim: true,
+  },
+  // Which pot the money came out of. Defaults to 'cash' so every pre-existing
+  // record and every offline-queued payload written before this field stays
+  // valid — cash is also the honest default for a small shop's expenses.
+  paymentMethod: {
+    type: String,
+    enum: MONEY_OUT_METHODS,
+    default: 'cash',
   },
   date: {
     type: Date,
