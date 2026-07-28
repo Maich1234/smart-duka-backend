@@ -50,7 +50,12 @@ export const generateDailySummary = async (shopId, dateStr) => {
       { $match: { ...dayMatch, status: { $in: REVENUE_STATUSES } } },
       { $group: { _id: '$paymentMethod', count: { $sum: 1 }, total: { $sum: '$totalAmount' } } },
     ]),
-    // Per-product quantities/revenue + discount + cost estimate (current costPrice)
+    // Per-product quantities/revenue/discount + cost of goods.
+    //
+    // Cost comes from items[].costTotal — the cost snapshotted when the sale was
+    // rung up. Only lines predating that field (costTotal null) fall back to the
+    // product's *current* costPrice, which purchasing rewrites on every landed-
+    // cost allocation and which therefore makes a past day's profit drift.
     Sale.aggregate([
       { $match: { ...dayMatch, status: { $in: REVENUE_STATUSES } } },
       { $unwind: '$items' },
@@ -61,17 +66,33 @@ export const generateDailySummary = async (shopId, dateStr) => {
           quantity: { $sum: '$items.quantity' },
           revenue: { $sum: '$items.subtotal' },
           discounts: { $sum: { $ifNull: ['$items.discountAmount', 0] } },
+          snapshotCost: { $sum: { $ifNull: ['$items.costTotal', 0] } },
+          // Quantity still needing the fallback, so the lookup is applied to
+          // exactly those units rather than to the whole group.
+          unsnapshottedQuantity: {
+            $sum: {
+              $cond: [{ $eq: [{ $ifNull: ['$items.costTotal', null] }, null] }, '$items.quantity', 0],
+            },
+          },
         },
       },
       { $lookup: { from: 'products', localField: '_id', foreignField: '_id', as: 'product' } },
       {
         $addFields: {
           estCost: {
-            $multiply: ['$quantity', { $ifNull: [{ $arrayElemAt: ['$product.costPrice', 0] }, 0] }],
+            $add: [
+              '$snapshotCost',
+              {
+                $multiply: [
+                  '$unsnapshottedQuantity',
+                  { $ifNull: [{ $arrayElemAt: ['$product.costPrice', 0] }, 0] },
+                ],
+              },
+            ],
           },
         },
       },
-      { $project: { product: 0 } },
+      { $project: { product: 0, snapshotCost: 0, unsnapshottedQuantity: 0 } },
       { $sort: { quantity: -1 } },
     ]),
     Sale.aggregate([

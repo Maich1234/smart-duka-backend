@@ -16,6 +16,7 @@ const standardProduct = (over = {}) => ({
   name: 'Sugar 1kg',
   productType: 'standard',
   sellingPrice: 150,
+  costPrice: 110,
   quantity: 10,
   trackInventory: true,
   promotions: [],
@@ -132,4 +133,100 @@ test('configurable: deducts the chosen variant and snapshots its name', async ()
 test('configurable: missing variantId rejects', async () => {
   const product = standardProduct({ productType: 'configurable', variants: [] });
   await assert.rejects(resolveSaleLine(product, { quantity: 1 }, ctx()), SaleLineError);
+});
+
+// --- Cost of goods snapshot -------------------------------------------------
+// unitCost is captured at sale time because purchasing rewrites Product.costPrice
+// as a weighted average on every landed-cost allocation, so reading cost back
+// from the product later makes a past period's profit drift.
+
+test('cost: standard line snapshots the product cost price', async () => {
+  const line = await resolveSaleLine(standardProduct(), { quantity: 3 }, ctx());
+  assert.equal(line.unitCost, 110);
+});
+
+test('cost: a product with no cost price yields null, not zero', async () => {
+  const line = await resolveSaleLine(standardProduct({ costPrice: undefined }), { quantity: 1 }, ctx());
+  assert.equal(line.unitCost, null, 'null means unknown — books report it as estimated');
+});
+
+test('cost: a genuine zero cost is preserved as 0, not collapsed to null', async () => {
+  const service = standardProduct({ productType: 'service', costPrice: 0 });
+  const line = await resolveSaleLine(service, { quantity: 1 }, ctx());
+  assert.equal(line.unitCost, 0, 'a service really can cost nothing; that is not the same as unknown');
+});
+
+test('cost: promotional free goods still carry cost on the full quantity', async () => {
+  const product = standardProduct({
+    promotions: [{ isActive: true, buyQty: 2, freeQty: 1, label: '2+1' }],
+  });
+  const line = await resolveSaleLine(product, { quantity: 3 }, ctx());
+  assert.equal(line.subtotal, 300, 'customer pays for 2');
+  assert.equal(line.quantity, 3, 'but 3 units left the shelf...');
+  assert.equal(line.unitCost, 110, '...and the controller costs all 3');
+});
+
+test('cost: weighted lines cost per unit of measure', async () => {
+  const product = standardProduct({ productType: 'weighted', unitOfMeasure: 'kg', quantity: 5 });
+  const line = await resolveSaleLine(product, { quantity: 0.5 }, ctx());
+  assert.equal(line.unitCost, 110, '0.5 kg × 110/kg = 55, multiplied out by the caller');
+});
+
+test('cost: bundle cost is the sum of its components, not its own cost price', async () => {
+  const soda = { _id: 'c1', name: 'Soda', costPrice: 30, trackInventory: true, quantity: 24 };
+  const chips = { _id: 'c2', name: 'Chips', costPrice: 45, trackInventory: true, quantity: 10 };
+  const bundle = standardProduct({
+    _id: 'b1',
+    productType: 'bundle',
+    sellingPrice: 250,
+    costPrice: 999, // deliberately wrong — must be ignored
+    bundleItems: [
+      { product: 'c1', quantity: 2 },
+      { product: 'c2', quantity: 1 },
+    ],
+  });
+  const line = await resolveSaleLine(bundle, { quantity: 3 }, ctx([['c1', soda], ['c2', chips]]));
+  assert.equal(line.unitCost, 105, '2 × 30 + 1 × 45');
+});
+
+test('cost: bundle with one un-costed component is unknown, not partially summed', async () => {
+  const soda = { _id: 'c1', name: 'Soda', costPrice: 30, trackInventory: true, quantity: 24 };
+  const chips = { _id: 'c2', name: 'Chips', trackInventory: true, quantity: 10 };
+  const bundle = standardProduct({
+    productType: 'bundle',
+    bundleItems: [
+      { product: 'c1', quantity: 2 },
+      { product: 'c2', quantity: 1 },
+    ],
+  });
+  const line = await resolveSaleLine(bundle, { quantity: 1 }, ctx([['c1', soda], ['c2', chips]]));
+  assert.equal(line.unitCost, null, 'a partial sum would understate COGS and overstate profit');
+});
+
+test('cost: configurable line takes the variant cost, not the parent product cost', async () => {
+  const variants = [
+    { _id: 'v1', name: '500ml', sellingPrice: 60, costPrice: 40, quantity: 12 },
+    { _id: 'v2', name: '1L', sellingPrice: 100, costPrice: 72, quantity: 6 },
+  ];
+  const product = standardProduct({
+    productType: 'configurable',
+    costPrice: 999, // deliberately wrong — must be ignored
+    variants: Object.assign(variants, {
+      id(id) { return this.find((v) => v._id === id) ?? null; },
+    }),
+  });
+  const line = await resolveSaleLine(product, { quantity: 2, variantId: 'v2' }, ctx());
+  assert.equal(line.unitCost, 72);
+});
+
+test('cost: configurable variant without a cost price yields null', async () => {
+  const variants = [{ _id: 'v1', name: '500ml', sellingPrice: 60, quantity: 12 }];
+  const product = standardProduct({
+    productType: 'configurable',
+    variants: Object.assign(variants, {
+      id(id) { return this.find((v) => v._id === id) ?? null; },
+    }),
+  });
+  const line = await resolveSaleLine(product, { quantity: 1, variantId: 'v1' }, ctx());
+  assert.equal(line.unitCost, null);
 });

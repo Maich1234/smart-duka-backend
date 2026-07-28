@@ -13,6 +13,32 @@ const requireWholeQuantity = (quantity, productName) => {
   }
 };
 
+/**
+ * Landed unit cost at this moment, snapshotted onto the sale line so a later
+ * purchase — which rewrites costPrice through weighted-average allocation —
+ * can never retroactively change a past period's reported profit.
+ *
+ * Returns null when the doc carries no usable cost, which propagates to
+ * Sale.items[].unitCost and marks the line "cost unknown". 0 is a legitimate
+ * cost (services) and is deliberately preserved as 0, not coerced to null.
+ */
+const unitCostOf = (doc) => (Number.isFinite(doc?.costPrice) ? doc.costPrice : null);
+
+/**
+ * Cost of one unit of a bundle: the sum of its components' costs at their
+ * per-bundle quantities. Unknown if any single component's cost is unknown —
+ * a partial sum would understate COGS and silently overstate profit.
+ */
+const bundleUnitCost = (components) => {
+  let total = 0;
+  for (const { doc, quantity } of components) {
+    const cost = unitCostOf(doc);
+    if (cost === null) return null;
+    total += cost * quantity;
+  }
+  return Math.round(total * 100) / 100;
+};
+
 const checkAndDeductStock = (product, amount) => {
   if (!product.trackInventory) return;
   if (product.quantity < amount) {
@@ -67,7 +93,7 @@ const getCachedProduct = async (productId, { shop, session, productCache }) => {
  * does not save them — the caller saves every touched doc once after all
  * lines have been resolved.
  *
- * Returns { unitPrice, subtotal, quantity, variantId?, variantName?, unitOfMeasure?, productType }
+ * Returns { unitPrice, unitCost, subtotal, quantity, variantId?, variantName?, unitOfMeasure?, productType }
  */
 export const resolveSaleLine = async (product, requestedItem, { shop, session, productCache }) => {
   const quantity = Number(requestedItem.quantity);
@@ -79,7 +105,7 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
       const unitPrice = product.sellingPrice;
       checkAndDeductStock(product, quantity);
       const { subtotal, discountAmount, appliedPromotionLabel } = applyPromotions(product.promotions, quantity, unitPrice);
-      return { unitPrice, subtotal, discountAmount, appliedPromotionLabel, quantity, productType };
+      return { unitPrice, unitCost: unitCostOf(product), subtotal, discountAmount, appliedPromotionLabel, quantity, productType };
     }
 
     case 'variable': {
@@ -96,7 +122,7 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
       }
       checkAndDeductStock(product, quantity);
       const { subtotal, discountAmount, appliedPromotionLabel } = applyPromotions(product.promotions, quantity, unitPrice);
-      return { unitPrice, subtotal, discountAmount, appliedPromotionLabel, quantity, productType };
+      return { unitPrice, unitCost: unitCostOf(product), subtotal, discountAmount, appliedPromotionLabel, quantity, productType };
     }
 
     case 'weighted':
@@ -109,6 +135,7 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
       const { subtotal, discountAmount, appliedPromotionLabel } = applyPromotions(product.promotions, quantity, unitPrice);
       return {
         unitPrice,
+        unitCost: unitCostOf(product),
         subtotal,
         discountAmount,
         appliedPromotionLabel,
@@ -128,7 +155,7 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
       }
       checkAndDeductStock(product, quantity);
       const { subtotal, discountAmount, appliedPromotionLabel } = applyPromotions(product.promotions, quantity, unitPrice);
-      return { unitPrice, subtotal, discountAmount, appliedPromotionLabel, quantity, productType };
+      return { unitPrice, unitCost: unitCostOf(product), subtotal, discountAmount, appliedPromotionLabel, quantity, productType };
     }
 
     case 'bundle': {
@@ -137,14 +164,24 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
         throw new SaleLineError(`${product.name} has no bundle items configured`);
       }
       const unitPrice = product.sellingPrice;
+      // Cost comes from the components, not the bundle product — components are
+      // what stock (and therefore money) actually leaves as.
+      const components = [];
       for (const bundleItem of product.bundleItems) {
         const component = await getCachedProduct(bundleItem.product, { shop, session, productCache });
         if (!component) {
           throw new SaleLineError(`A component product in bundle ${product.name} no longer exists`);
         }
         checkAndDeductStock(component, bundleItem.quantity * quantity);
+        components.push({ doc: component, quantity: bundleItem.quantity });
       }
-      return { unitPrice, subtotal: unitPrice * quantity, quantity, productType };
+      return {
+        unitPrice,
+        unitCost: bundleUnitCost(components),
+        subtotal: unitPrice * quantity,
+        quantity,
+        productType,
+      };
     }
 
     case 'configurable': {
@@ -174,6 +211,9 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
 
       return {
         unitPrice: variant.sellingPrice,
+        // Variants carry their own costPrice — the parent product's is not a
+        // valid substitute (that's the whole point of a configurable product).
+        unitCost: unitCostOf(variant),
         subtotal: variant.sellingPrice * quantity,
         quantity,
         variantId: variant._id,

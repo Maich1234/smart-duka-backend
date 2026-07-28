@@ -43,6 +43,39 @@ const saleItemSchema = new mongoose.Schema({
     default: 0,
     min: 0,
   },
+  // Cost of goods for this line, snapshotted at sale time. Purchasing rewrites
+  // Product.costPrice on every landed-cost allocation (weighted average — see
+  // purchaseStockService.computeWeightedAverageCost), so reading cost back from
+  // the product at report time makes a past period's profit change whenever new
+  // stock arrives. Tolerable on a live dashboard tile; disqualifying in a P&L
+  // the owner hands to a lender.
+  //
+  // null means "recorded before this field existed" — books must report such
+  // periods as Estimated rather than silently mixing two costing methods.
+  // 0 is a real cost (services), and is not the same as null.
+  unitCost: {
+    type: Number,
+    default: null,
+    min: 0,
+  },
+  // quantity × unitCost, stored rather than derived — same reasoning as
+  // purchaseItemSchema.totalCost: a historical fact must not drift if rounding
+  // rules change later.
+  costTotal: {
+    type: Number,
+    default: null,
+    min: 0,
+  },
+  // True when unitCost was reconstructed after the fact by
+  // scripts/backfillSaleCosts.mjs from a later costPrice, rather than captured
+  // at sale time. Without this the backfill would erase the very signal books
+  // use to tell an exact period from an approximated one — a filled-in cost
+  // looks identical to a real snapshot. Books must label any period containing
+  // an estimated line as Estimated.
+  costEstimated: {
+    type: Boolean,
+    default: false,
+  },
   // Snapshot fields — optional, only populated for the product types that need them.
   variantId: {
     type: mongoose.Schema.Types.ObjectId,

@@ -117,11 +117,18 @@ export const createSale = async (req, res) => {
 
         totalAmount += resolved.subtotal;
         totalCommission += resolved.commissionAmount || 0;
+        // Cost is charged on the full quantity, not the discounted/payable one:
+        // goods given away under a promotion still cost the shop money.
+        const unitCost = resolved.unitCost ?? null;
         saleItems.push({
           productId: product._id,
           productName: product.name,
           quantity: resolved.quantity,
           unitPrice: resolved.unitPrice,
+          unitCost,
+          costTotal: unitCost === null
+            ? null
+            : Math.round(unitCost * resolved.quantity * 100) / 100,
           subtotal: resolved.subtotal,
           discountAmount: resolved.discountAmount || 0,
           appliedPromotionLabel: resolved.appliedPromotionLabel,
