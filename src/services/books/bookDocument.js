@@ -29,8 +29,11 @@
  * @property {BookSection[]} sections
  * @property {Record<string, number>} totals
  * @property {string[]} footnotes
+ * @property {{ documentId: string, token: string, verifyUrl: string }} stamp
  * @property {{ generatedAt: string, estimated: boolean, version: number }} meta
  */
+
+import { signBookStamp, bookVerifyUrl } from '../../utils/bookStamp.js';
 
 /** Bumped when a book's columns or figures change meaning, so old exports are identifiable. */
 export const BOOK_FORMAT_VERSION = 1;
@@ -87,6 +90,26 @@ export function buildBookDocument({
   footnotes = [],
   estimated = false,
 }) {
+  const generatedAt = new Date().toISOString();
+  const period = {
+    from: new Date(from).toISOString(),
+    to: new Date(to).toISOString(),
+    label: periodLabel(from, to),
+  };
+
+  // Signed over the totals as well as the identity, so a figure edited in a
+  // PDF editor no longer agrees with the document's own stamp.
+  const { token, documentId } = signBookStamp({
+    shopId: shop?._id,
+    shopName: shop?.name ?? 'Shop',
+    key,
+    title,
+    from: period.from,
+    to: period.to,
+    generatedAt,
+    totals,
+  });
+
   return {
     key,
     title,
@@ -95,17 +118,18 @@ export function buildBookDocument({
       currency: shop?.currency ?? 'KES',
       ownerName: ownerName ?? '',
     },
-    period: {
-      from: new Date(from).toISOString(),
-      to: new Date(to).toISOString(),
-      label: periodLabel(from, to),
-    },
+    period,
     columns,
     sections,
     totals,
     footnotes,
+    stamp: {
+      documentId,
+      token,
+      verifyUrl: bookVerifyUrl(token),
+    },
     meta: {
-      generatedAt: new Date().toISOString(),
+      generatedAt,
       estimated,
       version: BOOK_FORMAT_VERSION,
     },

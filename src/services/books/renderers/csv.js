@@ -32,6 +32,10 @@ export function renderCsv(doc) {
   out.push(line(['Currency', doc.shop.currency]));
   out.push(line(['Generated', new Date(doc.meta.generatedAt).toISOString().slice(0, 16).replace('T', ' ')]));
   if (doc.meta.estimated) out.push(line(['Note', 'Contains estimated figures — see notes below.']));
+  if (doc.stamp) {
+    out.push(line(['Document', doc.stamp.documentId]));
+    out.push(line(['Verify at', doc.stamp.verifyUrl]));
+  }
   out.push('');
 
   const keys = doc.columns.map((c) => c.key);
@@ -67,6 +71,14 @@ export function renderCsv(doc) {
     out.push('');
     out.push(line(['Notes']));
     for (const note of doc.footnotes) out.push(line([note]));
+  }
+
+  if (doc.stamp) {
+    out.push('');
+    out.push(line(['Verified by Smart Duka']));
+    out.push(line(['Document', doc.stamp.documentId]));
+    out.push(line(['Check at', doc.stamp.verifyUrl]));
+    out.push(line(['', 'Confirms this came from Smart Duka and has not been altered. Not an audit.']));
   }
 
   // BOM so Excel opens UTF-8 correctly — without it, en dashes and the ’ in

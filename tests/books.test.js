@@ -10,7 +10,8 @@ import {
   buildExpenseRegister,
   buildPurchaseRegister,
 } from '../src/services/books/registerServices.js';
-import { periodLabel } from '../src/services/books/bookDocument.js';
+import { periodLabel, buildBookDocument } from '../src/services/books/bookDocument.js';
+import { verifyBookStamp } from '../src/utils/bookStamp.js';
 
 /**
  * These check the figures, not the formatting. A book that renders beautifully
@@ -259,4 +260,59 @@ test('every book carries the shop, period and currency for a detached file', asy
   assert.equal(doc.period.label, 'July 2026');
   assert.ok(doc.meta.generatedAt);
   assert.ok(doc.footnotes.length > 0, 'a financial document must state its assumptions');
+});
+
+// ── Authenticity stamp ─────────────────────────────────────────────────────
+
+test('stamp: a document verifies back to the figures it was signed with', () => {
+  process.env.JWT_SECRET = 'test-secret';
+  const doc = buildBookDocument({
+    key: 'cashbook', title: 'Cashbook', shop: SHOP, ownerName: 'Jane',
+    from: PERIOD.from, to: PERIOD.to, columns: [], sections: [],
+    totals: { moneyIn: 7000, moneyOut: 600, balance: 6400 },
+  });
+
+  const attested = verifyBookStamp(doc.stamp.token);
+  assert.ok(attested, 'a freshly signed document must verify');
+  assert.equal(attested.shopName, 'Test Duka');
+  assert.equal(attested.title, 'Cashbook');
+  assert.deepEqual(attested.totals, { moneyIn: 7000, moneyOut: 600, balance: 6400 });
+  // The printed code and the one derived on verification must agree, or the
+  // number on the paper means nothing.
+  assert.equal(attested.documentId, doc.stamp.documentId);
+});
+
+test('stamp: a tampered token is rejected', () => {
+  process.env.JWT_SECRET = 'test-secret';
+  const doc = buildBookDocument({
+    key: 'cashbook', title: 'Cashbook', shop: SHOP, ownerName: 'Jane',
+    from: PERIOD.from, to: PERIOD.to, columns: [], sections: [], totals: { balance: 100 },
+  });
+
+  assert.equal(verifyBookStamp(doc.stamp.token.slice(0, -4) + 'AAAA'), null);
+  assert.equal(verifyBookStamp('not-a-token'), null);
+  assert.equal(verifyBookStamp(''), null);
+});
+
+test('stamp: two documents differing only in totals get different ids', () => {
+  process.env.JWT_SECRET = 'test-secret';
+  const base = {
+    key: 'cashbook', title: 'Cashbook', shop: SHOP, ownerName: 'Jane',
+    from: PERIOD.from, to: PERIOD.to, columns: [], sections: [],
+  };
+  const a = buildBookDocument({ ...base, totals: { balance: 6400 } });
+  const b = buildBookDocument({ ...base, totals: { balance: 6401 } });
+
+  assert.notEqual(a.stamp.documentId, b.stamp.documentId);
+});
+
+test('stamp: the verify URL carries the token the QR encodes', () => {
+  process.env.JWT_SECRET = 'test-secret';
+  const doc = buildBookDocument({
+    key: 'cashbook', title: 'Cashbook', shop: SHOP, ownerName: 'Jane',
+    from: PERIOD.from, to: PERIOD.to, columns: [], sections: [], totals: {},
+  });
+
+  assert.ok(doc.stamp.verifyUrl.includes('/verify/'));
+  assert.equal(doc.stamp.verifyUrl.split('/verify/')[1], doc.stamp.token);
 });

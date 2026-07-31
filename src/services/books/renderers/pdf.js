@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import QRCode from 'qrcode';
 
 /**
  * PDF renderer. Consumes any BookDocument.
@@ -213,6 +214,72 @@ export function renderPdf(doc) {
           .text(isCount ? String(v) : fmtMoney(v, currency), MARGIN, y, { width: pageWidth, align: 'right', lineBreak: false });
         pdf.y = y + 14;
       }
+    }
+
+    // ── Authenticity stamp ──────────────────────────────────────────────
+    // Placed before the notes so it reads as part of the document rather than
+    // an afterthought, and drawn as rectangles because pdfkit has no SVG.
+    if (doc.stamp) {
+      // 110pt is not decorative. The signed token makes an 81-module QR, so
+      // at the 62pt this started as, each module printed at ~0.26mm — well
+      // under the ~0.4mm a phone camera needs, and the code simply would not
+      // scan off paper. At 110pt it lands at ~0.46mm.
+      const QR_SIZE = 110;
+      const stampHeight = QR_SIZE + 34;
+      if (pdf.y + stampHeight > bottomLimit()) pdf.addPage();
+      pdf.moveDown(0.8);
+
+      const top = pdf.y;
+      const boxWidth = Math.min(pageWidth, 400);
+      pdf.rect(MARGIN, top, boxWidth, stampHeight - 8)
+        .lineWidth(0.8).strokeColor(TEAL).stroke();
+
+      const qrSize = QR_SIZE;
+      const qrX = MARGIN + 10;
+      const qrY = top + 10;
+      try {
+        const { modules } = QRCode.create(doc.stamp.verifyUrl, { errorCorrectionLevel: 'M' });
+        const count = modules.size;
+        const quiet = 2;
+        const scale = qrSize / (count + quiet * 2);
+        pdf.rect(qrX, qrY, qrSize, qrSize).fill('#FFFFFF');
+        pdf.fillColor('#000000');
+        for (let row = 0; row < count; row++) {
+          let col = 0;
+          while (col < count) {
+            if (!modules.data[row * count + col]) { col++; continue; }
+            const start = col;
+            while (col < count && modules.data[row * count + col]) col++;
+            pdf.rect(
+              qrX + (start + quiet) * scale,
+              qrY + (row + quiet) * scale,
+              (col - start) * scale,
+              scale
+            ).fill();
+          }
+        }
+      } catch {
+        // A missing QR must not cost anyone their document.
+      }
+
+      const textX = qrX + qrSize + 12;
+      const textWidth = boxWidth - (qrSize + 34);
+      pdf.font('Helvetica-Bold').fontSize(8).fillColor(TEAL)
+        .text('Verified by Smart Duka', textX, top + 12, { width: textWidth, lineBreak: false });
+      pdf.font('Helvetica').fontSize(6.5).fillColor(MUTED)
+        .text(
+          'Scan to confirm this document came from Smart Duka and has not been altered. This is not an audit or an accountant\u2019s opinion.',
+          textX, top + 24, { width: textWidth }
+        );
+      pdf.font('Helvetica-Bold').fontSize(7.5).fillColor(INK)
+        .text(`Document ${doc.stamp.documentId}`, textX, top + 74, { width: textWidth, lineBreak: false });
+      pdf.font('Helvetica').fontSize(6.5).fillColor(MUTED)
+        .text(
+          `Generated ${new Date(doc.meta.generatedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC`,
+          textX, top + 87, { width: textWidth, lineBreak: false }
+        );
+
+      pdf.y = top + stampHeight;
     }
 
     if (doc.footnotes.length > 0) {

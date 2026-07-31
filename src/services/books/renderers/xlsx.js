@@ -43,6 +43,16 @@ export async function renderXlsx(doc) {
     ws.mergeCells(warn.number, 1, warn.number, Math.max(colCount, 2));
   }
 
+  if (doc.stamp) {
+    const stamp = ws.addRow([`Verified by Smart Duka · Document ${doc.stamp.documentId}`]);
+    stamp.font = { size: 10, bold: true, color: { argb: 'FF0F766E' } };
+    ws.mergeCells(stamp.number, 1, stamp.number, Math.max(colCount, 2));
+    const link = ws.addRow([doc.stamp.verifyUrl]);
+    link.getCell(1).value = { text: 'Check this document is genuine', hyperlink: doc.stamp.verifyUrl };
+    link.font = { size: 9, color: { argb: 'FF0F766E' }, underline: true };
+    ws.mergeCells(link.number, 1, link.number, Math.max(colCount, 2));
+  }
+
   ws.addRow([]);
 
   const header = ws.addRow(doc.columns.map((c) => c.label));
@@ -126,6 +136,20 @@ export async function renderXlsx(doc) {
       row.font = { size: 10, color: { argb: 'FF64748B' } };
       row.getCell(1).alignment = { wrapText: true };
       ws.mergeCells(row.number, 1, row.number, Math.max(colCount, 2));
+    }
+  }
+
+  if (doc.stamp) {
+    ws.addRow([]);
+    const heading = ws.addRow(['Verified by Smart Duka']);
+    heading.font = { bold: true, size: 11, color: { argb: 'FF0F766E' } };
+    for (const [label, value] of [
+      ['Document', doc.stamp.documentId],
+      ['Check at', doc.stamp.verifyUrl],
+      ['', 'Confirms this came from Smart Duka and has not been altered. Not an audit.'],
+    ]) {
+      const row = ws.addRow([label, value]);
+      row.font = { size: 9, color: { argb: 'FF64748B' } };
     }
   }
 
