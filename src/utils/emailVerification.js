@@ -2,10 +2,14 @@ import crypto from 'crypto';
 import EmailVerificationToken from '../models/EmailVerificationToken.js';
 import { sendEmail } from './email.js';
 
-// Generate a random 6-digit code
-const generateSixDigitCode = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-};
+// Generate a random 6-digit code.
+//
+// crypto.randomInt, not Math.random: V8 seeds Math.random with a per-context
+// xorshift128+ state that can be reconstructed from a handful of observed
+// outputs, which would let anyone who registered a few throwaway accounts
+// predict the next person's code. randomInt draws from the CSPRNG and is
+// uniform over the range (no modulo bias).
+const generateSixDigitCode = () => crypto.randomInt(100000, 1000000).toString();
 
 /**
  * Generate and store a verification code for a user
@@ -34,7 +38,7 @@ export const sendVerificationEmail = async (user) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Verify Your Email - Smart Duka</title>
+      <title>Verify Your Email - Dukana</title>
       <style>
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         .container { max-width: 500px; margin: 40px auto; background: #fff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
@@ -48,27 +52,27 @@ export const sendVerificationEmail = async (user) => {
     <body>
       <div class="container">
         <div class="header">
-          <h1>Smart Duka</h1>
+          <h1>Dukana</h1>
         </div>
         <div class="content">
           <p>Hello <strong>${escapeHtml(user.name)}</strong>,</p>
-          <p>Please verify your email address to start using Smart Duka.</p>
+          <p>Please verify your email address to start using Dukana.</p>
           <div class="code-box">${code}</div>
           <p>Enter this code in the app to complete your verification.</p>
           <p>This code expires in <strong>24 hours</strong>.</p>
           <p>If you did not create this account, please ignore this email.</p>
         </div>
         <div class="footer">
-          &copy; ${new Date().getFullYear()} Smart Duka. All rights reserved.
+          &copy; ${new Date().getFullYear()} Dukana. All rights reserved.
         </div>
       </div>
     </body>
     </html>
   `;
 
-  const text = `Hello ${user.name},\n\nPlease verify your email address to start using Smart Duka.\n\nYour verification code is: ${code}\n\nThis code expires in 24 hours.\n\nIf you did not create this account, please ignore this email.\n\n-- Smart Duka Team`;
+  const text = `Hello ${user.name},\n\nPlease verify your email address to start using Dukana.\n\nYour verification code is: ${code}\n\nThis code expires in 24 hours.\n\nIf you did not create this account, please ignore this email.\n\n-- Dukana Team`;
 
-  await sendEmail(user.email, 'Verify your email - Smart Duka', html, text);
+  await sendEmail(user.email, 'Verify your email - Dukana', html, text);
 };
 
 function escapeHtml(str) {

@@ -37,7 +37,19 @@ export const forgotPassword = async (req, res) => {
   const otp = generateOTP();
   await OTP.create({ email, otp, expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
 
-  await sendOTPEmail(email, otp, user.name);
+  // A failed send here must not read as a generic server fault: the OTP is the
+  // only way through this flow, so the user needs to know the code is not coming
+  // and that retrying is worthwhile. The stored OTP is left in place — it stays
+  // valid if a retry succeeds within its 10-minute window.
+  try {
+    await sendOTPEmail(email, otp, user.name);
+  } catch (err) {
+    console.error('[forgotPassword] OTP email failed for', email, '-', err.message);
+    return res.status(503).json({
+      success: false,
+      message: 'We could not send the reset code right now. Please try again in a few minutes.',
+    });
+  }
 
   res.status(200).json({ success: true, message: 'OTP sent to your email' });
 };
