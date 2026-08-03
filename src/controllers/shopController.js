@@ -1,13 +1,17 @@
 import Shop from '../models/Shop.js';
 import cloudinary from '../config/cloudinary.js';
+import { resolvePaymentMethods } from '../constants/salePaymentMethods.js';
 
 export const getShopConfig = async (req, res) => {
   const shop = await Shop.findById(req.user.shop._id);
-  res.json({ success: true, data: shop });
+  if (!shop) return res.status(404).json({ success: false, message: 'Shop not found' });
+  // Shops predating owner-defined till buttons have no list stored; hand back
+  // the defaults so the client renders Cash + M-PESA instead of nothing.
+  res.json({ success: true, data: { ...shop.toObject(), paymentMethods: resolvePaymentMethods(shop) } });
 };
 
 export const updateShopConfig = async (req, res) => {
-  const { name, address, phone, email, taxRate, country, currency, receiptThankYouNote, logoUrl, motto, shiftManagementEnabled, showStaffCommission, purchasingEnabled, purchaseCostAllocationMethod, aiEnabled } = req.body;
+  const { name, address, phone, email, taxRate, country, currency, receiptThankYouNote, logoUrl, motto, shiftManagementEnabled, showStaffCommission, purchasingEnabled, purchaseCostAllocationMethod, aiEnabled, paymentMethods } = req.body;
   const shop = await Shop.findById(req.user.shop._id);
   if (!shop) return res.status(404).json({ success: false, message: 'Shop not found' });
 
@@ -26,9 +30,13 @@ export const updateShopConfig = async (req, res) => {
   if (purchasingEnabled !== undefined) shop.purchasingEnabled = purchasingEnabled;
   if (purchaseCostAllocationMethod !== undefined) shop.purchaseCostAllocationMethod = purchaseCostAllocationMethod;
   if (aiEnabled !== undefined) shop.aiEnabled = aiEnabled;
+  // Sent whole, stored whole — array position is the till's button order.
+  if (paymentMethods !== undefined) {
+    shop.paymentMethods = paymentMethods.map((m, i) => ({ ...m, order: i }));
+  }
 
   await shop.save();
-  res.json({ success: true, data: shop });
+  res.json({ success: true, data: { ...shop.toObject(), paymentMethods: resolvePaymentMethods(shop) } });
 };
 
 export const uploadShopLogo = async (req, res) => {

@@ -101,8 +101,18 @@ export const createStaff = async (req, res) => {
     })
     : null;
 
+  // Awaited: a serverless invocation is frozen once the response is flushed, so
+  // a dangling promise here never even reached the code generation — real-email
+  // staff were left unverified, with no code, and therefore unable to log in.
+  // The staff record is already saved, so a mail failure is reported, not fatal.
+  let emailSent = true;
   if (!isEmailVerified) {
-    sendVerificationEmail(staff).catch((err) => console.error('[createStaff] verification email failed:', err.message));
+    try {
+      await sendVerificationEmail(staff);
+    } catch (err) {
+      emailSent = false;
+      console.error('[createStaff] verification email failed for', staff.email, '-', err.message);
+    }
   }
 
   const staffResponse = staff.toObject();
@@ -110,6 +120,7 @@ export const createStaff = async (req, res) => {
   res.status(201).json({
     success: true,
     data: staffResponse,
+    emailSent,
     // Disclosure, not a checkout — the client shows this as a note, and has
     // no way to pay it here.
     billing: adjustment

@@ -1,3 +1,4 @@
+import { verifyBookStamp } from '../utils/bookStamp.js';
 import Sale from '../models/Sale.js';
 import Rating from '../models/Rating.js';
 import { verifyReceiptToken } from '../utils/receiptToken.js';
@@ -60,4 +61,44 @@ export const submitPublicRating = async (req, res) => {
   });
 
   res.status(201).json({ success: true, data: rating, message: 'Thank you for your feedback!' });
+};
+
+/**
+ * GET /public/books/verify/:token — confirms a downloaded book is genuine.
+ *
+ * Unauthenticated on purpose: the point is that a bank, a landlord or an
+ * accountant who was handed a PDF can check it without a Smart Duka account.
+ *
+ * Answers "did Smart Duka produce this, for this shop and period, with these
+ * figures, and has it been altered since" — and says plainly that it is not
+ * an audit opinion, because a verification page is exactly where someone
+ * would otherwise infer one.
+ */
+export const verifyBookDocument = async (req, res) => {
+  const attested = verifyBookStamp(req.params.token);
+
+  if (!attested) {
+    return res.status(404).json({
+      success: false,
+      verified: false,
+      message: "This code doesn't match a document Smart Duka produced. It may have been mistyped, or the document may have been altered.",
+    });
+  }
+
+  res.json({
+    success: true,
+    verified: true,
+    data: {
+      documentId: attested.documentId,
+      title: attested.title,
+      shopName: attested.shopName,
+      period: { from: attested.from, to: attested.to },
+      generatedAt: attested.generatedAt,
+      totals: attested.totals,
+      // Stated in the payload rather than left to the client, so every
+      // surface repeats the same limit on what this confirms.
+      assurance:
+        'Confirms this document was produced by Smart Duka from the shop\'s own records and has not been altered. It is not an audit or an accountant\'s opinion.',
+    },
+  });
 };

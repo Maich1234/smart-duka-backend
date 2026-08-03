@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { METHOD_KEY_PATTERN } from '../constants/salePaymentMethods.js';
 
 const saleItemSchema = new mongoose.Schema({
   productId: {
@@ -115,10 +116,24 @@ const saleSchema = new mongoose.Schema({
     default: 0,
     min: 0,
   },
+  // A key from the shop's own payment-method list (see
+  // constants/salePaymentMethods.js). Not an enum any more: shops define their
+  // own buttons — Airtel Money, a bank account, a Pochi — and an enum could
+  // only ever hold the three Safaricom-shaped guesses this app started with.
+  // Membership is enforced in the controller against the shop's config, which
+  // is the only place that knows the valid set.
   paymentMethod: {
     type: String,
-    enum: ['cash', 'mpesa', 'card'],
     required: true,
+    lowercase: true,
+    trim: true,
+    match: METHOD_KEY_PATTERN,
+  },
+  // The button's label at the time of sale. Snapshotted so renaming or
+  // removing a method later never rewrites what a printed receipt said.
+  paymentMethodLabel: {
+    type: String,
+    trim: true,
   },
   // Populated for M-Pesa sales — links to the confirmed STK Push transaction
   mpesaTransactionId: {

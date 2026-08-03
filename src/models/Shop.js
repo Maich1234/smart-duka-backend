@@ -1,4 +1,23 @@
 import mongoose from 'mongoose';
+import { DEFAULT_PAYMENT_METHODS, METHOD_KEY_PATTERN } from '../constants/salePaymentMethods.js';
+
+// One button on the till. `key` is what lands on Sale.paymentMethod; `label`
+// is what the cashier and the receipt see, and the owner may rename it freely
+// (renaming never rewrites history — sales snapshot the label they were made
+// under). Disabling instead of deleting keeps old sales readable.
+const shopPaymentMethodSchema = new mongoose.Schema({
+  key: {
+    type: String,
+    required: true,
+    trim: true,
+    lowercase: true,
+    match: METHOD_KEY_PATTERN,
+  },
+  label: { type: String, required: true, trim: true, maxlength: 24 },
+  icon: { type: String, trim: true, default: 'wallet' },
+  enabled: { type: Boolean, default: true },
+  order: { type: Number, default: 0 },
+}, { _id: false });
 
 const shopSchema = new mongoose.Schema({
   name: {
@@ -112,6 +131,14 @@ const shopSchema = new mongoose.Schema({
   aiEnabled: {
     type: Boolean,
     default: true,
+  },
+  // The till's payment buttons, owner-managed. Empty/missing means "never
+  // touched the setting" and resolves to DEFAULT_PAYMENT_METHODS — read it
+  // through resolvePaymentMethods(), never straight off the document, because
+  // lean() reads skip schema defaults.
+  paymentMethods: {
+    type: [shopPaymentMethodSchema],
+    default: () => DEFAULT_PAYMENT_METHODS.map((m, i) => ({ ...m, order: i })),
   },
 }, { timestamps: true });
 

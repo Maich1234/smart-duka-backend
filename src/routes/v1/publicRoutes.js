@@ -1,6 +1,6 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import { getPublicReceipt, submitPublicRating } from '../../controllers/publicController.js';
+import { getPublicReceipt, submitPublicRating, verifyBookDocument } from '../../controllers/publicController.js';
 import { createRateLimitStore } from '../../utils/rateLimitStore.js';
 
 const router = express.Router();
@@ -19,5 +19,7 @@ const publicLimiter = rateLimit({
 router.use(publicLimiter);
 router.get('/receipt/:token', getPublicReceipt);
 router.post('/receipt/:token/rating', submitPublicRating);
+// Reached by scanning the QR on a downloaded financial record.
+router.get('/books/verify/:token', verifyBookDocument);
 
 export default router;

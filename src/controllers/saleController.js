@@ -12,6 +12,11 @@ import { logAudit } from '../services/auditLogService.js';
 import { getActiveShift } from '../services/shiftService.js';
 import { parsePagination, paginatedResult } from '../utils/pagination.js';
 import { escapeRegex } from '../utils/escapeRegex.js';
+import {
+  MPESA_METHOD_KEY,
+  enabledMethodKeys,
+  methodLabel,
+} from '../constants/salePaymentMethods.js';
 
 /**
  * A client-facing rejection (out of stock, unknown product) raised from inside
@@ -35,6 +40,16 @@ export const createSale = async (req, res) => {
   const { items, paymentMethod, mpesaTransactionId, mpesaReceiptNumber } = req.body;
   const shop = req.user.shop._id;
 
+  // The shop's own button list is the authority on what's a valid method —
+  // Joi only checked the key's shape, since it can't see the shop.
+  const allowedMethods = enabledMethodKeys(req.user.shop);
+  if (!allowedMethods.includes(paymentMethod)) {
+    return res.status(400).json({
+      success: false,
+      message: `'${paymentMethod}' is not one of this shop's payment methods.`,
+    });
+  }
+
   // With shift management on, staff must be clocked in before selling so
   // every transaction reconciles to a drawer. Owners are exempt from the
   // gate but their sales still link to a shift when they've opened one.
@@ -50,9 +65,11 @@ export const createSale = async (req, res) => {
     }
   }
 
-  // For M-Pesa sales, verify or record the payment reference
+  // For M-Pesa sales, verify or record the payment reference — when there is
+  // one. A shop that takes M-Pesa on a Pochi or a personal number has no STK
+  // Push and no way to produce a transaction id; that sale records like cash.
   let mpesaTx = null;
-  if (paymentMethod === 'mpesa') {
+  if (paymentMethod === MPESA_METHOD_KEY) {
     if (mpesaTransactionId) {
       // Normal STK push flow — confirm the transaction succeeded
       mpesaTx = await MpesaTransaction.findOne({ _id: mpesaTransactionId, shop, status: 'success' });
@@ -150,6 +167,7 @@ export const createSale = async (req, res) => {
         totalAmount,
         totalCommission,
         paymentMethod,
+        paymentMethodLabel: methodLabel(req.user.shop, paymentMethod),
         staff: req.user._id,
         ...(activeShift ? { shift: activeShift._id } : {}),
         ...(mpesaTx ? {
@@ -519,7 +537,7 @@ export const getSalesStats = async (req, res) => {
     ? { shop, status: { $nin: ['voided', 'refunded'] } }
     : { shop, staff: req.user._id, status: { $nin: ['voided', 'refunded'] } };
 
-  const [thisMonth, lastMonth] = await Promise.all([
+  const [thisMonth, lastMonth, methodTotals] = await Promise.all([
     Sale.aggregate([
       { $match: { ...baseQuery, createdAt: { $gte: startOfMonth } } },
       {
@@ -539,6 +557,20 @@ export const getSalesStats = async (req, res) => {
     Sale.aggregate([
       { $match: { ...baseQuery, createdAt: { $gte: startOfLastMonth, $lte: endOfLastMonth } } },
       { $group: { _id: null, total: { $sum: '$totalAmount' } } },
+    ]),
+    // Per-method breakdown that isn't limited to cash/mpesa/card — a shop
+    // selling on Airtel Money needs to see that money somewhere.
+    Sale.aggregate([
+      { $match: { ...baseQuery, createdAt: { $gte: startOfMonth } } },
+      {
+        $group: {
+          _id: '$paymentMethod',
+          total: { $sum: '$totalAmount' },
+          count: { $sum: 1 },
+          label: { $last: '$paymentMethodLabel' },
+        },
+      },
+      { $sort: { total: -1 } },
     ]),
   ]);
 
@@ -561,6 +593,14 @@ export const getSalesStats = async (req, res) => {
       transactionCount: cur.transactionCount,
       avgSale: cur.transactionCount > 0 ? cur.total / cur.transactionCount : 0,
       percentageChange,
+      // Every method the shop actually took money on this month. The three
+      // *Total fields above stay for older clients.
+      byMethod: methodTotals.map((m) => ({
+        method: m._id,
+        label: m.label || methodLabel(req.user.shop, m._id),
+        total: m.total,
+        count: m.count,
+      })),
     },
   });
 };

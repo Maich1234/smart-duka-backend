@@ -31,6 +31,10 @@ export const computeShiftSummary = ({
   startedAt,
   endedAt,
 }) => {
+  // Legacy keys are always present (as zeroes) so existing clients reading
+  // byMethod.mpesa.total keep working; any shop-defined method a sale actually
+  // used gets added on the fly. Before this, an unknown key was silently
+  // dropped and the shift's takings didn't add up to its sales.
   const byMethod = {
     cash: { count: 0, total: 0 },
     mpesa: { count: 0, total: 0 },
@@ -56,10 +60,11 @@ export const computeShiftSummary = ({
     for (const item of sale.items ?? []) {
       discounts += item.discountAmount || 0;
     }
-    const method = byMethod[sale.paymentMethod];
-    if (method) {
-      method.count += 1;
-      method.total += sale.totalAmount;
+    const key = sale.paymentMethod;
+    if (key) {
+      byMethod[key] ??= { count: 0, total: 0, label: sale.paymentMethodLabel };
+      byMethod[key].count += 1;
+      byMethod[key].total += sale.totalAmount;
     }
 
     if (sale.status === 'refunded') {
