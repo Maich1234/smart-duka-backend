@@ -20,6 +20,12 @@ import { verifyBookStamp } from '../src/utils/bookStamp.js';
  * plausible-looking mistake hides.
  */
 
+// Every book is stamped at build time, so buildBookDocument() signs a JWT on
+// any path that reaches it — not just the `stamp:` tests below. Setting this
+// per-test left the earlier cases signing with no secret, which threw before
+// a single figure was asserted. Module scope runs once, before any test.
+process.env.JWT_SECRET ||= 'test-secret';
+
 const SHOP = { _id: 'shop-1', name: 'Test Duka', currency: 'KES', purchasingEnabled: true };
 const PERIOD = { from: '2026-07-01', to: '2026-07-31' };
 const d = (day, hour = 9) => new Date(Date.UTC(2026, 6, day, hour));
@@ -265,7 +271,6 @@ test('every book carries the shop, period and currency for a detached file', asy
 // ── Authenticity stamp ─────────────────────────────────────────────────────
 
 test('stamp: a document verifies back to the figures it was signed with', () => {
-  process.env.JWT_SECRET = 'test-secret';
   const doc = buildBookDocument({
     key: 'cashbook', title: 'Cashbook', shop: SHOP, ownerName: 'Jane',
     from: PERIOD.from, to: PERIOD.to, columns: [], sections: [],
@@ -283,7 +288,6 @@ test('stamp: a document verifies back to the figures it was signed with', () => 
 });
 
 test('stamp: a tampered token is rejected', () => {
-  process.env.JWT_SECRET = 'test-secret';
   const doc = buildBookDocument({
     key: 'cashbook', title: 'Cashbook', shop: SHOP, ownerName: 'Jane',
     from: PERIOD.from, to: PERIOD.to, columns: [], sections: [], totals: { balance: 100 },
@@ -295,7 +299,6 @@ test('stamp: a tampered token is rejected', () => {
 });
 
 test('stamp: two documents differing only in totals get different ids', () => {
-  process.env.JWT_SECRET = 'test-secret';
   const base = {
     key: 'cashbook', title: 'Cashbook', shop: SHOP, ownerName: 'Jane',
     from: PERIOD.from, to: PERIOD.to, columns: [], sections: [],
@@ -307,7 +310,6 @@ test('stamp: two documents differing only in totals get different ids', () => {
 });
 
 test('stamp: the verify URL carries the token the QR encodes', () => {
-  process.env.JWT_SECRET = 'test-secret';
   const doc = buildBookDocument({
     key: 'cashbook', title: 'Cashbook', shop: SHOP, ownerName: 'Jane',
     from: PERIOD.from, to: PERIOD.to, columns: [], sections: [], totals: {},
