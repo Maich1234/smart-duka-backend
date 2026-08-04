@@ -43,8 +43,13 @@ const getClient = () => {
  * remembers the winner. Any non-availability error (quota, safety, network)
  * propagates immediately — only "this model isn't available to you" advances
  * the chain.
+ *
+ * Exported because the chat path needs the same fallback the insight path has.
+ * `chats.create()` is synchronous and performs no network I/O, so a caller can
+ * cheaply rebuild the session per candidate inside `attempt` rather than
+ * paying for a separate probe request.
  */
-const withResolvedModel = async (attempt) => {
+export const withResolvedModel = async (attempt) => {
   if (resolvedModel) return attempt(resolvedModel);
 
   let lastError;
@@ -78,9 +83,12 @@ export const generateText = async (prompt) => {
 
 /**
  * Opens a multi-turn, tool-calling-capable chat session — used by the chat
- * orchestrator. Session creation is synchronous in the SDK, so this can't run
- * the async probe chain; it uses whichever model the chain already settled on
- * (or the preferred one on a cold start).
+ * orchestrator. Session creation is synchronous in the SDK and does no network
+ * I/O, so it can't probe the chain itself; `model` lets the caller drive it
+ * from inside withResolvedModel, which is how the chat path gets the same
+ * fallback as generateText. Omitting `model` uses whichever candidate the
+ * chain already settled on, and falls back to the preferred one on a cold
+ * start — only safe when the caller handles a 404 itself.
  */
-export const createChatSession = ({ config, history } = {}) =>
-  getClient().chats.create({ model: getActiveModel(), config, history });
+export const createChatSession = ({ model, config, history } = {}) =>
+  getClient().chats.create({ model: model ?? getActiveModel(), config, history });

@@ -1,6 +1,6 @@
 import Conversation from '../../../models/Conversation.js';
 import Message from '../../../models/Message.js';
-import { createChatSession } from '../geminiClient.js';
+import { createChatSession, withResolvedModel } from '../geminiClient.js';
 import { buildChatConfig, forcedFinalConfig, FORCED_FINAL_INSTRUCTION, FALLBACK_MESSAGE } from './chatPromptBuilder.js';
 import { toolExecutors } from './toolExecutors.js';
 
@@ -103,10 +103,20 @@ export const runChatTurn = async ({ shopId, conversation, userText }) => {
   try {
     const baseConfig = buildChatConfig();
     const priorHistory = await loadReplayableHistory(conversation._id, shopId);
-    const chat = createChatSession({ config: baseConfig, history: priorHistory });
+    // The first send doubles as the model-availability probe. A pinned model
+    // can 404 with "no longer available to new users", and only
+    // withResolvedModel advances the chain past that — without this the chat
+    // path used the unprobed preferred model on every cold start and every
+    // turn died in the catch below as a generic FALLBACK_MESSAGE. The session
+    // is rebuilt per candidate because it carries the model id, which costs
+    // nothing: chats.create() is synchronous and does no network I/O.
+    const { chat, response: firstResponse } = await withResolvedModel(async (model) => {
+      const session = createChatSession({ model, config: baseConfig, history: priorHistory });
+      return { chat: session, response: await session.sendMessage({ message: userText }) };
+    });
 
     const toolsUsed = [];
-    let response = await chat.sendMessage({ message: userText });
+    let response = firstResponse;
     let round = 0;
 
     while (response.functionCalls?.length && round < MAX_TOOL_ROUNDS) {
