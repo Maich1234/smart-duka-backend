@@ -36,7 +36,24 @@ export const startShift = async (req, res) => {
     });
   }
 
-  const { openingFloat = 0, openingNote, device } = req.body;
+  const { openingFloat = 0, openingNote, device, startedAt } = req.body;
+
+  // A client-supplied start time is trusted only within a sane window: it can
+  // never be in the future, and never more than a day old. Device clocks are
+  // wrong often enough (manual timezone edits, dead RTC after a flat battery)
+  // that an unclamped value would silently corrupt shift reports, while the
+  // legitimate case — an offline shift replaying from the outbox — is always
+  // recent. Anything outside the window falls back to now.
+  const MAX_BACKDATE_MS = 24 * 60 * 60 * 1000;
+  const requestedStart = startedAt ? new Date(startedAt) : null;
+  const now = Date.now();
+  const resolvedStart =
+    requestedStart &&
+    !Number.isNaN(requestedStart.getTime()) &&
+    requestedStart.getTime() <= now &&
+    now - requestedStart.getTime() <= MAX_BACKDATE_MS
+      ? requestedStart
+      : new Date();
 
   let shift;
   try {
@@ -46,6 +63,7 @@ export const startShift = async (req, res) => {
       openingFloat,
       openingNote,
       device,
+      startedAt: resolvedStart,
     });
   } catch (err) {
     // Partial unique index tripped — a concurrent request won the race.
