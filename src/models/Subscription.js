@@ -20,7 +20,16 @@ const seatAdjustmentSchema = new mongoose.Schema({
   fractionRemaining: { type: Number, required: true },
   reason: {
     type: String,
-    enum: ['staff_added', 'staff_reactivated', 'staff_deactivated', 'staff_removed'],
+    // 'staff_account_closed' is a seat vacated by the staff member themselves
+    // (an approved account closure), kept distinct from 'staff_removed' so an
+    // invoice line can say who ended the employment.
+    enum: [
+      'staff_added',
+      'staff_reactivated',
+      'staff_deactivated',
+      'staff_removed',
+      'staff_account_closed',
+    ],
     required: true,
   },
   staff: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },

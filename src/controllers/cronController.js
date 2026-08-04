@@ -12,7 +12,11 @@ import { dueReminder } from '../services/subscriptionPricingService.js';
 import { detectSalesAnomaly } from '../services/intelligence/salesAnomalyService.js';
 import { claimAndDispatchCampaign } from '../services/pushCampaignService.js';
 import { reconcilePayment } from './subscriptionController.js';
-import { purgeScheduledDeletions, remindScheduledDeletions } from './auth/deleteAccount.js';
+import {
+  purgeScheduledDeletions,
+  remindScheduledDeletions,
+  autoApproveStaleDeletionRequests,
+} from './auth/deleteAccount.js';
 
 const STOCKOUT_CRITICAL_DAYS = 3;
 
@@ -225,11 +229,11 @@ export const subscriptionReminders = async (req, res) => {
       let title;
       let body;
       if (due.kind === 'grace') {
-        title = '⚠️ Your Smart Duka access is about to pause';
+        title = '⚠️ Your Dukana access is about to pause';
         body = `Your ${what} has ended. Pay within ${access.graceDaysLeft} day${access.graceDaysLeft === 1 ? '' : 's'} to keep selling without interruption.`;
       } else {
         const days = access.daysLeft;
-        title = days <= 3 ? `⏳ ${days} day${days === 1 ? '' : 's'} left on your ${what}` : `Your Smart Duka ${what} ends soon`;
+        title = days <= 3 ? `⏳ ${days} day${days === 1 ? '' : 's'} left on your ${what}` : `Your Dukana ${what} ends soon`;
         body = `Your ${what} ends in ${days} day${days === 1 ? '' : 's'}. Renew with M-PESA in a minute to keep your shop running.`;
       }
 
@@ -328,16 +332,22 @@ export const subscriptionPaymentReconcile = async (req, res) => {
  * controllers/auth/deleteAccount.js) — this is the job that actually destroys
  * the data, so a user who changes their mind, or taps by accident, always has
  * a way back.
+ *
+ * Auto-approval runs first: a staff request the owner left unanswered becomes
+ * a scheduled closure here, then serves out the normal cooling-off window
+ * before any later run purges it.
  */
 export const accountDeletions = async (req, res) => {
   if (!verifyCronSecret(req)) {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
 
+  const autoApproved = await autoApproveStaleDeletionRequests();
+
   const [purged, reminded] = await Promise.all([
     purgeScheduledDeletions(),
     remindScheduledDeletions(),
   ]);
 
-  res.json({ success: true, purged, reminded });
+  res.json({ success: true, purged, reminded, autoApproved });
 };

@@ -4,7 +4,7 @@ import Shop from '../src/models/Shop.js';
 import User from '../src/models/User.js';
 import Product from '../src/models/Product.js';
 
-const MONGO = 'mongodb://127.0.0.1:28017/smartduka_shift_test';
+const MONGO = 'mongodb://127.0.0.1:28017/dukana_shift_test';
 
 await mongoose.connect(MONGO);
 await mongoose.connection.dropDatabase();

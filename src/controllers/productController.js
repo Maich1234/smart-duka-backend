@@ -3,26 +3,7 @@ import { logAudit } from '../services/auditLogService.js';
 import { getActiveShift } from '../services/shiftService.js';
 import { parsePagination } from '../utils/pagination.js';
 import { escapeRegex } from '../utils/escapeRegex.js';
-
-// Strips shop-margin-revealing fields for staff responses. `commission.basePrice`
-// is as sensitive as costPrice (it's the owner's floor for the variant), so it's
-// replaced with a derived `commissionPreview` (KES/unit) instead of passed through —
-// staff only ever learn what they personally stand to earn, never the split itself.
-// `showCommission` mirrors the shop's `showStaffCommission` toggle; when off, no
-// commission data reaches staff at all.
-const sanitizeForStaff = (product, showCommission) => {
-  delete product.costPrice;
-  if (Array.isArray(product.variants)) {
-    product.variants = product.variants.map(({ costPrice, commission, ...rest }) => {
-      if (showCommission && commission?.enabled && commission.basePrice != null) {
-        const excess = Math.max(0, rest.sellingPrice - commission.basePrice);
-        rest.commissionPreview = Math.round(excess * ((commission.employeeSharePercent ?? 100) / 100) * 100) / 100;
-      }
-      return rest;
-    });
-  }
-  return product;
-};
+import { sanitizeForStaff, showsCommissionTo, mergeVariantsForStaff } from '../services/productVisibility.js';
 
 /** Ensures every bundleItems[].product reference belongs to the same shop. */
 const validateBundleItems = async (bundleItems, shop) => {
@@ -35,10 +16,19 @@ const validateBundleItems = async (bundleItems, shop) => {
   return null;
 };
 
-/** Ensures every enabled variant commission's base price doesn't exceed its selling price. */
-const validateVariantCommissions = (variants) => {
-  if (!variants?.length) return null;
-  for (const v of variants) {
+/**
+ * Ensures no enabled commission has a base price above the price it's measured
+ * against. A floor above the selling price isn't a validation nicety — it means
+ * the line can never clear the floor, so the owner would be configuring a
+ * commission that silently always pays zero.
+ *
+ * Checks the product-level config and every variant override.
+ */
+const validateCommissions = ({ commission, sellingPrice, variants }) => {
+  if (commission?.enabled && sellingPrice != null && commission.basePrice > sellingPrice) {
+    return 'Commission base price cannot exceed the selling price';
+  }
+  for (const v of variants ?? []) {
     if (v.commission?.enabled && v.commission.basePrice > v.sellingPrice) {
       return `Commission base price for variant "${v.name}" cannot exceed its selling price`;
     }
@@ -75,7 +65,7 @@ export const getProducts = async (req, res) => {
 
   const sanitizedProducts = products.map((product) => {
     const p = product.toObject();
-    return req.user.role === 'staff' ? sanitizeForStaff(p, req.user.shop?.showStaffCommission) : p;
+    return req.user.role === 'staff' ? sanitizeForStaff(p, showsCommissionTo(req.user)) : p;
   });
 
   res.json({
@@ -97,7 +87,7 @@ export const getProductById = async (req, res) => {
   }
 
   const productObj = product.toObject();
-  res.json({ success: true, data: req.user.role === 'staff' ? sanitizeForStaff(productObj, req.user.shop?.showStaffCommission) : productObj });
+  res.json({ success: true, data: req.user.role === 'staff' ? sanitizeForStaff(productObj, showsCommissionTo(req.user)) : productObj });
 };
 
 export const createProduct = async (req, res) => {
@@ -105,12 +95,26 @@ export const createProduct = async (req, res) => {
     return res.status(403).json({ success: false, message: 'Permission denied' });
   }
 
+  // Commission is what the shop pays the seller, so only the owner sets it —
+  // `create_product` is permission to maintain the catalogue, not to decide
+  // one's own pay. Without this a staff member could create a product with
+  // basePrice 0 and a 100% share and bank its entire selling price.
+  //
+  // Cost price is left alone: staff are entering a new product's figures
+  // rather than overwriting one they were never shown.
+  if (req.user.role !== 'owner') {
+    delete req.body.commission;
+    if (Array.isArray(req.body.variants)) {
+      req.body.variants = req.body.variants.map(({ commission, ...rest }) => rest);
+    }
+  }
+
   const bundleError = await validateBundleItems(req.body.bundleItems, req.user.shop._id);
   if (bundleError) {
     return res.status(400).json({ success: false, message: bundleError });
   }
 
-  const commissionError = validateVariantCommissions(req.body.variants);
+  const commissionError = validateCommissions(req.body);
   if (commissionError) {
     return res.status(400).json({ success: false, message: commissionError });
   }
@@ -129,12 +133,36 @@ export const updateProduct = async (req, res) => {
     return res.status(404).json({ success: false, message: 'Product not found' });
   }
 
+  // Staff never receive `costPrice` or `commission` — productVisibility.js
+  // strips both before a product leaves the server. Whatever a staff client
+  // sends back for them is therefore an artefact of a blank form, not an
+  // intent, and this is a partial update (findByIdAndUpdate below overwrites
+  // exactly the keys present): applying it would zero the shop's cost price
+  // and silently switch commission off.
+  //
+  // This is enforcement, not just tidying — it is what makes `edit_product`
+  // safe to grant. Clients hide the fields too, but the server is the one
+  // guarantee that a stale or hostile client cannot erase margin data.
+  if (req.user.role !== 'owner') {
+    delete req.body.costPrice;
+    delete req.body.commission;
+    req.body.variants = mergeVariantsForStaff(req.body.variants, product.toObject().variants);
+    if (req.body.variants === undefined) delete req.body.variants;
+  }
+
   const bundleError = await validateBundleItems(req.body.bundleItems, req.user.shop._id);
   if (bundleError) {
     return res.status(400).json({ success: false, message: bundleError });
   }
 
-  const commissionError = validateVariantCommissions(req.body.variants);
+  // Updates are partial: a request may change `commission` without resending
+  // `sellingPrice` (or vice versa). Validate the merged result, or a floor
+  // could be slipped above a price that simply wasn't in this payload.
+  const commissionError = validateCommissions({
+    commission: req.body.commission ?? product.commission,
+    sellingPrice: req.body.sellingPrice ?? product.sellingPrice,
+    variants: req.body.variants,
+  });
   if (commissionError) {
     return res.status(400).json({ success: false, message: commissionError });
   }

@@ -1,7 +1,7 @@
 {
   "name": "smart-duka-backend",
   "version": "1.0.0",
-  "description": "Backend for Smart Duka POS System",
+  "description": "Backend for Dukana POS System",
   "type": "module",
   "main": "src/server.js",
   "scripts": {

@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-// SmartDuka's own (company-level) configuration — a singleton document.
+// Dukana's own (company-level) configuration — a singleton document.
 // Subscription payments are collected with these Daraja credentials, never a
 // shop's own PaymentConfig. Will be managed from the super-admin page;
 // seeded once via scripts/seedPlatformConfig.mjs.

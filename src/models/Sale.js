@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { METHOD_KEY_PATTERN } from '../constants/salePaymentMethods.js';
+import { nextInvoiceNumber } from '../services/invoiceNumberService.js';
 
 const saleItemSchema = new mongoose.Schema({
   productId: {
@@ -99,9 +100,9 @@ const saleSchema = new mongoose.Schema({
     required: true,
     index: true,
   },
+  // Unique per shop, not globally — see the compound index below.
   invoiceNumber: {
     type: String,
-    unique: true,
   },
   items: [saleItemSchema],
   totalAmount: {
@@ -201,16 +202,31 @@ saleSchema.index({ shop: 1, staff: 1, createdAt: -1 });
 saleSchema.index({ shift: 1 }, { sparse: true });
 // Reversal result callbacks look the sale up by Safaricom's correlation id.
 saleSchema.index({ 'refund.originatorConversationId': 1 }, { sparse: true });
+// Invoice numbers are unique *within a shop*. This replaces a collection-wide
+// unique index on invoiceNumber alone, which collided across tenants: the
+// number was generated from a per-shop count, so every shop's first sale of a
+// given month wanted the same INV-YYMM-00001 and only one could have it.
+//
+// Existing databases carry the old `invoiceNumber_1` index — it must be dropped
+// or it keeps rejecting those sales. See scripts/fixInvoiceNumbering.mjs.
+saleSchema.index({ shop: 1, invoiceNumber: 1 }, { unique: true });
 
+// Runs inside the caller's session when there is one — saleController creates
+// sales inside withTransaction, and joining that transaction is what lets an
+// aborted sale return its number to the pool instead of burning it.
+// Sequencing rules and their rationale live in invoiceNumberService.
 saleSchema.pre('save', async function (next) {
-  if (!this.invoiceNumber) {
-    const date = new Date();
-    const year = date.getFullYear().toString().slice(-2);
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    const count = await mongoose.model('Sale').countDocuments({ shop: this.shop });
-    this.invoiceNumber = `INV-${year}${month}-${(count + 1).toString().padStart(5, '0')}`;
+  if (!this.isNew || this.invoiceNumber) return next();
+
+  try {
+    this.invoiceNumber = await nextInvoiceNumber(this.shop, {
+      ShopModel: mongoose.model('Shop'),
+      session: this.$session(),
+    });
+    return next();
+  } catch (error) {
+    return next(error);
   }
-  next();
 });
 
 export default mongoose.model('Sale', saleSchema);

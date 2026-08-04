@@ -104,6 +104,7 @@ export function describeSeatAdjustments(subscription) {
     staff_reactivated: 'Reactivated',
     staff_deactivated: 'Deactivated',
     staff_removed: 'Removed',
+    staff_account_closed: 'Account closed by',
   };
   return (subscription?.seatAdjustments ?? []).map((a) => ({
     label: `${LABELS[a.reason] ?? 'Changed'} ${a.staffName || 'team member'}`,
@@ -116,4 +117,55 @@ export function describeSeatAdjustments(subscription) {
 /** Wipes accrued adjustments once they've been folded into a paid invoice. */
 export function clearSeatAdjustments(subscription) {
   subscription.seatAdjustments = [];
+}
+
+/**
+ * Books the seat credit for a staff account that has just been deleted, and
+ * re-snapshots the subscription's head-count.
+ *
+ * Call AFTER the user document is actually gone (and outside any transaction
+ * that removed it) — the credit is derived from a live re-count, so a delete
+ * that hasn't committed yet would produce the wrong number.
+ *
+ * Shared by both removal paths on purpose. The owner-initiated one
+ * (staffController.deleteStaff) did this inline, while accounts destroyed by
+ * purgeScheduledDeletions — a staff member closing their own account — skipped
+ * it entirely, so the shop kept paying for a seat nobody occupied and
+ * `staffCount` drifted permanently out of sync. That drift is exactly the bug
+ * the head-count write-back below was added to fix once already.
+ *
+ * Inactive accounts were never billable, so they release nothing.
+ */
+export async function releaseStaffSeat({ shopId, staff, wasActive, reason = 'staff_removed' }) {
+  if (!wasActive || !shopId) return null;
+
+  // Imported lazily: subscriptionPricingService pulls in the User model, and a
+  // top-level cycle here would leave one of the two half-initialised.
+  const [{ getBillableUserCount }, { default: Subscription }] = await Promise.all([
+    import('./subscriptionPricingService.js'),
+    import('../models/Subscription.js'),
+  ]);
+
+  const subscription = await Subscription.findOne({ shop: shopId }).populate('plan');
+  if (!subscription) return null;
+
+  const afterCount = await getBillableUserCount(shopId);
+
+  const adjustment = subscription.plan
+    ? await accrueSeatChange({
+        subscription,
+        plan: subscription.plan,
+        fromCount: afterCount + 1,
+        toCount: afterCount,
+        reason,
+        staff,
+      })
+    : null;
+
+  // Written back even when the credit is worth nothing (flat plan, unpaid
+  // period) — the snapshot has to match reality either way.
+  subscription.staffCount = afterCount;
+  await subscription.save();
+
+  return adjustment;
 }

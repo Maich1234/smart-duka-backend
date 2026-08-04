@@ -1,8 +1,8 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import nodemailer from 'nodemailer';
 import PaymentVerificationSession from '../models/PaymentVerificationSession.js';
+import { sendEmail } from '../utils/email.js';
 import { sendSMS } from './africasTalkingService.js';
 
 const OTP_TTL_MS = 10 * 60 * 1000;
@@ -30,28 +30,10 @@ function maskEmail(email) {
   return `${masked}@${domain}`;
 }
 
-function getEmailTransporter() {
-  const port = Number(process.env.SMTP_PORT) || 587;
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port,
-    secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : port === 465,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
-  });
-}
-
 async function sendEmailOTP(email, otp) {
-  const transporter = getEmailTransporter();
-  await transporter.sendMail({
-    from: process.env.SMTP_FROM || '"Smart Duka" <noreply@smartduka.app>',
-    to: email,
-    subject: 'Smart Duka — Payment Settings Verification Code',
-    html: `
+  const html = `
       <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
-        <h2 style="color:#0F766E;margin:0 0 8px">Smart Duka</h2>
+        <h2 style="color:#0F766E;margin:0 0 8px">Dukana</h2>
         <p style="color:#64748B;margin:0 0 24px;font-size:14px">Payment Settings Verification</p>
         <div style="background:#F8FAFC;border-radius:12px;padding:24px;text-align:center;margin-bottom:24px">
           <p style="margin:0 0 8px;font-size:14px;color:#64748B">Your verification code</p>
@@ -61,8 +43,10 @@ async function sendEmailOTP(email, otp) {
           This code expires in <strong>10 minutes</strong>. Do not share it with anyone.
         </p>
       </div>
-    `,
-  });
+    `;
+  const text = `Your Dukana payment settings verification code is: ${otp}\nThis code expires in 10 minutes. Do not share it with anyone.`;
+
+  await sendEmail(email, 'Dukana — Payment Settings Verification Code', html, text);
 }
 
 /**
@@ -79,7 +63,7 @@ export async function requestOTP(user, method) {
   let sentTo;
   if (method === 'sms') {
     if (!user.phone) throw new Error('No phone number on file. Use email verification instead.');
-    await sendSMS(user.phone, `Your Smart Duka verification code is: ${otp}. Valid for 10 minutes. Do not share.`);
+    await sendSMS(user.phone, `Your Dukana verification code is: ${otp}. Valid for 10 minutes. Do not share.`);
     sentTo = maskPhone(user.phone);
   } else {
     if (!user.email) throw new Error('No email address on file.');

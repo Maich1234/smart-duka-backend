@@ -8,7 +8,7 @@ export const hasAiEnabled = (shop) => Boolean(shop?.aiEnabled);
  */
 export const requireAiEnabled = (req, res, next) => {
   if (!hasAiEnabled(req.user.shop)) {
-    return res.status(403).json({ success: false, message: 'Enable Smart Duka AI from your Profile to use this feature.' });
+    return res.status(403).json({ success: false, message: 'Enable Dukana AI from your Profile to use this feature.' });
   }
   next();
 };

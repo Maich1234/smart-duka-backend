@@ -75,10 +75,10 @@ export function renderCsv(doc) {
 
   if (doc.stamp) {
     out.push('');
-    out.push(line(['Verified by Smart Duka']));
+    out.push(line(['Verified by Dukana']));
     out.push(line(['Document', doc.stamp.documentId]));
     out.push(line(['Check at', doc.stamp.verifyUrl]));
-    out.push(line(['', 'Confirms this came from Smart Duka and has not been altered. Not an audit.']));
+    out.push(line(['', 'Confirms this came from Dukana and has not been altered. Not an audit.']));
   }
 
   // BOM so Excel opens UTF-8 correctly — without it, en dashes and the ’ in

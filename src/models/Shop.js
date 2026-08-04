@@ -140,6 +140,21 @@ const shopSchema = new mongoose.Schema({
     type: [shopPaymentMethodSchema],
     default: () => DEFAULT_PAYMENT_METHODS.map((m, i) => ({ ...m, order: i })),
   },
+  // Monotonic invoice counter for this shop, bumped atomically by Sale's
+  // pre-save hook via $inc.
+  //
+  // Replaces the old `countDocuments({ shop })` scheme, which was wrong twice
+  // over: the count was per-shop but the unique index on Sale.invoiceNumber was
+  // collection-wide, so two shops' first sale of a month both produced
+  // INV-YYMM-00001 and the second one failed outright; and the read raced with
+  // itself, so two concurrent sales in one shop saw the same count.
+  //
+  // Seeded for existing shops by scripts/fixInvoiceNumbering.mjs.
+  invoiceSeq: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
 }, { timestamps: true });
 
 export default mongoose.model('Shop', shopSchema);

@@ -1,6 +1,7 @@
 import Conversation from '../models/Conversation.js';
 import Message from '../models/Message.js';
 import { runChatTurn } from '../services/ai/chat/chatOrchestrator.js';
+import { readThreadPage } from '../services/conversationThreadService.js';
 import { parsePagination } from '../utils/pagination.js';
 
 /**
@@ -77,6 +78,13 @@ export const listConversations = async (req, res) => {
 /**
  * GET /ai/chat/conversations/:id — a thread's text turns only. tool_call/
  * tool_result rows are internal plumbing and never leave the server.
+ *
+ * Page 1 is the *newest* turns, and each page reads oldest-to-newest within
+ * itself. A chat is read from the bottom: paging from the start meant any
+ * thread longer than one page opened on its oldest messages, and every reply
+ * sent afterwards landed on a page no client had asked for — which reads as
+ * the answer never arriving. Both clients want the same end of the thread, so
+ * this is the default rather than an opt-in flag.
  */
 export const getConversation = async (req, res) => {
   try {
@@ -88,11 +96,12 @@ export const getConversation = async (req, res) => {
     }
 
     const { page, limit, skip } = parsePagination(req.query, { defaultLimit: 50, maxLimit: 100 });
-    const query = { conversation: conversation._id, shop: shopId, kind: { $in: ['user_message', 'model_answer'] } };
-    const [messages, total] = await Promise.all([
-      Message.find(query).sort({ turnIndex: 1 }).skip(skip).limit(limit).select('role parts toolsUsed createdAt'),
-      Message.countDocuments(query),
-    ]);
+    const { messages, total } = await readThreadPage(Message, {
+      conversationId: conversation._id,
+      shopId,
+      skip,
+      limit,
+    });
 
     res.json({
       success: true,

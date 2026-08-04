@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import { ADMIN_PERMISSION_VALUES } from '../constants/adminPermissions.js';
 
-// SmartDuka's own internal staff — distinct from the shop-tenant User model.
+// Dukana's own internal staff — distinct from the shop-tenant User model.
 // No `shop` field: admins aren't scoped to a tenant. Most accounts are
 // created via the admin-management API (super_admin only, see
 // adminManagementController.js); scripts/createAdminUser.mjs remains as a

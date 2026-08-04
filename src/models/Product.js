@@ -1,5 +1,21 @@
 import mongoose from 'mongoose';
 
+// Employee commission config. `basePrice` is the shop's floor for one unit;
+// whatever the line actually earns above that floor is split with the seller by
+// `employeeSharePercent` (the remainder stays with the shop on top of the floor).
+//
+// Declared once and reused at both product level and variant level: a variant's
+// config overrides its parent product's when the variant enables one, which is
+// what lets a shop set a default for a product and tune a single size/flavour.
+//
+// `basePrice` is as margin-revealing as `costPrice` and must never be sent to a
+// staff role — see `sanitizeForStaff` in controllers/productController.js.
+const commissionConfig = () => ({
+  enabled: { type: Boolean, default: false },
+  basePrice: { type: Number, min: 0 },
+  employeeSharePercent: { type: Number, min: 0, max: 100, default: 100 },
+});
+
 const productSchema = new mongoose.Schema({
   shop: {
     type: mongoose.Schema.Types.ObjectId,
@@ -69,6 +85,11 @@ const productSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  // Product-level commission, honoured by every product type. Commission used
+  // to exist only on `configurable` variants, which meant the ordinary shop —
+  // one selling standard products — could switch "show commission to staff" on
+  // and still never generate a single shilling of it.
+  commission: commissionConfig(),
   bundleItems: [{
     product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
     quantity: { type: Number, min: 0.001 },
@@ -86,14 +107,8 @@ const productSchema = new mongoose.Schema({
     quantity: { type: Number, default: 0, min: 0 },
     sku: { type: String, trim: true },
     lowStockAlert: { type: Number, default: 5, min: 0 },
-    // Employee commission: `basePrice` is the shop's floor for this variant;
-    // anything the variant sells for above it is split with the seller by
-    // `employeeSharePercent` (the rest stays with the shop on top of basePrice).
-    commission: {
-      enabled: { type: Boolean, default: false },
-      basePrice: { type: Number, min: 0 },
-      employeeSharePercent: { type: Number, min: 0, max: 100, default: 100 },
-    },
+    // Overrides the parent product's commission when this variant enables one.
+    commission: commissionConfig(),
   }],
 }, {
   timestamps: true,

@@ -130,7 +130,7 @@ export const initiateSeatPayment = async (req, res) => {
         phoneNumber,
         amount,
         reference: 'SMARTDUKA',
-        description: `Smart Duka — add staff seat (${subscription.plan.name})`,
+        description: `Dukana — add staff seat (${subscription.plan.name})`,
         callbackUrl,
       });
     } catch (err) {

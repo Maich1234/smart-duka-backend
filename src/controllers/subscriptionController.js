@@ -451,7 +451,7 @@ export const initiatePayment = async (req, res) => {
         phoneNumber,
         amount: amountDue,
         reference: 'SMARTDUKA',
-        description: `Smart Duka ${plan.name} (${billingCycle})`,
+        description: `Dukana ${plan.name} (${billingCycle})`,
         callbackUrl,
       });
     } catch (err) {

@@ -92,7 +92,7 @@ export const initiatePayment = async (req, res) => {
         config: mpesaConfig,
         phoneNumber,
         amount,
-        accountReference: accountReference || 'SmartDuka',
+        accountReference: accountReference || 'Dukana',
         transactionDesc: 'Sale Payment',
         callbackUrl: CALLBACK_URL,
       });
@@ -114,7 +114,7 @@ export const initiatePayment = async (req, res) => {
         merchantRequestId: stkResult.merchantRequestId,
         phoneNumber: normalizeKenyanPhone(phoneNumber),
         amount,
-        accountReference: accountReference || 'SmartDuka',
+        accountReference: accountReference || 'Dukana',
         status: 'pending',
         requestedBy: req.user._id,
         ...(idempotencyKey && { idempotencyKey }),

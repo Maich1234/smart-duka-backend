@@ -1,5 +1,5 @@
 /**
- * One-time bootstrap for SmartDuka's platform-level M-Pesa credentials —
+ * One-time bootstrap for Dukana's platform-level M-Pesa credentials —
  * the Daraja account that COLLECTS subscription payments.
  *
  * Copies the encrypted mpesa config from an existing shop's paymentconfigs
@@ -56,7 +56,7 @@ async function main() {
   platform.mpesa = {
     enabled: true,
     environment: source.mpesa.environment,
-    businessName: 'SmartDuka',
+    businessName: 'Dukana',
     shortcode: source.mpesa.shortcode,
     consumerKey: source.mpesa.consumerKey,
     consumerSecret: source.mpesa.consumerSecret,

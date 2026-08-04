@@ -1,13 +1,13 @@
 /**
- * Bootstraps a SmartDuka internal admin account. Most accounts are now
+ * Bootstraps a Dukana internal admin account. Most accounts are now
  * created via the admin-management API (super_admin only, see
  * adminManagementController.js); this script remains as a break-glass
  * bootstrap path independent of the API/DB app layer — e.g. for creating
  * the first super_admin, or recovering if every super_admin is locked out.
  *
  * Usage:
- *   node scripts/createAdminUser.mjs --email a@smartduka.co --password ... --name "Ada Owner" [--role super_admin] [--permissions plans,shops]
- *   node scripts/createAdminUser.mjs --email a@smartduka.co --password ... --name "Ada" --force   # reset password on an existing email
+ *   node scripts/createAdminUser.mjs --email a@dukana.co --password ... --name "Ada Owner" [--role super_admin] [--permissions plans,shops]
+ *   node scripts/createAdminUser.mjs --email a@dukana.co --password ... --name "Ada" --force   # reset password on an existing email
  */
 import 'dotenv/config';
 import mongoose from 'mongoose';

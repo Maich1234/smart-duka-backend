@@ -8,6 +8,9 @@ const bundleItemSchema = Joi.object({
   quantity: Joi.number().positive().required(),
 });
 
+// Shared by the product-level config and the per-variant override. `basePrice`
+// is only meaningful when enabled, so it's required exactly then — an enabled
+// config with no floor would silently pay out 100% of the line as commission.
 const commissionSchema = Joi.object({
   enabled: Joi.boolean().default(false),
   basePrice: Joi.number().min(0)
@@ -16,9 +19,24 @@ const commissionSchema = Joi.object({
 });
 
 const variantSchema = Joi.object({
+  /**
+   * Identity of an existing variant, echoed back by the client.
+   *
+   * Required for two reasons. Sales reference a variant by id, so replacing
+   * the subdocument array without it makes Mongoose mint fresh ids and orphans
+   * every historical `variantId`. And a staff update is merged against the
+   * stored row by this id — see updateProduct in productController.js.
+   *
+   * Note `validate` runs with stripUnknown, so an unlisted key is dropped in
+   * silence rather than rejected: it has to be declared here to survive.
+   */
+  _id: Joi.string().optional(),
   name: Joi.string().required().trim(),
   sellingPrice: Joi.number().min(0).required(),
-  costPrice: Joi.number().min(0).required(),
+  // Optional at this layer because a staff client omits it for variants it was
+  // never shown; the controller restores the stored value before this reaches
+  // Mongoose, where the field is still required.
+  costPrice: Joi.number().min(0),
   quantity: Joi.number().min(0).default(0),
   sku: Joi.string().trim().allow(''),
   lowStockAlert: Joi.number().min(0).default(5),
@@ -49,6 +67,8 @@ export const createProductSchema = Joi.object({
     .when('productType', { is: 'variable', then: Joi.optional(), otherwise: Joi.forbidden() }),
   allowPriceOverride: Joi.boolean()
     .when('productType', { is: 'service', then: Joi.optional().default(false), otherwise: Joi.forbidden() }),
+  // Allowed on every product type — commission is not a variant-only concept.
+  commission: commissionSchema.optional(),
   bundleItems: Joi.array().items(bundleItemSchema).min(1)
     .when('productType', { is: 'bundle', then: Joi.required(), otherwise: Joi.forbidden() }),
   variants: Joi.array().items(variantSchema).min(1)
@@ -71,6 +91,7 @@ export const updateProductSchema = Joi.object({
   minPrice: Joi.number().min(0),
   maxPrice: Joi.number().min(0),
   allowPriceOverride: Joi.boolean(),
+  commission: commissionSchema,
   bundleItems: Joi.array().items(bundleItemSchema).min(1),
   variants: Joi.array().items(variantSchema).min(1),
   promotions: Joi.array().items(promotionSchema),

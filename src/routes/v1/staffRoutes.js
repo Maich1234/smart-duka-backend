@@ -24,6 +24,13 @@ import {
   reconcileSeatPaymentByMessage,
 } from '../../controllers/seatPaymentController.js';
 import { getAllPermissions } from '../../controllers/permissionController.js';
+// Staff closure requests are owner-approved, so the approve/decline half of
+// the flow lives on the owner-only staff router rather than under /auth/me.
+import {
+  listStaffDeletionRequests,
+  approveStaffDeletionRequest,
+  declineStaffDeletionRequest,
+} from '../../controllers/auth/deleteAccount.js';
 import { protect, ownerOnly } from '../../middlewares/auth.js';
 import validate from '../../middlewares/validate.js';
 import idempotency from '../../middlewares/idempotency.js';
@@ -34,6 +41,7 @@ import {
   updateStaffPermissionsSchema,
   initiateSeatPaymentSchema,
   seatPaymentReconcileSchema,
+  declineStaffDeletionRequestSchema,
 } from '../../validations/staffValidation.js';
 
 const router = express.Router();
@@ -45,6 +53,8 @@ router.get('/permissions', getAllPermissions);
 router.get('/', getStaff);
 router.get('/check-email', checkStaffEmailAvailability);
 router.get('/seat-preview', previewSeatAddition);
+// Before '/:id' so 'deletion-requests' isn't swallowed as a staff id.
+router.get('/deletion-requests', listStaffDeletionRequests);
 router.post('/seat-payment', idempotency, validate(initiateSeatPaymentSchema), initiateSeatPayment);
 router.get('/seat-payment/:paymentId', getSeatPaymentStatus);
 router.post('/seat-payment/:paymentId/recheck', recheckSeatPayment);
@@ -58,5 +68,12 @@ router.post('/:id/force-logout', forceLogoutStaff);
 router.get('/:id/sales', getStaffSales);
 router.get('/:id/commission', getStaffCommission);
 router.put('/:id/permissions', validate(updateStaffPermissionsSchema), updateStaffPermissions);
+router.post('/:id/deletion-request/approve', idempotency, approveStaffDeletionRequest);
+router.post(
+  '/:id/deletion-request/decline',
+  idempotency,
+  validate(declineStaffDeletionRequestSchema),
+  declineStaffDeletionRequest,
+);
 
 export default router;

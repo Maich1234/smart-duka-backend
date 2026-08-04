@@ -12,6 +12,7 @@ export const createStaffSchema = Joi.object({
   // request (required for offline queueing — a follow-up permissions call
   // can't reference a server id that doesn't exist yet). Omitted → defaults.
   permissions: Joi.array().items(Joi.string().valid(...PERMISSION_VALUES)),
+  commissionEligible: Joi.boolean(),
 }).unknown(false);
 
 // POST /staff/seat-payment — same staff draft as createStaffSchema, plus the
@@ -35,6 +36,7 @@ export const updateStaffSchema = Joi.object({
   phone: Joi.string().allow(''),
   isActive: Joi.boolean(),
   permissions: Joi.array().items(Joi.string().valid(...PERMISSION_VALUES)),
+  commissionEligible: Joi.boolean(),
 }).unknown(false);
 
 export const resetPasswordSchema = Joi.object({
@@ -43,4 +45,9 @@ export const resetPasswordSchema = Joi.object({
 
 export const updateStaffPermissionsSchema = Joi.object({
   permissions: Joi.array().items(Joi.string().valid(...PERMISSION_VALUES)).required(),
+}).unknown(false);
+// POST /staff/:id/deletion-request/decline — the reason is optional but is
+// relayed verbatim to the staff member, so it stays short.
+export const declineStaffDeletionRequestSchema = Joi.object({
+  reason: Joi.string().max(300).allow('').optional(),
 }).unknown(false);

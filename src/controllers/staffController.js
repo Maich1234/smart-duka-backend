@@ -5,7 +5,7 @@ import { DEFAULT_STAFF_PERMISSIONS, withImpliedPermissions } from '../constants/
 import { parsePagination } from '../utils/pagination.js';
 import { escapeRegex } from '../utils/escapeRegex.js';
 import { getBillableUserCount } from '../services/subscriptionPricingService.js';
-import { accrueSeatChange, computeSeatChange } from '../services/seatBillingService.js';
+import { accrueSeatChange, computeSeatChange, releaseStaffSeat } from '../services/seatBillingService.js';
 import { resolveStaffEmailSlot } from './seatPaymentController.js';
 import { revokeAllSessions } from '../services/refreshTokenService.js';
 import { logAudit } from '../services/auditLogService.js';
@@ -181,7 +181,7 @@ export const updateStaff = async (req, res) => {
   const staff = await User.findOne({ _id: req.params.id, role: 'staff', shop: shopId });
   if (!staff) return res.status(404).json({ success: false, message: 'Staff not found' });
 
-  const { name, email, phone, isActive, permissions } = req.body;
+  const { name, email, phone, isActive, permissions, commissionEligible } = req.body;
   // Toggling isActive changes billable head-count, so it has to be priced the
   // same way createStaff prices a new seat. Without this, deactivate →
   // reactivate was a free seat: the old seat-payment gate only ever guarded
@@ -193,6 +193,7 @@ export const updateStaff = async (req, res) => {
   if (phone) staff.phone = phone;
   if (isActive !== undefined) staff.isActive = isActive;
   if (permissions) staff.permissions = withImpliedPermissions(permissions);
+  if (commissionEligible !== undefined) staff.commissionEligible = commissionEligible;
 
   await staff.save();
 
@@ -231,27 +232,10 @@ export const deleteStaff = async (req, res) => {
   const wasActive = staff.isActive;
   await staff.deleteOne();
 
-  if (wasActive) {
-    const subscription = await Subscription.findOne({ shop: shopId }).populate('plan');
-    if (subscription) {
-      const afterCount = await getBillableUserCount(shopId);
-      if (subscription.plan) {
-        // Credit back the unused part of the period this seat was paid for.
-        await accrueSeatChange({
-          subscription,
-          plan: subscription.plan,
-          fromCount: afterCount + 1,
-          toCount: afterCount,
-          reason: 'staff_removed',
-          staff,
-        });
-      }
-      // Keep the snapshotted head-count honest — it used to drift permanently
-      // out of sync because removals never wrote it back.
-      subscription.staffCount = afterCount;
-      await subscription.save();
-    }
-  }
+  // Credits back the unused part of the period this seat was paid for and
+  // re-snapshots head-count. Shared with purgeScheduledDeletions so a staff
+  // member closing their own account releases the seat too.
+  await releaseStaffSeat({ shopId, staff, wasActive });
 
   res.json({ success: true, message: 'Staff deleted successfully' });
 };
@@ -336,7 +320,7 @@ export const getStaffCommission = async (req, res) => {
   const { getCommissionSummary } = await import('../services/commissionService.js');
   const { startDate, endDate } = req.query;
   const summary = await getCommissionSummary(req.user.shop._id, staff._id, { startDate, endDate });
-  res.json({ success: true, data: summary });
+  res.json({ success: true, data: { ...summary, eligible: staff.commissionEligible === true } });
 };
 
 export const updateStaffPermissions = async (req, res) => {

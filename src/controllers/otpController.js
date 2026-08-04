@@ -23,6 +23,19 @@ export const requestVerificationOTP = async (req, res) => {
     });
   } catch (err) {
     console.error('[OTP] requestVerificationOTP error:', err);
+
+    // The delivery channel is down rather than the request being wrong — say so,
+    // and point the owner at the other channel if it's available to them.
+    if (err.transient) {
+      const canFallBack = req.body.method === 'email' && req.user?.phone;
+      return res.status(503).json({
+        success: false,
+        message: canFallBack
+          ? 'Email delivery is temporarily unavailable. Please try SMS verification instead.'
+          : err.message,
+      });
+    }
+
     const message = err.message?.includes('rate limit') || err.message?.includes('Too many')
       ? 'Too many verification requests. Please wait a few minutes and try again.'
       : err.message?.includes('email') || err.message?.includes('SMS')

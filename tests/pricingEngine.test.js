@@ -230,3 +230,150 @@ test('cost: configurable variant without a cost price yields null', async () => 
   const line = await resolveSaleLine(product, { quantity: 1, variantId: 'v1' }, ctx());
   assert.equal(line.unitCost, null);
 });
+
+// --- Employee commission ----------------------------------------------------
+// Commission is a split of whatever the line earns above the shop's per-unit
+// floor. It used to be computed only for `configurable` variants, which meant
+// an ordinary shop selling standard products could switch commission on and
+// never generate a shilling of it.
+
+const withCommission = (over = {}) => ({ enabled: true, basePrice: 400, employeeSharePercent: 90, ...over });
+
+const configurable = (variants, over = {}) => standardProduct({
+  productType: 'configurable',
+  variants: Object.assign(variants, {
+    id(id) { return this.find((v) => v._id === id) ?? null; },
+  }),
+  ...over,
+});
+
+test('commission: standard product earns the seller their share of the excess', async () => {
+  // The owner's worked example: floor 400, sells at 450, 90/10 split → 45.
+  const product = standardProduct({ sellingPrice: 450, commission: withCommission() });
+  const line = await resolveSaleLine(product, { quantity: 1 }, ctx());
+  assert.equal(line.commissionAmount, 45);
+});
+
+test('commission: scales with quantity', async () => {
+  const product = standardProduct({ sellingPrice: 450, commission: withCommission() });
+  const line = await resolveSaleLine(product, { quantity: 3 }, ctx());
+  assert.equal(line.commissionAmount, 135);
+});
+
+test('commission: absent config earns nothing', async () => {
+  const line = await resolveSaleLine(standardProduct({ sellingPrice: 450 }), { quantity: 2 }, ctx());
+  assert.equal(line.commissionAmount, 0);
+});
+
+test('commission: disabled config earns nothing', async () => {
+  const product = standardProduct({ sellingPrice: 450, commission: withCommission({ enabled: false }) });
+  const line = await resolveSaleLine(product, { quantity: 2 }, ctx());
+  assert.equal(line.commissionAmount, 0);
+});
+
+test('commission: selling at or below the floor never goes negative', async () => {
+  const product = standardProduct({ sellingPrice: 380, commission: withCommission() });
+  const line = await resolveSaleLine(product, { quantity: 2 }, ctx());
+  assert.equal(line.commissionAmount, 0);
+});
+
+test('commission: a 100% share hands the whole excess to the seller', async () => {
+  const product = standardProduct({ sellingPrice: 450, commission: withCommission({ employeeSharePercent: 100 }) });
+  const line = await resolveSaleLine(product, { quantity: 1 }, ctx());
+  assert.equal(line.commissionAmount, 50);
+});
+
+test('commission: variable product pays on the negotiated price, not list', async () => {
+  // The incentive only works if talking the customer up actually pays out.
+  const product = standardProduct({
+    productType: 'variable',
+    sellingPrice: 420,
+    minPrice: 400,
+    maxPrice: 600,
+    commission: withCommission(),
+  });
+  const line = await resolveSaleLine(product, { quantity: 1, unitPrice: 500 }, ctx());
+  assert.equal(line.commissionAmount, 90);
+});
+
+test('commission: weighted product pays on the measured quantity', async () => {
+  const product = standardProduct({
+    productType: 'weighted',
+    sellingPrice: 450,
+    unitOfMeasure: 'kg',
+    commission: withCommission(),
+  });
+  const line = await resolveSaleLine(product, { quantity: 2.5 }, ctx());
+  assert.equal(line.commissionAmount, 112.5);
+});
+
+test('commission: service product earns on its overridden price', async () => {
+  const product = standardProduct({
+    productType: 'service',
+    sellingPrice: 450,
+    allowPriceOverride: true,
+    trackInventory: false,
+    commission: withCommission(),
+  });
+  const line = await resolveSaleLine(product, { quantity: 1, unitPrice: 600 }, ctx());
+  assert.equal(line.commissionAmount, 180);
+});
+
+test('commission: free promotional units cannot mint commission', async () => {
+  // Buy 2 get 1: 3 units, only 2 paid for. Revenue 900 against a 1200 floor,
+  // so the line never clears the floor and correctly pays nothing — paying
+  // here would come straight out of the shop's own margin.
+  const product = standardProduct({
+    sellingPrice: 450,
+    quantity: 20,
+    commission: withCommission(),
+    promotions: [{ buyQty: 2, freeQty: 1, isActive: true, label: 'B2G1' }],
+  });
+  const line = await resolveSaleLine(product, { quantity: 3 }, ctx());
+  assert.equal(line.subtotal, 900);
+  assert.equal(line.commissionAmount, 0);
+});
+
+test('commission: configurable variant uses its own config', async () => {
+  const product = configurable([
+    { _id: 'v1', name: '500ml', sellingPrice: 450, quantity: 10, commission: withCommission() },
+  ]);
+  const line = await resolveSaleLine(product, { quantity: 2, variantId: 'v1' }, ctx());
+  assert.equal(line.commissionAmount, 90);
+});
+
+test('commission: a variant with no config inherits the parent product config', async () => {
+  const product = configurable(
+    [{ _id: 'v1', name: '500ml', sellingPrice: 450, quantity: 10 }],
+    { commission: withCommission() },
+  );
+  const line = await resolveSaleLine(product, { quantity: 1, variantId: 'v1' }, ctx());
+  assert.equal(line.commissionAmount, 45);
+});
+
+test('commission: a variant config overrides the parent product config', async () => {
+  const product = configurable(
+    [{ _id: 'v1', name: '500ml', sellingPrice: 450, quantity: 10, commission: withCommission({ basePrice: 300 }) }],
+    { commission: withCommission({ basePrice: 440 }) },
+  );
+  const line = await resolveSaleLine(product, { quantity: 1, variantId: 'v1' }, ctx());
+  assert.equal(line.commissionAmount, 135);
+});
+
+test('commission: bundle earns on the bundle price', async () => {
+  const soda = standardProduct({ _id: 'c1', name: 'Soda', costPrice: 40, quantity: 50 });
+  const bundle = standardProduct({
+    productType: 'bundle',
+    sellingPrice: 450,
+    bundleItems: [{ product: 'c1', quantity: 2 }],
+    commission: withCommission(),
+  });
+  const line = await resolveSaleLine(bundle, { quantity: 1 }, ctx([['c1', soda]]));
+  assert.equal(line.commissionAmount, 45);
+});
+
+test('commission: rounds to two decimals rather than drifting', async () => {
+  const product = standardProduct({ sellingPrice: 450.555, commission: withCommission({ employeeSharePercent: 33 }) });
+  const line = await resolveSaleLine(product, { quantity: 1 }, ctx());
+  assert.equal(line.commissionAmount, 16.68);
+});

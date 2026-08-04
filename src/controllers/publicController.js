@@ -67,9 +67,9 @@ export const submitPublicRating = async (req, res) => {
  * GET /public/books/verify/:token — confirms a downloaded book is genuine.
  *
  * Unauthenticated on purpose: the point is that a bank, a landlord or an
- * accountant who was handed a PDF can check it without a Smart Duka account.
+ * accountant who was handed a PDF can check it without a Dukana account.
  *
- * Answers "did Smart Duka produce this, for this shop and period, with these
+ * Answers "did Dukana produce this, for this shop and period, with these
  * figures, and has it been altered since" — and says plainly that it is not
  * an audit opinion, because a verification page is exactly where someone
  * would otherwise infer one.
@@ -81,7 +81,7 @@ export const verifyBookDocument = async (req, res) => {
     return res.status(404).json({
       success: false,
       verified: false,
-      message: "This code doesn't match a document Smart Duka produced. It may have been mistyped, or the document may have been altered.",
+      message: "This code doesn't match a document Dukana produced. It may have been mistyped, or the document may have been altered.",
     });
   }
 
@@ -98,7 +98,7 @@ export const verifyBookDocument = async (req, res) => {
       // Stated in the payload rather than left to the client, so every
       // surface repeats the same limit on what this confirms.
       assurance:
-        'Confirms this document was produced by Smart Duka from the shop\'s own records and has not been altered. It is not an audit or an accountant\'s opinion.',
+        'Confirms this document was produced by Dukana from the shop\'s own records and has not been altered. It is not an audit or an accountant\'s opinion.',
     },
   });
 };

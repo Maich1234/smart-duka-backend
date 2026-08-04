@@ -24,6 +24,9 @@ export const updateProfile = async (req, res) => {
       role: user.role,
       phone: user.phone,
       shop: user.shop,
+      // Included so a profile edit can't drop the flag from the client's
+      // cached user and silently hide the commission screen until next login.
+      commissionEligible: user.commissionEligible,
     },
   });
 };

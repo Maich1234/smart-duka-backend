@@ -14,6 +14,9 @@ const otpRequestLimiter = rateLimit({
   max: 3,                    // max 3 OTP requests per user per 10 min
   keyGenerator: (req) => req.user?._id?.toString() ?? ipKeyGenerator(req),
   store: createRateLimitStore('otp-request'),
+  // A failed send delivered no code, so it shouldn't eat the owner's budget —
+  // otherwise an SMTP outage locks them out for 10 minutes on top of it.
+  skipFailedRequests: true,
   message: { success: false, message: 'Too many verification requests. Please wait 10 minutes before trying again.' },
   standardHeaders: true,
   legacyHeaders: false,

@@ -46,6 +46,18 @@ const userSchema = new mongoose.Schema({
     type: [String],
     default: DEFAULT_STAFF_PERMISSIONS,
   },
+  // Whether this staff member earns commission on the lines they sell. Shops
+  // commonly put only part of the floor on commission (sales staff yes, the
+  // cashier or stockkeeper no), so eligibility is per-person rather than a
+  // shop-wide rule.
+  //
+  // Defaults to false so switching commission on for a product never silently
+  // starts paying the entire team — the owner opts each person in. Owners are
+  // exempt from the check entirely: they take the whole margin regardless.
+  commissionEligible: {
+    type: Boolean,
+    default: false,
+  },
   fcmTokens: {
     type: [String],
     default: [],

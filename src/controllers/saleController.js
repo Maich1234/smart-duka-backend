@@ -101,6 +101,18 @@ export const createSale = async (req, res) => {
     // 500 at the counter; withTransaction retries transient errors for us.
     // The body must therefore be idempotent and re-runnable: every mutation
     // below is derived fresh from `items` on each attempt.
+    // Commission is per-seller: shops routinely put only part of the floor on
+    // commission, so staff are opted in individually.
+    //
+    // Owners never accrue it, even on lines they ring up themselves.
+    // Commission is booked as a "Staff commission" operating expense in the
+    // P&L (services/books/profitLossService.js), and an owner pays themselves
+    // no such wage — recording it would deduct a payout that never happens and
+    // understate their own profit.
+    //
+    // Resolved once outside the retry body because it can't change mid-transaction.
+    const earnsCommission = req.user.role === 'staff' && req.user.commissionEligible === true;
+
     await session.withTransaction(async () => {
       let totalAmount = 0;
       let totalCommission = 0;
@@ -133,7 +145,8 @@ export const createSale = async (req, res) => {
         }
 
         totalAmount += resolved.subtotal;
-        totalCommission += resolved.commissionAmount || 0;
+        const lineCommission = earnsCommission ? (resolved.commissionAmount || 0) : 0;
+        totalCommission += lineCommission;
         // Cost is charged on the full quantity, not the discounted/payable one:
         // goods given away under a promotion still cost the shop money.
         const unitCost = resolved.unitCost ?? null;
@@ -149,7 +162,7 @@ export const createSale = async (req, res) => {
           subtotal: resolved.subtotal,
           discountAmount: resolved.discountAmount || 0,
           appliedPromotionLabel: resolved.appliedPromotionLabel,
-          commissionAmount: resolved.commissionAmount || 0,
+          commissionAmount: lineCommission,
           variantId: resolved.variantId,
           variantName: resolved.variantName,
           unitOfMeasure: resolved.unitOfMeasure,
@@ -628,5 +641,13 @@ export const getMyCommission = async (req, res) => {
 
   const { startDate, endDate } = req.query;
   const summary = await getCommissionSummary(req.user.shop._id, req.user._id, { startDate, endDate });
-  res.json({ success: true, data: summary });
+  // `eligible` drives whether the client shows the commission surface at all.
+  // Only staff ever earn commission (owners take the margin directly), so an
+  // owner hitting this endpoint correctly reports as not on commission.
+  // Historical earnings still show for someone switched off after earning —
+  // the money was earned, so it stays visible.
+  res.json({
+    success: true,
+    data: { ...summary, eligible: req.user.commissionEligible === true },
+  });
 };

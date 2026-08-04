@@ -74,6 +74,44 @@ const applyPromotions = (promotions, quantity, unitPrice) => {
 };
 
 /**
+ * Resolves which commission config applies to a line: a variant's own config
+ * wins when it enables one, otherwise the parent product's. Returns null when
+ * neither is configured, which is the common case and keeps the hot path cheap.
+ */
+const resolveCommissionConfig = (product, variant) => {
+  if (variant?.commission?.enabled && variant.commission.basePrice != null) return variant.commission;
+  if (product?.commission?.enabled && product.commission.basePrice != null) return product.commission;
+  return null;
+};
+
+/**
+ * Commission earned on one sale line.
+ *
+ * Computed against the line's *actual realised revenue* (post-promotion
+ * subtotal) rather than list price × quantity, so all three of these fall out
+ * of one formula instead of needing special cases:
+ *   • fixed-price lines  — revenue is sellingPrice × qty, same as before
+ *   • negotiated lines   — a `variable`/`service` line sold above the floor
+ *                          earns the seller their share of what they actually
+ *                          talked the customer up to; that is the whole point
+ *                          of the incentive
+ *   • promotional lines  — free units are not revenue, so they cannot mint
+ *                          commission. A buy-2-get-1 that dips below the
+ *                          shop's floor correctly pays nothing rather than
+ *                          paying the seller out of the shop's own margin.
+ *
+ * `basePrice` is a per-unit floor, so the floor for the line is basePrice × qty.
+ * Never negative: a line sold below the floor earns 0, it does not claw back.
+ */
+const commissionFor = (config, { revenue, quantity }) => {
+  if (!config) return 0;
+  const floor = config.basePrice * quantity;
+  const excess = Math.max(0, revenue - floor);
+  const sharePercent = config.employeeSharePercent ?? 100;
+  return Math.round(excess * (sharePercent / 100) * 100) / 100;
+};
+
+/**
  * Fetches (or reuses from productCache) the product doc for a given id,
  * scoped to the shop, within the active session. Used so that the same
  * in-memory document is mutated/saved exactly once even if it's referenced
@@ -105,7 +143,16 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
       const unitPrice = product.sellingPrice;
       checkAndDeductStock(product, quantity);
       const { subtotal, discountAmount, appliedPromotionLabel } = applyPromotions(product.promotions, quantity, unitPrice);
-      return { unitPrice, unitCost: unitCostOf(product), subtotal, discountAmount, appliedPromotionLabel, quantity, productType };
+      return {
+        unitPrice,
+        unitCost: unitCostOf(product),
+        subtotal,
+        discountAmount,
+        appliedPromotionLabel,
+        quantity,
+        productType,
+        commissionAmount: commissionFor(resolveCommissionConfig(product), { revenue: subtotal, quantity }),
+      };
     }
 
     case 'variable': {
@@ -122,7 +169,16 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
       }
       checkAndDeductStock(product, quantity);
       const { subtotal, discountAmount, appliedPromotionLabel } = applyPromotions(product.promotions, quantity, unitPrice);
-      return { unitPrice, unitCost: unitCostOf(product), subtotal, discountAmount, appliedPromotionLabel, quantity, productType };
+      return {
+        unitPrice,
+        unitCost: unitCostOf(product),
+        subtotal,
+        discountAmount,
+        appliedPromotionLabel,
+        quantity,
+        productType,
+        commissionAmount: commissionFor(resolveCommissionConfig(product), { revenue: subtotal, quantity }),
+      };
     }
 
     case 'weighted':
@@ -142,6 +198,9 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
         quantity,
         unitOfMeasure: product.unitOfMeasure,
         productType,
+        // Weighted/refillable sell in fractional units (kg, litres), so the
+        // floor scales with the measured quantity exactly as it does elsewhere.
+        commissionAmount: commissionFor(resolveCommissionConfig(product), { revenue: subtotal, quantity }),
       };
     }
 
@@ -155,7 +214,16 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
       }
       checkAndDeductStock(product, quantity);
       const { subtotal, discountAmount, appliedPromotionLabel } = applyPromotions(product.promotions, quantity, unitPrice);
-      return { unitPrice, unitCost: unitCostOf(product), subtotal, discountAmount, appliedPromotionLabel, quantity, productType };
+      return {
+        unitPrice,
+        unitCost: unitCostOf(product),
+        subtotal,
+        discountAmount,
+        appliedPromotionLabel,
+        quantity,
+        productType,
+        commissionAmount: commissionFor(resolveCommissionConfig(product), { revenue: subtotal, quantity }),
+      };
     }
 
     case 'bundle': {
@@ -175,12 +243,16 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
         checkAndDeductStock(component, bundleItem.quantity * quantity);
         components.push({ doc: component, quantity: bundleItem.quantity });
       }
+      const subtotal = unitPrice * quantity;
       return {
         unitPrice,
         unitCost: bundleUnitCost(components),
-        subtotal: unitPrice * quantity,
+        subtotal,
         quantity,
         productType,
+        // Bundles carry no promotions of their own (the bundle *is* the offer),
+        // so realised revenue is simply the bundle price times quantity.
+        commissionAmount: commissionFor(resolveCommissionConfig(product), { revenue: subtotal, quantity }),
       };
     }
 
@@ -199,27 +271,21 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
       variant.quantity -= quantity;
       productCache.set(product._id.toString(), product);
 
-      // Commission is a fixed split of the excess between the variant's
-      // listed price and the owner's base price — configurable variants
-      // don't support price overrides, so this is fully deterministic.
-      let commissionAmount = 0;
-      if (variant.commission?.enabled && variant.commission.basePrice != null) {
-        const excess = Math.max(0, variant.sellingPrice - variant.commission.basePrice);
-        const sharePercent = variant.commission.employeeSharePercent ?? 100;
-        commissionAmount = Math.round(excess * (sharePercent / 100) * quantity * 100) / 100;
-      }
-
+      const subtotal = variant.sellingPrice * quantity;
       return {
         unitPrice: variant.sellingPrice,
         // Variants carry their own costPrice — the parent product's is not a
         // valid substitute (that's the whole point of a configurable product).
         unitCost: unitCostOf(variant),
-        subtotal: variant.sellingPrice * quantity,
+        subtotal,
         quantity,
         variantId: variant._id,
         variantName: variant.name,
         productType,
-        commissionAmount,
+        // The variant's own config wins; the parent product's applies to any
+        // variant that doesn't set one, so an owner can configure a product
+        // once instead of repeating themselves on every size.
+        commissionAmount: commissionFor(resolveCommissionConfig(product, variant), { revenue: subtotal, quantity }),
       };
     }
 

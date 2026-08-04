@@ -95,7 +95,7 @@ export async function initiateSTKPush({ config, phoneNumber, amount, accountRefe
     PartyB: config.shortcode,
     PhoneNumber: phone,
     CallBackURL: callbackUrl,
-    AccountReference: accountReference || 'SmartDuka',
+    AccountReference: accountReference || 'Dukana',
     TransactionDesc: transactionDesc || 'Sale Payment',
   };
 

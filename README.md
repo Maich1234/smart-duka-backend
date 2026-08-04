@@ -1,7 +1,7 @@
 
-# Smart Duka API
+# Dukana API
 
-A production-ready REST API for the Smart Duka Point‑of‑Sale system. Built with Node.js, Express, MongoDB, and JWT authentication.
+A production-ready REST API for the Dukana Point‑of‑Sale system. Built with Node.js, Express, MongoDB, and JWT authentication.
 
 ## Features
 
@@ -87,17 +87,19 @@ The server will run on `http://localhost:5000` by default.
 | SMTP_SECURE | Use TLS/SSL? Defaults to `true` when `SMTP_PORT` is `465`, `false` otherwise, if unset | `false` |
 | SMTP_USER | SMTP username | `your-email@gmail.com` |
 | SMTP_PASS | SMTP password or app password | `xxxx xxxx xxxx xxxx` |
-| SMTP_FROM | Sender email address | `"Smart Duka" <noreply@smartduka.com>` |
+| SMTP_FROM | Sender address. Must contain a real address, and in a `.env` needs outer single quotes or the display name swallows the value — see note below | `'"Dukana" <noreply@dukana.com>'` |
 | RECEIPT_TOKEN_SECRET | HMAC/JWT signing secret for receipt QR-verification tokens | `a-long-random-string` |
 | CRON_SECRET | Shared secret Vercel Cron sends as `Authorization: Bearer <CRON_SECRET>` to the `/cron/*` endpoints | `another-long-random-string` |
-| PUBLIC_WEB_URL | Base URL of the deployed public web app; used to build the QR code link on receipts | `https://app.smartduka.co.ke` |
+| PUBLIC_WEB_URL | Base URL of the deployed public web app; used to build the QR code link on receipts | `https://app.dukana.co.ke` |
 | FIREBASE_PROJECT_ID | Firebase project ID (Admin SDK service account) | `smart-duka-64d5c` |
 | FIREBASE_CLIENT_EMAIL | Firebase Admin SDK service account email | `firebase-adminsdk-xxxxx@smart-duka-64d5c.iam.gserviceaccount.com` |
 | FIREBASE_PRIVATE_KEY | Firebase Admin SDK service account private key (keep the `\n` escape sequences, wrap in quotes) | `"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"` |
-| MPESA_CALLBACK_URL | Public HTTPS URL Safaricom POSTs STK Push results to | `https://api.smartduka.co.ke/api/v1/mpesa/callback` |
-| MPESA_REVERSAL_RESULT_URL | (Optional) Public HTTPS URL for Transaction Reversal (refund) results; defaults to `MPESA_CALLBACK_URL` with `/callback` → `/reversal-result` | `https://api.smartduka.co.ke/api/v1/mpesa/reversal-result` |
+| MPESA_CALLBACK_URL | Public HTTPS URL Safaricom POSTs STK Push results to | `https://api.dukana.co.ke/api/v1/mpesa/callback` |
+| MPESA_REVERSAL_RESULT_URL | (Optional) Public HTTPS URL for Transaction Reversal (refund) results; defaults to `MPESA_CALLBACK_URL` with `/callback` → `/reversal-result` | `https://api.dukana.co.ke/api/v1/mpesa/reversal-result` |
 
 > `RECEIPT_TOKEN_SECRET`/`CRON_SECRET`/`FIREBASE_*` are optional for local development — the server still boots and every other feature works without them. Receipt QR codes won't verify and push notifications are silently skipped (with a console warning) until they're set.
+
+> **`SMTP_FROM` quoting.** In a `.env` file, `SMTP_FROM="Dukana" <noreply@example.com>` parses to just `Dukana` — the quoted display name terminates the value and the address is dropped. Nodemailer then has no address to use and sends `MAIL FROM:<>`, a null return-path that receivers treat as a bounce and spam-file or reject. Wrap the whole value in single quotes (`SMTP_FROM='"Dukana" <noreply@example.com>'`) or leave it unquoted. Dashboard-set env vars (Vercel) aren't parsed this way, so paste the plain `"Dukana" <noreply@example.com>` form there. `sendEmail` defends against the mistake by falling back to `SMTP_USER` as the address, but fix the variable rather than relying on that.
 
 ## Authentication
 
@@ -931,7 +933,7 @@ Full permission list (owner can assign any combination):
 
 ## Testing
 
-Use Postman or any API client. Example collection: [Smart Duka API.postman_collection.json](./postman/collection.json)
+Use Postman or any API client. Example collection: [Dukana API.postman_collection.json](./postman/collection.json)
 
 ## Deployment
 
@@ -949,7 +951,7 @@ MIT
 
 ## Support
 
-For issues, please create a ticket on the GitHub repository or contact support@smartduka.com.
+For issues, please create a ticket on the GitHub repository or contact support@dukana.com.
 # smart-duka
 
   

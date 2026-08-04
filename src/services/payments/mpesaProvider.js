@@ -2,7 +2,7 @@ import PlatformConfig from '../../models/PlatformConfig.js';
 import { initiateSTKPush, parseSTKCallback, querySTKStatus, normalizeKenyanPhone } from '../mpesaService.js';
 
 /**
- * Collects subscription payments into SmartDuka's own Daraja account
+ * Collects subscription payments into Dukana's own Daraja account
  * (PlatformConfig singleton) — never a shop's PaymentConfig. Reuses the
  * shop-payment mpesaService wholesale: only the credential source differs.
  */
@@ -22,7 +22,7 @@ export default {
     if (!mpesa?.consumerSecret) missing.push('Consumer Secret');
     if (!mpesa?.passkey) missing.push('Passkey');
     if (missing.length > 0) {
-      const err = new Error(`SmartDuka platform M-Pesa is not configured (${missing.join(', ')}). Seed it with scripts/seedPlatformConfig.mjs or configure it from the super-admin page.`);
+      const err = new Error(`Dukana platform M-Pesa is not configured (${missing.join(', ')}). Seed it with scripts/seedPlatformConfig.mjs or configure it from the super-admin page.`);
       err.code = 'PLATFORM_PAYMENTS_UNCONFIGURED';
       throw err;
     }
@@ -40,7 +40,7 @@ export default {
       phoneNumber,
       amount,
       accountReference: reference || 'SMARTDUKA',
-      transactionDesc: description || 'Smart Duka subscription',
+      transactionDesc: description || 'Dukana subscription',
       callbackUrl,
     });
     return {
