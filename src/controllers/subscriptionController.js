@@ -450,7 +450,7 @@ export const initiatePayment = async (req, res) => {
       charge = await provider.charge({
         phoneNumber,
         amount: amountDue,
-        reference: 'SMARTDUKA',
+        reference: 'DUKANA',
         description: `Dukana ${plan.name} (${billingCycle})`,
         callbackUrl,
       });

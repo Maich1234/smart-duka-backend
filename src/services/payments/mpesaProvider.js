@@ -39,7 +39,7 @@ export default {
       config,
       phoneNumber,
       amount,
-      accountReference: reference || 'SMARTDUKA',
+      accountReference: reference || 'DUKANA',
       transactionDesc: description || 'Dukana subscription',
       callbackUrl,
     });

@@ -129,7 +129,7 @@ export const initiateSeatPayment = async (req, res) => {
       charge = await provider.charge({
         phoneNumber,
         amount,
-        reference: 'SMARTDUKA',
+        reference: 'DUKANA',
         description: `Dukana — add staff seat (${subscription.plan.name})`,
         callbackUrl,
       });
