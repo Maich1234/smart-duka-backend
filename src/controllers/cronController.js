@@ -6,6 +6,7 @@ import SubscriptionPayment from '../models/SubscriptionPayment.js';
 import PlatformConfig from '../models/PlatformConfig.js';
 import PushCampaign from '../models/PushCampaign.js';
 import { sendPushToUser } from '../utils/push.js';
+import { sendEmail } from '../utils/email.js';
 import { getDepletionAnalytics } from '../services/depletionService.js';
 import { generateDailySummary } from '../services/dailySummaryService.js';
 import { dueReminder } from '../services/subscriptionPricingService.js';
@@ -19,6 +20,12 @@ import {
 } from './auth/deleteAccount.js';
 
 const STOCKOUT_CRITICAL_DAYS = 3;
+
+// Same PUBLIC_WEB_URL convention as utils/bookStamp.js. The web app already
+// has a complete, tested checkout flow at this path — the mobile app has no
+// purchase surface (Play Store policy), so this is the only place a renewal
+// link may point.
+const SUBSCRIPTION_PAGE_URL = `${(process.env.PUBLIC_WEB_URL || 'https://smart-duka-web-delta.vercel.app').replace(/\/+$/, '')}/owner/subscription`;
 
 let warnedMissingCronSecret = false;
 
@@ -239,7 +246,26 @@ export const subscriptionReminders = async (req, res) => {
 
       const owners = await User.find({ shop: subscription.shop, role: 'owner', isActive: true });
       for (const owner of owners) {
-        await sendPushToUser(owner, { title, body, data: { type: 'subscription_reminder', kind: due.kind } });
+        await sendPushToUser(owner, {
+          title,
+          body,
+          data: { type: 'subscription_reminder', kind: due.kind, actionUrl: SUBSCRIPTION_PAGE_URL },
+        });
+
+        // Best-effort: push + inbox above already succeeded independently, so a
+        // slow/flaky mail host (documented ~26-27s response times) must not
+        // fail the whole reminder for this shop.
+        if (owner.email) {
+          try {
+            await sendEmail(
+              owner.email,
+              title,
+              `<p>${body}</p><p><a href="${SUBSCRIPTION_PAGE_URL}">Renew now</a></p>`
+            );
+          } catch (err) {
+            console.error('[cron] subscription reminder email failed for', owner.email, '-', err.message);
+          }
+        }
       }
 
       subscription.remindersSent.push(due.dedupeKey);

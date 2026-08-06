@@ -6,6 +6,8 @@ import { getDepletionAnalytics } from '../../depletionService.js';
 import { detectSalesAnomaly } from '../../intelligence/salesAnomalyService.js';
 import { getStaffPerformance } from '../../intelligence/staffPerformanceService.js';
 import { getExpenseSummaryData } from '../../expenseSummaryService.js';
+import { searchHelpTopics } from './helpContent.js';
+import { getSetupStatus } from '../../setupStatusService.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -49,4 +51,34 @@ export const toolExecutors = {
 
   get_expense_summary: (shopId, args) =>
     getExpenseSummaryData(shopId, { startDate: validDate(args?.startDate), endDate: validDate(args?.endDate) }),
+
+  // Help Center content, not shop data — shopId is unused but kept for a
+  // consistent executor signature across the map.
+  search_help_topics: (_shopId, args) => {
+    const matches = searchHelpTopics(args?.query).slice(0, 3);
+    if (matches.length === 0) {
+      return { found: false, message: "No matching Help Center topic — tell the user to try the Help & Learning Center from Profile, or rephrase." };
+    }
+    return {
+      found: true,
+      topics: matches.map((topic) => ({
+        title: topic.title,
+        summary: topic.summary,
+        content: topic.sections
+          .map((section) =>
+            [
+              section.heading,
+              ...(section.paragraphs ?? []),
+              ...(section.bullets ?? []).map((b) => `- ${b}`),
+              section.example ? `Example: ${section.example}` : null,
+            ]
+              .filter(Boolean)
+              .join('\n')
+          )
+          .join('\n\n'),
+      })),
+    };
+  },
+
+  get_setup_status: (shopId) => getSetupStatus(shopId),
 };

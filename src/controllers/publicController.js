@@ -2,6 +2,9 @@ import { verifyBookStamp } from '../utils/bookStamp.js';
 import Sale from '../models/Sale.js';
 import Rating from '../models/Rating.js';
 import { verifyReceiptToken } from '../utils/receiptToken.js';
+import { sendEmail } from '../utils/email.js';
+
+const SUPPORT_INBOX = process.env.SUPPORT_EMAIL || 'info@dukana.app';
 
 export const getPublicReceipt = async (req, res) => {
   const saleId = verifyReceiptToken(req.params.token);
@@ -101,4 +104,37 @@ export const verifyBookDocument = async (req, res) => {
         'Confirms this document was produced by Dukana from the shop\'s own records and has not been altered. It is not an audit or an accountant\'s opinion.',
     },
   });
+};
+
+const escapeHtml = (value) =>
+  String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/**
+ * POST /public/contact — the marketing site's contact form. Previously the
+ * form faked a successful submission client-side without sending anything
+ * anywhere; this makes it real. Unauthenticated (anyone reaching the
+ * marketing site can use it), so it rides publicRoutes.js's IP rate limit
+ * rather than any per-account one.
+ */
+export const submitContactMessage = async (req, res) => {
+  const { name, email, phone, subject, message } = req.body;
+
+  const html = `
+    <p><strong>Subject:</strong> ${escapeHtml(subject)}</p>
+    <p><strong>From:</strong> ${escapeHtml(name)} &lt;${escapeHtml(email)}&gt;${phone ? ` (${escapeHtml(phone)})` : ''}</p>
+    <p><strong>Message:</strong></p>
+    <p>${escapeHtml(message).replace(/\n/g, '<br/>')}</p>
+  `;
+
+  try {
+    await sendEmail(SUPPORT_INBOX, `[Dukana Contact] ${subject}`, html);
+  } catch (err) {
+    console.error('[submitContactMessage] send failed for', email, '-', err.message);
+    return res.status(503).json({
+      success: false,
+      message: 'We could not send your message right now. Please try again in a few minutes, or email us directly.',
+    });
+  }
+
+  res.status(200).json({ success: true, message: 'Message sent — we will reply within 24 hours.' });
 };

@@ -23,6 +23,7 @@ import subscriptionRoutes from './subscriptionRoutes.js';
 import aiRoutes from './aiRoutes.js';
 import adminRoutes from './adminRoutes.js';
 import notificationRoutes from './notificationRoutes.js';
+import setupRoutes from './setupRoutes.js';
 
 const router = express.Router();
 
@@ -50,5 +51,6 @@ router.use('/subscriptions', subscriptionRoutes);
 router.use('/ai', aiRoutes);
 router.use('/admin', adminRoutes);
 router.use('/notifications', notificationRoutes);
+router.use('/setup', setupRoutes);
 
 export default router;

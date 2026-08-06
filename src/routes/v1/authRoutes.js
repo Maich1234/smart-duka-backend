@@ -19,8 +19,9 @@ import {
   deleteAccount,
   previewAccountDeletion,
   cancelAccountDeletion,
+  mintWebviewToken,
 } from '../../controllers/auth/index.js';
-import { protect } from '../../middlewares/auth.js';
+import { protect, ownerOnly } from '../../middlewares/auth.js';
 import validate from '../../middlewares/validate.js';
 import { createRateLimitStore } from '../../utils/rateLimitStore.js';
 import {
@@ -97,6 +98,9 @@ router.post('/change-password', protect, validate(changePasswordSchema), changeP
 router.post('/resend-verification', protect, resendVerificationEmail);
 router.post('/device-token', protect, registerDeviceToken);
 router.delete('/device-token', protect, unregisterDeviceToken);
+
+// Mints a short-lived token for the mobile app's embedded Setup Guide WebView.
+router.post('/webview-token', protect, ownerOnly, mintWebviewToken);
 
 // Account deletion (Google Play requirement). Rate-limited like the other
 // password-checking endpoints: the confirmation is password-gated, so an

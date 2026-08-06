@@ -26,7 +26,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: 'get_sales_trend',
     description:
-      'Revenue trend as buckets: daily (last 7 days), weekly (last 8 weeks), or monthly (last 6 months) — total/cash/mpesa revenue and transaction count per bucket. Use for trend/period-over-period questions.',
+      'Revenue and estimated gross profit trend as buckets: daily (last 7 days), weekly (last 8 weeks), or monthly (last 6 calendar months, most recent = current month to date) — total/cash/mpesa revenue, profitTotal, and transaction count per bucket. Use for trend/period-over-period questions, including "this month\'s profit/revenue".',
     parameters: {
       type: Type.OBJECT,
       properties: { period: { type: Type.STRING, enum: ['daily', 'weekly', 'monthly'], description: 'Defaults to daily.' } },
@@ -84,5 +84,21 @@ export const TOOL_DECLARATIONS = [
       },
       required: [],
     },
+  },
+  {
+    name: 'search_help_topics',
+    description:
+      "Searches Dukana's Help Center for how-to guidance on using the app itself — adding products, product types, managing stock, discounts, staff permissions, recording sales, reading reports, receipts/QR/ratings, shop settings, Dukana AI, and general FAQs. Use for 'how do I', 'where do I find', 'what does X mean' questions about using the app. Never use this for this shop's actual numbers — those always need a data tool.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: { query: { type: Type.STRING, description: "What the user wants to know how to do, e.g. 'add a product' or 'set up mpesa'." } },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'get_setup_status',
+    description:
+      "Whether this shop has added a product, made a sale, connected M-Pesa, and added a staff member yet. Use when the owner asks what they still need to set up, or the conversation suggests a new/incomplete shop — not for anything else.",
+    parameters: { type: Type.OBJECT, properties: {}, required: [] },
   },
 ];
