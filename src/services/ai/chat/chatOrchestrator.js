@@ -151,7 +151,10 @@ export const runChatTurn = async ({ shopId, conversation, userText }) => {
 
     return { conversationId: String(conversation._id), text: finalText, toolsUsed: dedupedTools, source };
   } catch (err) {
-    console.error('[AI Chat] runChatTurn error:', err.message);
+    // Full stack, not just err.message — this is the only place a failed
+    // turn is ever recorded, and a bare message string was useless for
+    // telling "which tool/step" apart from a Vercel log line.
+    console.error('[AI Chat] runChatTurn error:', err.stack || err);
     return { conversationId: String(conversation._id), text: FALLBACK_MESSAGE, toolsUsed: [], source: 'error' };
   }
 };

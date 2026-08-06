@@ -84,42 +84,80 @@ export const getSalesTrendSeries = async (shopId, { period = 'daily', now = new 
   const rangeEnd = buckets[buckets.length - 1].end;
   const shop = new mongoose.Types.ObjectId(String(shopId));
 
-  const bucketAgg = await Sale.aggregate([
-    { $match: { shop, status: { $nin: ['voided', 'refunded'] }, createdAt: { $gte: rangeStart, $lt: rangeEnd } } },
-    {
-      $bucket: {
-        groupBy: '$createdAt',
-        boundaries: [...buckets.map((b) => b.start), rangeEnd],
-        output: {
-          total: { $sum: '$totalAmount' },
-          cashTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'cash'] }, '$totalAmount', 0] } },
-          mpesaTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'mpesa'] }, '$totalAmount', 0] } },
-          // Anything that is neither — Airtel, bank, a custom button. Without
-          // this the cash+mpesa split silently failed to reconcile to `total`.
-          otherTotal: {
-            $sum: {
-              $cond: [{ $in: ['$paymentMethod', ['cash', 'mpesa']] }, 0, '$totalAmount'],
+  const dayMatch = { shop, status: { $nin: ['voided', 'refunded'] }, createdAt: { $gte: rangeStart, $lt: rangeEnd } };
+  const boundaries = [...buckets.map((b) => b.start), rangeEnd];
+
+  const [bucketAgg, costAgg] = await Promise.all([
+    Sale.aggregate([
+      { $match: dayMatch },
+      {
+        $bucket: {
+          groupBy: '$createdAt',
+          boundaries,
+          output: {
+            total: { $sum: '$totalAmount' },
+            cashTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'cash'] }, '$totalAmount', 0] } },
+            mpesaTotal: { $sum: { $cond: [{ $eq: ['$paymentMethod', 'mpesa'] }, '$totalAmount', 0] } },
+            // Anything that is neither — Airtel, bank, a custom button. Without
+            // this the cash+mpesa split silently failed to reconcile to `total`.
+            otherTotal: {
+              $sum: {
+                $cond: [{ $in: ['$paymentMethod', ['cash', 'mpesa']] }, 0, '$totalAmount'],
+              },
             },
+            transactionCount: { $sum: 1 },
           },
-          transactionCount: { $sum: 1 },
         },
       },
-    },
+    ]),
+    // Cost of goods per bucket, same convention as dailySummaryService: cost
+    // comes from items[].costTotal (snapshotted at sale time), falling back
+    // to the product's *current* costPrice only for lines that predate that
+    // field.
+    Sale.aggregate([
+      { $match: dayMatch },
+      { $unwind: '$items' },
+      {
+        $lookup: { from: 'products', localField: 'items.productId', foreignField: '_id', as: 'product' },
+      },
+      {
+        $bucket: {
+          groupBy: '$createdAt',
+          boundaries,
+          output: {
+            cost: {
+              $sum: {
+                $cond: [
+                  { $eq: [{ $ifNull: ['$items.costTotal', null] }, null] },
+                  { $multiply: ['$items.quantity', { $ifNull: [{ $arrayElemAt: ['$product.costPrice', 0] }, 0] }] },
+                  '$items.costTotal',
+                ],
+              },
+            },
+          },
+        },
+      },
+    ]),
   ]);
 
   // $bucket keys each group by its lower boundary; zero-fill buckets with no
   // sales so gaps are visible, not just totals.
   const aggByBucketStart = new Map(bucketAgg.map((b) => [new Date(b._id).getTime(), b]));
+  const costByBucketStart = new Map(costAgg.map((b) => [new Date(b._id).getTime(), b.cost]));
   const series = buckets.map((bucket) => {
     const agg = aggByBucketStart.get(bucket.start.getTime());
+    const total = agg?.total ?? 0;
+    const cost = costByBucketStart.get(bucket.start.getTime()) ?? 0;
     return {
       label: bucket.label,
       date: bucket.start.toISOString(),
-      total: agg?.total ?? 0,
+      total,
       cashTotal: agg?.cashTotal ?? 0,
       mpesaTotal: agg?.mpesaTotal ?? 0,
       otherTotal: agg?.otherTotal ?? 0,
       transactionCount: agg?.transactionCount ?? 0,
+      // Estimated gross profit — see cost-of-goods comment above.
+      profitTotal: Math.round((total - cost) * 100) / 100,
     };
   });
 

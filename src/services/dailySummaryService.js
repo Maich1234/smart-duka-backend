@@ -213,9 +213,14 @@ export const generateDailySummary = async (shopId, dateStr) => {
   };
   doc.insights = generateDailyInsights(doc, trailingSummaries);
 
+  // .lean() — every other tool/report in this file's callers deals in plain
+  // aggregation objects; a live Mongoose document here was the odd one out,
+  // and both AI chat tools that read this function (get_daily_summary,
+  // get_business_snapshot) pass it straight into a Gemini function response
+  // and then into Message.parts (Mixed) for persistence — plain data only.
   return DailySummary.findOneAndUpdate(
     { shop, date: dateStr },
     { $set: doc },
     { new: true, upsert: true, setDefaultsOnInsert: true }
-  );
+  ).lean();
 };
