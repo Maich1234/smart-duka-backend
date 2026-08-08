@@ -36,6 +36,20 @@ const validateCommissions = ({ commission, sellingPrice, variants }) => {
   return null;
 };
 
+/**
+ * Distinct categories this shop has actually used, for the product form's
+ * category picker — so a shop with "Beverages", "Snacks", "Toiletries" isn't
+ * retyping them from scratch (and drifting into "beverage" / "Beverages "
+ * duplicates) on every new product.
+ */
+export const getProductCategories = async (req, res) => {
+  const categories = await Product.distinct('category', { shop: req.user.shop._id });
+  res.json({
+    success: true,
+    data: categories.filter(Boolean).sort((a, b) => a.localeCompare(b)),
+  });
+};
+
 export const getProducts = async (req, res) => {
   const { search, category, excludeTypes } = req.query;
   const { page, limit, skip } = parsePagination(req.query);

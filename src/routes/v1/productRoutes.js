@@ -1,6 +1,7 @@
 import express from 'express';
 import {
   getProducts,
+  getProductCategories,
   getProductById,
   createProduct,
   updateProduct,
@@ -17,6 +18,8 @@ const router = express.Router();
 
 router.use(protect);
 router.get('/', staffOrOwner, getProducts);
+// Must precede '/:id' — otherwise Express matches "categories" as an id.
+router.get('/categories', staffOrOwner, getProductCategories);
 router.get('/:id', staffOrOwner, getProductById);
 // Role gate only checks authenticated staff-or-owner; createProduct/updateProduct/deleteProduct
 // each enforce their own owner-or-permission check (create_product/edit_product/delete_product).
