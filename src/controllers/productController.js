@@ -42,9 +42,14 @@ export const getProducts = async (req, res) => {
   const query = { shop: req.user.shop._id };
 
   if (search) {
+    const pattern = { $regex: escapeRegex(search), $options: 'i' };
     query.$or = [
-      { name: { $regex: escapeRegex(search), $options: 'i' } },
-      { description: { $regex: escapeRegex(search), $options: 'i' } },
+      { name: pattern },
+      { description: pattern },
+      { sku: pattern },
+      { 'variants.sku': pattern },
+      { barcode: pattern },
+      { 'variants.barcode': pattern },
     ];
   }
 

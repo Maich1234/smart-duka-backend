@@ -38,6 +38,14 @@ const productSchema = new mongoose.Schema({
     trim: true,
     lowercase: true,
   },
+  sku: {
+    type: String,
+    trim: true,
+  },
+  barcode: {
+    type: String,
+    trim: true,
+  },
   sellingPrice: {
     type: Number,
     required: [true, 'Selling price is required'],
@@ -106,6 +114,7 @@ const productSchema = new mongoose.Schema({
     costPrice: { type: Number, required: true, min: 0 },
     quantity: { type: Number, default: 0, min: 0 },
     sku: { type: String, trim: true },
+    barcode: { type: String, trim: true },
     lowStockAlert: { type: Number, default: 5, min: 0 },
     // Overrides the parent product's commission when this variant enables one.
     commission: commissionConfig(),
@@ -124,5 +133,12 @@ productSchema.index({ shop: 1, createdAt: -1 });
 // index blocked every shop on the platform from reusing a product name any
 // other shop had already used, e.g. "Water refill".)
 productSchema.index({ shop: 1, name: 1 }, { unique: true });
+// Not unique on purpose: MongoDB partial indexes only support a narrow,
+// documented operator set for their filter expression (no $ne), so reliably
+// excluding both "missing" and "" from a uniqueness check needs machinery
+// (explicit $unset-to-clear semantics, etc.) this feature doesn't need — a
+// scan only has to be fast, not globally exclusive. A data-entry duplicate
+// just resolves to the first match.
+productSchema.index({ shop: 1, barcode: 1 });
 
 export default mongoose.model('Product', productSchema);

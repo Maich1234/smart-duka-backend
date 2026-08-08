@@ -46,5 +46,6 @@ export const updateShopConfigSchema = Joi.object({
   purchasingEnabled: Joi.boolean().optional(),
   purchaseCostAllocationMethod: Joi.string().valid('quantity', 'value', 'none').optional(),
   aiEnabled: Joi.boolean().optional(),
+  barcodeScanningEnabled: Joi.boolean().optional(),
   paymentMethods: paymentMethodsSchema.optional(),
 }).unknown(false);

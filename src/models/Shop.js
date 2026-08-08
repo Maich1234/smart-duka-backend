@@ -132,6 +132,13 @@ const shopSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
+  // Owner-controlled kill switch for the till's camera barcode scanner.
+  // Defaults on (unlike the other flags above) — scanning has to work with
+  // zero setup, so this only exists for an owner who wants to turn it off.
+  barcodeScanningEnabled: {
+    type: Boolean,
+    default: true,
+  },
   // The till's payment buttons, owner-managed. Empty/missing means "never
   // touched the setting" and resolves to DEFAULT_PAYMENT_METHODS — read it
   // through resolvePaymentMethods(), never straight off the document, because

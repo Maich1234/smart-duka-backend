@@ -11,7 +11,7 @@ export const getShopConfig = async (req, res) => {
 };
 
 export const updateShopConfig = async (req, res) => {
-  const { name, address, phone, email, taxRate, country, currency, receiptThankYouNote, logoUrl, motto, shiftManagementEnabled, showStaffCommission, purchasingEnabled, purchaseCostAllocationMethod, aiEnabled, paymentMethods } = req.body;
+  const { name, address, phone, email, taxRate, country, currency, receiptThankYouNote, logoUrl, motto, shiftManagementEnabled, showStaffCommission, purchasingEnabled, purchaseCostAllocationMethod, aiEnabled, barcodeScanningEnabled, paymentMethods } = req.body;
   const shop = await Shop.findById(req.user.shop._id);
   if (!shop) return res.status(404).json({ success: false, message: 'Shop not found' });
 
@@ -30,6 +30,7 @@ export const updateShopConfig = async (req, res) => {
   if (purchasingEnabled !== undefined) shop.purchasingEnabled = purchasingEnabled;
   if (purchaseCostAllocationMethod !== undefined) shop.purchaseCostAllocationMethod = purchaseCostAllocationMethod;
   if (aiEnabled !== undefined) shop.aiEnabled = aiEnabled;
+  if (barcodeScanningEnabled !== undefined) shop.barcodeScanningEnabled = barcodeScanningEnabled;
   // Sent whole, stored whole — array position is the till's button order.
   if (paymentMethods !== undefined) {
     shop.paymentMethods = paymentMethods.map((m, i) => ({ ...m, order: i }));
