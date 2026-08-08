@@ -32,6 +32,7 @@ export const saleQuerySchema = Joi.object({
   startDate: Joi.date(),
   endDate: Joi.date(),
   staffId: Joi.string(),
+  status: Joi.string().valid('completed', 'voided', 'refund_pending', 'refunded'),
   paymentMethod: methodKey,
   // Free-text search across invoice number and cashier name
   search: Joi.string().trim().max(60).allow(''),

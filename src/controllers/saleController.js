@@ -460,7 +460,7 @@ export const refundSale = async (req, res) => {
 };
 
 export const getSales = async (req, res) => {
-  const { startDate, endDate, staffId, paymentMethod, search } = req.query;
+  const { startDate, endDate, staffId, status, paymentMethod, search } = req.query;
   const { page, limit, skip } = parsePagination(req.query);
   const query = { shop: req.user.shop._id };
 
@@ -486,6 +486,7 @@ export const getSales = async (req, res) => {
     }
   }
   if (paymentMethod) query.paymentMethod = paymentMethod;
+  if (status) query.status = status;
 
   if (search) {
     // Server-side search across invoice number and cashier name so results

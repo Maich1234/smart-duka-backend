@@ -20,6 +20,7 @@ export const ALL_PERMISSIONS = [
   { value: 'view_purchase_prices', label: 'View Purchase Prices', category: 'Purchasing' },
   { value: 'update_inventory_on_purchase', label: 'Update Inventory', category: 'Purchasing' },
   { value: 'require_purchase_approval', label: 'Require Owner Approval Before Inventory Updates', category: 'Purchasing' },
+  { value: 'view_reconciliation', label: 'View Reconciliation', category: 'Reconciliation' },
 ];
 
 export const DEFAULT_STAFF_PERMISSIONS = ['view_products', 'record_sale', 'view_sales'];
