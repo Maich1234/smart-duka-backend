@@ -79,7 +79,12 @@ router.patch('/plans/:id', requirePermission('plans'), validate(updatePlanSchema
 
 router.post('/platform-config/verification/request', requirePermission('platform_config'), platformConfigVerifyRequestLimiter, requestVerification);
 router.post('/platform-config/verification/verify', requirePermission('platform_config'), platformConfigVerifyVerifyLimiter, validate(verifyPlatformConfigSchema), verifyCode);
-router.get('/platform-config', requirePermission('platform_config'), requirePlatformConfigVerification, getPlatformConfig);
+// GET is ungated — getPlatformConfig never returns secret values (only
+// booleans/non-sensitive fields), so there is nothing here worth an
+// approval code. Verification is only enforced on PATCH, and even then
+// only when a credential field is actually being written (see
+// requirePlatformConfigVerification).
+router.get('/platform-config', requirePermission('platform_config'), getPlatformConfig);
 router.patch('/platform-config', requirePermission('platform_config'), requirePlatformConfigVerification, validate(updatePlatformConfigSchema), updatePlatformConfig);
 
 router.get('/promotions', requirePermission('promotions'), listPromotions);

@@ -133,11 +133,20 @@ export async function verifyPlatformConfigCode(sessionId, code, adminId) {
   return token;
 }
 
+const CREDENTIAL_FIELDS = ['consumerKey', 'consumerSecret', 'passkey', 'paystackSecretKey'];
+
 /**
- * Express middleware: verifies the X-Verification-Token header.
+ * Express middleware: verifies the X-Verification-Token header, but only
+ * when the request is actually writing a credential — an empty/absent
+ * field means "leave unchanged" (see adminPlatformConfigController.js), so
+ * routine settings changes (grace period, business name, toggles, ...) pass
+ * straight through without needing an approver code at all.
  * Must be placed after protectAdmin() so req.admin is set.
  */
 export function requirePlatformConfigVerification(req, res, next) {
+  const changingCredentials = CREDENTIAL_FIELDS.some((field) => req.body?.[field]);
+  if (!changingCredentials) return next();
+
   const token = req.headers['x-verification-token'];
   if (!token) {
     return res.status(403).json({

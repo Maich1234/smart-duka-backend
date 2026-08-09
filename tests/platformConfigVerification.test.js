@@ -99,8 +99,8 @@ test('verifyPlatformConfigCode: a session requested by a different admin is not 
   await assert.rejects(verifyPlatformConfigCode('sess-1', '123456', 'admin-2'), /not found/);
 });
 
-function fakeReqRes(admin, headers = {}) {
-  const req = { admin, headers };
+function fakeReqRes(admin, headers = {}, body = { consumerKey: 'new-key' }) {
+  const req = { admin, headers, body };
   const res = {
     statusCode: null,
     body: null,
@@ -110,7 +110,17 @@ function fakeReqRes(admin, headers = {}) {
   return { req, res };
 }
 
-test('requirePlatformConfigVerification: rejects when no token is present', () => {
+test('requirePlatformConfigVerification: skips the check entirely when no credential field is in the body', () => {
+  // Grace period, business name, toggles, etc. — routine settings changes
+  // never need an approver code.
+  const { req, res } = fakeReqRes({ _id: 'admin-1' }, {}, { gracePeriodDays: 5 });
+  let nextCalled = false;
+  requirePlatformConfigVerification(req, res, () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+  assert.equal(res.statusCode, null);
+});
+
+test('requirePlatformConfigVerification: rejects when a credential field is present but no token is', () => {
   const { req, res } = fakeReqRes({ _id: 'admin-1' });
   let nextCalled = false;
   requirePlatformConfigVerification(req, res, () => { nextCalled = true; });
