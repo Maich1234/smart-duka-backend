@@ -6,7 +6,8 @@ const auditLogSchema = new mongoose.Schema({
   shopId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Shop',
-    required: true,
+    // Omitted for platform-scoped admin actions (e.g. platform payment
+    // credential changes), which have no owning shop.
     index: true,
   },
   userId: {

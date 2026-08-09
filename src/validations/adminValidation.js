@@ -148,6 +148,13 @@ export const updatePlatformConfigSchema = Joi.object({
   reminderDaysBefore: Joi.array().items(Joi.number().min(0)),
 }).unknown(false).min(1);
 
+export const verifyPlatformConfigSchema = Joi.object({
+  sessionId: Joi.string().required(),
+  code: Joi.string().pattern(/^\d{6}$/).required().messages({
+    'string.pattern.base': 'Verification code must be 6 digits',
+  }),
+}).unknown(false);
+
 // Support-granted breathing room for one shop. Capped at 30 days so a
 // mis-typed value can't hand out a free year.
 export const grantGraceExtensionSchema = Joi.object({

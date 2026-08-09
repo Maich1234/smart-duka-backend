@@ -5,7 +5,7 @@ import AuditLog from '../models/AuditLog.js';
  * break the primary operation. Errors are swallowed and printed to stderr.
  *
  * @param {Object} opts
- * @param {import('mongoose').Types.ObjectId|string} opts.shopId
+ * @param {import('mongoose').Types.ObjectId|string} [opts.shopId] - Omit for platform-scoped (non-shop) actions
  * @param {import('mongoose').Types.ObjectId|string} [opts.userId]
  * @param {string} opts.action  - Dot-namespaced e.g. 'payment_config.mpesa.updated'
  * @param {string} [opts.entityType]

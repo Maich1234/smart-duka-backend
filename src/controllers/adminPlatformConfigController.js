@@ -1,5 +1,6 @@
 import PlatformConfig from '../models/PlatformConfig.js';
 import { encrypt, isEncrypted } from '../services/encryptionService.js';
+import { logAudit } from '../services/auditLogService.js';
 
 /**
  * GET /admin/platform-config — secret fields are NEVER sent to the frontend,
@@ -10,6 +11,17 @@ export const getPlatformConfig = async (req, res) => {
   const platform = await PlatformConfig.get();
   const mpesa = platform.mpesa ?? {};
   const paystack = platform.paystack ?? {};
+
+  // Only log a direct GET — updatePlatformConfig re-renders via this same
+  // function, and that already gets its own '.updated' entry.
+  if (req.method === 'GET') {
+    logAudit({
+      action: 'admin.platform_config.viewed',
+      details: { adminId: String(req.admin._id), adminEmail: req.admin.email },
+      req,
+    }).catch(() => {});
+  }
+
   res.json({
     success: true,
     data: {
@@ -78,5 +90,15 @@ export const updatePlatformConfig = async (req, res) => {
   if (reminderDaysBefore !== undefined) platform.reminderDaysBefore = reminderDaysBefore;
 
   await platform.save();
+
+  logAudit({
+    action: 'admin.platform_config.updated',
+    entityType: 'PlatformConfig',
+    entityId: platform._id,
+    // Field names only — never the values, which may be raw credentials.
+    details: { adminId: String(req.admin._id), adminEmail: req.admin.email, fieldsChanged: Object.keys(req.body) },
+    req,
+  }).catch(() => {});
+
   return getPlatformConfig(req, res);
 };

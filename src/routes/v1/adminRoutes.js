@@ -1,8 +1,9 @@
 import express from 'express';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { login, getProfile } from '../../controllers/adminAuthController.js';
 import { listPlans, createPlan, updatePlan } from '../../controllers/adminPlansController.js';
 import { getPlatformConfig, updatePlatformConfig } from '../../controllers/adminPlatformConfigController.js';
+import { requestVerification, verifyCode } from '../../controllers/adminPlatformConfigVerificationController.js';
 import { listPromotions, createPromotion, updatePromotion } from '../../controllers/adminPromotionsController.js';
 import { listShops } from '../../controllers/adminShopsController.js';
 import { lookupShopByUser, getShopSubscription, reconcileShopPayment, grantGraceExtension } from '../../controllers/adminSubscriptionsController.js';
@@ -11,6 +12,7 @@ import { listPushCampaigns, createPushCampaign, sendPushCampaign, cancelPushCamp
 import { getCounties, getSubcounties } from '../../controllers/presetsController.js';
 import { listAdmins, createAdmin, updateAdmin, deleteAdmin } from '../../controllers/adminManagementController.js';
 import { protectAdmin, requireSuperAdmin, requirePermission } from '../../middlewares/adminAuth.js';
+import { requirePlatformConfigVerification } from '../../services/platformConfigVerificationService.js';
 import validate from '../../middlewares/validate.js';
 import { createRateLimitStore } from '../../utils/rateLimitStore.js';
 import { ADMIN_MODULE_PERMISSIONS } from '../../constants/adminPermissions.js';
@@ -21,6 +23,7 @@ import {
   createPromotionSchema,
   updatePromotionSchema,
   updatePlatformConfigSchema,
+  verifyPlatformConfigSchema,
   createPushCampaignSchema,
   createAdminUserSchema,
   updateAdminUserSchema,
@@ -42,6 +45,30 @@ const adminLoginLimiter = rateLimit({
 
 router.post('/auth/login', adminLoginLimiter, validate(adminLoginSchema), login);
 
+// Tighter than the shop-level OTP limiter (otpRoutes.js) — each request emails
+// a human approver rather than the requester's own channel, so bursts are
+// both an abuse vector and a way to spam the approver's inbox.
+const platformConfigVerifyRequestLimiter = rateLimit({
+  windowMs: 30 * 60 * 1000,
+  max: 3,
+  keyGenerator: (req) => req.admin?._id?.toString() ?? ipKeyGenerator(req),
+  store: createRateLimitStore('platform-config-verify-request'),
+  skipFailedRequests: true,
+  message: { success: false, message: 'Too many verification requests. Please wait 30 minutes before trying again.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const platformConfigVerifyVerifyLimiter = rateLimit({
+  windowMs: 30 * 60 * 1000,
+  max: 8,
+  keyGenerator: (req) => req.admin?._id?.toString() ?? ipKeyGenerator(req),
+  store: createRateLimitStore('platform-config-verify-verify'),
+  message: { success: false, message: 'Too many verification attempts. Please wait before trying again.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 router.use(protectAdmin);
 
 router.get('/auth/me', getProfile);
@@ -50,8 +77,10 @@ router.get('/plans', requirePermission('plans'), listPlans);
 router.post('/plans', requirePermission('plans'), validate(createPlanSchema), createPlan);
 router.patch('/plans/:id', requirePermission('plans'), validate(updatePlanSchema), updatePlan);
 
-router.get('/platform-config', requirePermission('platform_config'), getPlatformConfig);
-router.patch('/platform-config', requirePermission('platform_config'), validate(updatePlatformConfigSchema), updatePlatformConfig);
+router.post('/platform-config/verification/request', requirePermission('platform_config'), platformConfigVerifyRequestLimiter, requestVerification);
+router.post('/platform-config/verification/verify', requirePermission('platform_config'), platformConfigVerifyVerifyLimiter, validate(verifyPlatformConfigSchema), verifyCode);
+router.get('/platform-config', requirePermission('platform_config'), requirePlatformConfigVerification, getPlatformConfig);
+router.patch('/platform-config', requirePermission('platform_config'), requirePlatformConfigVerification, validate(updatePlatformConfigSchema), updatePlatformConfig);
 
 router.get('/promotions', requirePermission('promotions'), listPromotions);
 router.post('/promotions', requirePermission('promotions'), validate(createPromotionSchema), createPromotion);
