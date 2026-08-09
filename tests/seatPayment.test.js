@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import User from '../src/models/User.js';
 import Subscription from '../src/models/Subscription.js';
 import SubscriptionPayment from '../src/models/SubscriptionPayment.js';
+import PlatformConfig from '../src/models/PlatformConfig.js';
 import mpesaProvider from '../src/services/payments/mpesaProvider.js';
 import { activateSeatPayment, cleanupFailedSeatPayment } from '../src/services/seatActivationService.js';
 import { resolveStaffEmailSlot, initiateSeatPayment } from '../src/controllers/seatPaymentController.js';
@@ -44,6 +45,10 @@ function makeRes() {
 beforeEach(() => {
   mock.restoreAll();
   process.env.SUBSCRIPTION_MPESA_CALLBACK_URL = 'https://example.test/subscriptions/mpesa/callback';
+  // createStaff reads this to decide whether to recommend an immediate
+  // top-up payment; default it off so tests that don't care about that
+  // feature aren't left hanging on an unmocked DB call.
+  mock.method(PlatformConfig, 'get', async () => ({ immediateSeatBilling: false }));
 });
 
 // ── seatActivationService ──────────────────────────────────────────────────
@@ -147,7 +152,10 @@ test('resolveStaffEmailSlot: orphaned inactive user with no payment record frees
 test('createStaff: seat within an already-paid flat tier activates immediately, no payment', async () => {
   mock.method(User, 'findOne', async () => null);
   const create = mock.method(User, 'create', async (doc) => ({ ...doc, toObject() { return { ...doc }; } }));
-  mock.method(Subscription, 'findOne', () => ({ populate: () => ({ lean: async () => ({ plan: businessPlan, billingCycle: 'monthly' }) }) }));
+  // Same shape .populate('plan') actually resolves to on a real document —
+  // no .lean() call in the source path, and it must carry .save() since
+  // createStaff writes staffCount back unconditionally.
+  mock.method(Subscription, 'findOne', () => ({ populate: async () => ({ plan: businessPlan, billingCycle: 'monthly', save: async function () { this.saved = true; } }) }));
   mock.method(User, 'countDocuments', async () => 5); // business is flat up to 20 seats — 5→6 doesn't cost more
 
   const req = { body: { name: 'Jane', email: 'jane@shop.test', password: 'secret1' }, user: { _id: 'owner-1', shop: { _id: 'shop-1' } } };

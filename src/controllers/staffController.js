@@ -1,5 +1,6 @@
 import User from '../models/User.js';
 import Subscription from '../models/Subscription.js';
+import PlatformConfig from '../models/PlatformConfig.js';
 import RefreshToken from '../models/RefreshToken.js';
 import { DEFAULT_STAFF_PERMISSIONS, withImpliedPermissions } from '../constants/permissions.js';
 import { parsePagination } from '../utils/pagination.js';
@@ -101,6 +102,15 @@ export const createStaff = async (req, res) => {
     })
     : null;
 
+  // Written back even when there was nothing to accrue (trial, or a
+  // plan-less subscription) — this is the same staffCount snapshot the
+  // mobile "Billable people" card reads, and until now only removal
+  // (releaseStaffSeat) kept it in sync; addition left it stale.
+  if (subscription) {
+    subscription.staffCount = beforeCount + 1;
+    await subscription.save();
+  }
+
   // Awaited: a serverless invocation is frozen once the response is flushed, so
   // a dangling promise here never even reached the code generation — real-email
   // staff were left unverified, with no code, and therefore unable to log in.
@@ -115,19 +125,25 @@ export const createStaff = async (req, res) => {
     }
   }
 
+  // Nudge, not a gate — staff creation above already happened unconditionally.
+  // Web can act on this (prompt to pay the seat top-up right away); mobile
+  // has no payment UI to act on it with at all, so it's simply ignored there
+  // and the charge rides to the next invoice exactly as it does today.
+  const platform = await PlatformConfig.get();
+  const immediateChargeRecommended = Boolean(platform.immediateSeatBilling) && (adjustment?.proratedAmount ?? 0) > 0;
+
   const staffResponse = staff.toObject();
   delete staffResponse.password;
   res.status(201).json({
     success: true,
     data: staffResponse,
     emailSent,
-    // Disclosure, not a checkout — the client shows this as a note, and has
-    // no way to pay it here.
     billing: adjustment
       ? {
         addedToNextInvoice: adjustment.proratedAmount,
         currency: subscription.plan.currency,
         nextInvoiceAt: subscription.currentPeriodEnd,
+        immediateChargeRecommended,
       }
       : null,
   });
@@ -200,18 +216,25 @@ export const updateStaff = async (req, res) => {
   let adjustment = null;
   if (activationChanged) {
     const subscription = await Subscription.findOne({ shop: shopId }).populate('plan');
-    if (subscription?.plan) {
+    if (subscription) {
       // Count is read *after* the save, so it already reflects the change.
       const afterCount = await getBillableUserCount(shopId);
       const beforeCount = isActive ? afterCount - 1 : afterCount + 1;
-      adjustment = await accrueSeatChange({
-        subscription,
-        plan: subscription.plan,
-        fromCount: beforeCount,
-        toCount: afterCount,
-        reason: isActive ? 'staff_reactivated' : 'staff_deactivated',
-        staff,
-      });
+      adjustment = subscription.plan
+        ? await accrueSeatChange({
+          subscription,
+          plan: subscription.plan,
+          fromCount: beforeCount,
+          toCount: afterCount,
+          reason: isActive ? 'staff_reactivated' : 'staff_deactivated',
+          staff,
+        })
+        : null;
+      // Same write-back as createStaff / releaseStaffSeat — keeps the
+      // mobile "Billable people" snapshot in sync with every head-count
+      // change, not just deletions and payments.
+      subscription.staffCount = afterCount;
+      await subscription.save();
     }
   }
 

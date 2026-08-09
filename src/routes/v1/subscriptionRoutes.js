@@ -11,6 +11,7 @@ import {
   initiatePayment,
   getPaymentStatus,
   handleMpesaCallback,
+  handlePaystackWebhook,
   recheckPayment,
   reconcileByMessage,
 } from '../../controllers/subscriptionController.js';
@@ -26,6 +27,9 @@ const router = express.Router();
 
 // Safaricom posts subscription STK results here — public, no JWT auth.
 router.post('/mpesa/callback', handleMpesaCallback);
+// Paystack posts charge results here — public, no JWT auth; verified via
+// x-paystack-signature instead.
+router.post('/paystack/webhook', handlePaystackWebhook);
 
 // Pricing catalog — any signed-in user (the activation screen shows it).
 router.get('/plans', protect, getPlans);

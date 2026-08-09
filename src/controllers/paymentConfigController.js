@@ -7,8 +7,16 @@ function maskCredential(encryptedValue) {
   try {
     const plain = decrypt(encryptedValue);
     if (!plain) return null;
-    if (plain.length <= 7) return '•'.repeat(plain.length);
-    return `${plain.slice(0, 3)}${'•'.repeat(Math.max(4, plain.length - 7))}${plain.slice(-4)}`;
+    if (plain.length <= 6) return '•'.repeat(plain.length);
+    // Reveal at most 7 characters total (3 head + 4 tail) — fine for a real
+    // Daraja credential (32-64 chars) — but never more than ~30% of a short
+    // one. Without this floor, a credential at the 10-char Joi minimum would
+    // show 7 of 10 characters (70%) through this "masked" preview.
+    const revealCap = Math.min(7, Math.max(2, Math.floor(plain.length * 0.3)));
+    const head = Math.min(3, Math.ceil(revealCap / 2));
+    const tail = Math.min(4, revealCap - head);
+    const maskedLen = Math.max(4, plain.length - head - tail);
+    return `${plain.slice(0, head)}${'•'.repeat(maskedLen)}${tail ? plain.slice(-tail) : ''}`;
   } catch {
     return '••••••••••••••••';
   }
@@ -18,7 +26,6 @@ function maskCredential(encryptedValue) {
 export const getPaymentStatus = async (req, res) => {
   try {
     const shopId = req.user.shop._id ?? req.user.shop;
-    console.log(req.user.shop._id ?? req.user.shop)
     const config = await PaymentConfig.findOne({ shop: shopId });
     return res.json({
       success: true,

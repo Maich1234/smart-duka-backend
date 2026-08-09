@@ -21,6 +21,7 @@ import { getPaymentProvider, listPaymentProviders } from '../services/payments/i
 import { logAudit } from '../services/auditLogService.js';
 import { activateSeatPayment, cleanupFailedSeatPayment } from '../services/seatActivationService.js';
 import { MPESA_RECEIPT_PATTERN, MPESA_AMOUNT_PATTERN } from '../utils/mpesaReceipt.js';
+import { verifyWebhookSignature } from '../services/paystackService.js';
 
 const shopIdOf = (req) => req.user.shop._id ?? req.user.shop;
 
@@ -453,6 +454,7 @@ export const initiatePayment = async (req, res) => {
         reference: 'DUKANA',
         description: `Dukana ${plan.name} (${billingCycle})`,
         callbackUrl,
+        email: req.user.email,
       });
     } catch (err) {
       if (err.code === 'PROVIDER_UNAVAILABLE') {
@@ -525,8 +527,15 @@ export const initiatePayment = async (req, res) => {
         currency: price.currency,
         billingCycle,
         planSlug: plan.slug,
+        // Paystack only: the client opens its own popup against this key and
+        // reference. Absent (null) for providers that push a prompt
+        // server-side instead, like M-Pesa's STK push.
+        publicKey: charge.publicKey ?? null,
+        providerRef: charge.providerRef,
       },
-      message: 'Payment request sent. Enter your M-PESA PIN on your phone to finish.',
+      message: provider.key === 'mpesa'
+        ? 'Payment request sent. Enter your M-PESA PIN on your phone to finish.'
+        : 'Payment started.',
     });
   } catch (err) {
     console.error('[Subscriptions] initiatePayment error:', err);
@@ -648,6 +657,97 @@ export const handleMpesaCallback = async (req, res) => {
 };
 
 /**
+ * Paystack's popup runs client-side against the public key (unlike M-Pesa's
+ * STK push, which the server initiates with the amount already locked in),
+ * so the amount that reaches Paystack passed through the browser. Shared by
+ * the webhook and the on-demand reconcile path — both must refuse to credit
+ * a mismatch rather than trust whatever the browser told Paystack to charge.
+ */
+function paystackAmountMismatch(payment, amountKobo) {
+  if (amountKobo == null) return null;
+  const expectedKobo = Math.round(payment.amount * 100);
+  return amountKobo === expectedKobo ? null : `Amount mismatch: provider confirmed ${amountKobo}, expected ${expectedKobo}.`;
+}
+
+/**
+ * POST /subscriptions/paystack/webhook — Paystack's webhook, public (no
+ * JWT). Same atomic-claim + idempotent-activation shape as
+ * handleMpesaCallback; only `charge.success` is acted on, everything else
+ * (refunds, transfers, etc.) is accepted and ignored.
+ */
+export const handlePaystackWebhook = async (req, res) => {
+  try {
+    const provider = getPaymentProvider('bank');
+    const signature = req.headers['x-paystack-signature'];
+    let config;
+    try {
+      config = await provider.getConfig();
+    } catch (err) {
+      console.error('[Paystack Webhook] Not configured:', err.message);
+      return res.status(200).json({ received: true });
+    }
+    if (!verifyWebhookSignature({ rawBody: req.rawBody, signature, secretKey: config.secretKey })) {
+      console.error('[Paystack Webhook] Invalid signature');
+      return res.status(401).json({ message: 'Invalid signature' });
+    }
+
+    const parsed = provider.parseCallback(req.body);
+    if (req.body?.event !== 'charge.success') {
+      return res.status(200).json({ received: true });
+    }
+
+    // Atomic claim: only one delivery can move the payment out of 'pending'.
+    const payment = await SubscriptionPayment.findOneAndUpdate(
+      { providerRef: parsed.providerRef, status: 'pending' },
+      {
+        $set: {
+          status: 'success',
+          resultCode: parsed.resultCode,
+          errorMessage: null,
+          receipt: parsed.receipt,
+          transactionDate: new Date(),
+          callbackPayload: req.body,
+          callbackReceivedAt: new Date(),
+        },
+      },
+      { new: true }
+    );
+
+    if (!payment) {
+      console.error('[Paystack Webhook] Unknown or already-settled reference:', parsed.providerRef);
+      return res.status(200).json({ received: true });
+    }
+
+    const mismatch = paystackAmountMismatch(payment, parsed.amountKobo);
+    if (mismatch) {
+      payment.status = 'failed';
+      payment.errorMessage = mismatch;
+      await payment.save();
+      console.error('[Paystack Webhook]', mismatch, 'payment', String(payment._id));
+      return res.status(200).json({ received: true });
+    }
+
+    await applySuccessfulPayment(payment);
+
+    logAudit({
+      shopId: payment.shop,
+      action: 'subscription.payment.success',
+      entityType: 'SubscriptionPayment',
+      entityId: payment._id,
+      details: { resultCode: parsed.resultCode, receipt: parsed.receipt, amount: payment.amount },
+    }).catch(() => {});
+
+    return res.status(200).json({ received: true });
+  } catch (err) {
+    console.error('[Paystack Webhook] Processing error:', err.message);
+    // Still 200 — a non-200 makes Paystack retry, which would just replay
+    // the same (already-logged) failure. The cron reconciliation and the
+    // owner-facing recheck endpoint are the real recovery path.
+    return res.status(200).json({ received: true });
+  }
+};
+
+/**
  * Extends the subscription for a payment that just succeeded. Idempotent —
  * safe to call more than once for the same payment (the reconciliation path
  * may re-run this for a payment whose activation is uncertain) — a payment
@@ -696,7 +796,10 @@ export async function applySuccessfulPayment(payment) {
   }
 }
 
-const DEFINITIVE_FAILURE_CODES = new Set(['1032', '1037', '1001', '1', '2001', '1025']);
+// M-Pesa result codes, plus Paystack's own textual transaction statuses —
+// distinct alphabets, no collision risk sharing one set.
+const DEFINITIVE_FAILURE_CODES = new Set(['1032', '1037', '1001', '1', '2001', '1025', 'failed', 'abandoned', 'reversed']);
+const CANCELLED_CODES = new Set(['1032', 'abandoned']);
 
 /**
  * Re-verifies a payment directly against Safaricom's STK Push Query — the
@@ -733,6 +836,16 @@ export async function reconcilePayment(payment, { receiptHint } = {}) {
   }
 
   if (result.success) {
+    const mismatch = paystackAmountMismatch(payment, result.amountKobo);
+    if (mismatch) {
+      payment.status = 'failed';
+      payment.resultCode = result.resultCode;
+      payment.errorMessage = mismatch;
+      await payment.save();
+      console.error('[Subscriptions] reconcilePayment', mismatch, 'payment', String(payment._id));
+      return { payment, changed: true };
+    }
+
     payment.status = 'success';
     payment.resultCode = result.resultCode;
     payment.errorMessage = null;
@@ -744,7 +857,7 @@ export async function reconcilePayment(payment, { receiptHint } = {}) {
   }
 
   if (result.resultCode && DEFINITIVE_FAILURE_CODES.has(result.resultCode)) {
-    const status = result.resultCode === '1032' ? 'cancelled' : 'failed';
+    const status = CANCELLED_CODES.has(result.resultCode) ? 'cancelled' : 'failed';
     payment.status = status;
     payment.resultCode = result.resultCode;
     payment.errorMessage = result.resultDesc ?? 'Payment did not complete.';

@@ -17,12 +17,29 @@ const platformMpesaSchema = new mongoose.Schema({
   configuredAt: { type: Date },
 }, { _id: false });
 
+// Dukana's own Paystack account — card/bank subscription payments, same
+// "never a shop's own account" rule as platformMpesaSchema. publicKey isn't
+// sensitive (it's handed to the web client to open the payment popup) and is
+// stored plain; secretKey uses the same encrypted-blob scheme as M-Pesa's.
+const platformPaystackSchema = new mongoose.Schema({
+  enabled: { type: Boolean, default: false },
+  publicKey: { type: String, trim: true },
+  secretKey: { type: String },
+  configuredAt: { type: Date },
+}, { _id: false });
+
 const platformConfigSchema = new mongoose.Schema({
   // Fixed key makes the singleton enforceable with a unique index.
   key: { type: String, default: 'platform', unique: true },
   mpesa: { type: platformMpesaSchema, default: () => ({}) },
-  // Future providers (managed from the super-admin page):
-  // card: { ... }, bank: { ... }
+  paystack: { type: platformPaystackSchema, default: () => ({}) },
+  // When on, staffController.createStaff tells the web client to prompt an
+  // immediate top-up payment for a newly-added seat's prorated cost instead
+  // of only letting it ride silently to the next invoice. Off by default —
+  // this is a nudge shown on web only (mobile has no payment UI at all, see
+  // subscription.tsx's own comment on why), never a hard gate: staff
+  // creation itself is never blocked on payment either way.
+  immediateSeatBilling: { type: Boolean, default: false },
   // Days of continued access after trial/period expiry before the owner is
   // sent to the paywall.
   gracePeriodDays: { type: Number, default: 3, min: 0 },

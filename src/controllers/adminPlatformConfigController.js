@@ -9,6 +9,7 @@ import { encrypt, isEncrypted } from '../services/encryptionService.js';
 export const getPlatformConfig = async (req, res) => {
   const platform = await PlatformConfig.get();
   const mpesa = platform.mpesa ?? {};
+  const paystack = platform.paystack ?? {};
   res.json({
     success: true,
     data: {
@@ -22,6 +23,16 @@ export const getPlatformConfig = async (req, res) => {
         passkeyConfigured: isEncrypted(mpesa.passkey),
         configuredAt: mpesa.configuredAt ?? null,
       },
+      paystack: {
+        enabled: paystack.enabled ?? false,
+        // Not a secret — the web client needs the actual value to open the
+        // payment popup, unlike M-Pesa's credentials which never leave the
+        // server.
+        publicKey: paystack.publicKey ?? '',
+        secretKeyConfigured: isEncrypted(paystack.secretKey),
+        configuredAt: paystack.configuredAt ?? null,
+      },
+      immediateSeatBilling: platform.immediateSeatBilling ?? false,
       gracePeriodDays: platform.gracePeriodDays,
       staffGraceExtraDays: platform.staffGraceExtraDays,
       reminderDaysBefore: platform.reminderDaysBefore,
@@ -37,7 +48,11 @@ export const getPlatformConfig = async (req, res) => {
  */
 export const updatePlatformConfig = async (req, res) => {
   const platform = await PlatformConfig.get();
-  const { enabled, environment, businessName, shortcode, consumerKey, consumerSecret, passkey, gracePeriodDays, staffGraceExtraDays, reminderDaysBefore } = req.body;
+  const {
+    enabled, environment, businessName, shortcode, consumerKey, consumerSecret, passkey,
+    paystackEnabled, paystackPublicKey, paystackSecretKey,
+    immediateSeatBilling, gracePeriodDays, staffGraceExtraDays, reminderDaysBefore,
+  } = req.body;
 
   const mpesa = platform.mpesa?.toObject ? platform.mpesa.toObject() : { ...(platform.mpesa ?? {}) };
   if (enabled !== undefined) mpesa.enabled = enabled;
@@ -50,6 +65,14 @@ export const updatePlatformConfig = async (req, res) => {
   if (consumerKey || consumerSecret || passkey || enabled !== undefined) mpesa.configuredAt = new Date();
   platform.mpesa = mpesa;
 
+  const paystack = platform.paystack?.toObject ? platform.paystack.toObject() : { ...(platform.paystack ?? {}) };
+  if (paystackEnabled !== undefined) paystack.enabled = paystackEnabled;
+  if (paystackPublicKey !== undefined) paystack.publicKey = paystackPublicKey;
+  if (paystackSecretKey) paystack.secretKey = encrypt(paystackSecretKey);
+  if (paystackSecretKey || paystackPublicKey !== undefined || paystackEnabled !== undefined) paystack.configuredAt = new Date();
+  platform.paystack = paystack;
+
+  if (immediateSeatBilling !== undefined) platform.immediateSeatBilling = immediateSeatBilling;
   if (gracePeriodDays !== undefined) platform.gracePeriodDays = gracePeriodDays;
   if (staffGraceExtraDays !== undefined) platform.staffGraceExtraDays = staffGraceExtraDays;
   if (reminderDaysBefore !== undefined) platform.reminderDaysBefore = reminderDaysBefore;

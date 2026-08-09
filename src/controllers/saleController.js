@@ -44,8 +44,14 @@ export const createSale = async (req, res) => {
   // Joi only checked the key's shape, since it can't see the shop.
   const allowedMethods = enabledMethodKeys(req.user.shop);
   if (!allowedMethods.includes(paymentMethod)) {
+    // Coded so clients can react (refetch the shop's till buttons, drop the
+    // stale selection) rather than just surfacing the message — this fires
+    // whenever an owner removes/disables a method after it was already
+    // selected on someone else's till but before their poll/focus refetch
+    // caught up.
     return res.status(400).json({
       success: false,
+      code: 'PAYMENT_METHOD_UNAVAILABLE',
       message: `'${paymentMethod}' is not one of this shop's payment methods.`,
     });
   }

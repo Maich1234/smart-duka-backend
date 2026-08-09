@@ -13,8 +13,14 @@ export const activateTrialSchema = Joi.object({
 }).unknown(false);
 
 // No amount field on purpose — the server always computes the price.
+// phoneNumber only matters for M-Pesa's STK push; Paystack's popup asks the
+// browser for card/bank details directly and needs no phone number at all.
 export const initiatePaymentSchema = Joi.object({
-  phoneNumber: Joi.string().trim().pattern(KENYAN_PHONE_PATTERN).required().messages({
+  phoneNumber: Joi.string().trim().pattern(KENYAN_PHONE_PATTERN).when('provider', {
+    is: 'mpesa',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }).messages({
     'string.pattern.base': 'Phone number must be in +2547XXXXXXXX or +2541XXXXXXXX format',
   }),
   billingCycle: billingCycle.default('monthly'),

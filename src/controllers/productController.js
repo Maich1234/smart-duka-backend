@@ -138,6 +138,17 @@ export const createProduct = async (req, res) => {
     return res.status(400).json({ success: false, message: commissionError });
   }
 
+  // The {shop, barcode} index is deliberately non-unique (Mongo partial-index
+  // filters can't exclude both "missing" and "" at once), so this is the only
+  // place a duplicate is ever caught — otherwise two products silently share
+  // a barcode and a scan resolves to whichever one the query happens to hit.
+  if (req.body.barcode?.trim()) {
+    const existing = await Product.findOne({ shop: req.user.shop._id, barcode: req.body.barcode.trim() });
+    if (existing) {
+      return res.status(409).json({ success: false, message: `This barcode is already used by "${existing.name}".` });
+    }
+  }
+
   const product = await Product.create({ ...req.body, shop: req.user.shop._id });
   res.status(201).json({ success: true, data: product });
 };
@@ -184,6 +195,17 @@ export const updateProduct = async (req, res) => {
   });
   if (commissionError) {
     return res.status(400).json({ success: false, message: commissionError });
+  }
+
+  if (req.body.barcode?.trim()) {
+    const existing = await Product.findOne({
+      shop: req.user.shop._id,
+      barcode: req.body.barcode.trim(),
+      _id: { $ne: product._id },
+    });
+    if (existing) {
+      return res.status(409).json({ success: false, message: `This barcode is already used by "${existing.name}".` });
+    }
   }
 
   const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });

@@ -47,7 +47,10 @@ app.use(cors());
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 // 1 MB cap — largest legitimate payload is a product with variants (~ a few
 // KB); anything bigger is abuse or a client bug.
-app.use(express.json({ limit: '1mb' }));
+// rawBody is kept alongside the parsed body for Paystack's webhook signature
+// check, which is an HMAC over the exact bytes Paystack sent — re-serializing
+// req.body would not reliably reproduce that (key order, whitespace).
+app.use(express.json({ limit: '1mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 app.use('/api/v1', routes);
