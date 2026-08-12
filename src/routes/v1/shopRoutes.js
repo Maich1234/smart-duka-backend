@@ -1,5 +1,5 @@
 import express from 'express';
-import { getShopConfig, updateShopConfig, uploadShopLogo } from '../../controllers/shopController.js';
+import { getShopConfig, updateShopConfig, uploadShopLogo, getShopReferrals } from '../../controllers/shopController.js';
 import { protect, ownerOnly } from '../../middlewares/auth.js';
 import validate from '../../middlewares/validate.js';
 import { updateShopConfigSchema } from '../../validations/shopValidation.js';
@@ -11,5 +11,6 @@ router.use(protect);
 router.get('/', getShopConfig);
 router.put('/', ownerOnly, validate(updateShopConfigSchema), updateShopConfig);
 router.post('/logo', ownerOnly, upload.single('logo'), uploadShopLogo);
+router.get('/referrals', ownerOnly, getShopReferrals);
 
 export default router;

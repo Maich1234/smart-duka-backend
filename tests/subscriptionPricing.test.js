@@ -5,6 +5,7 @@ import {
   monthlyTotalForPlan,
   yearlyTotalForPlan,
   applyPromotion,
+  applyReferralCredit,
   computePrice,
   computeSeatAdditionImpact,
 } from '../src/services/subscriptionPricingService.js';
@@ -86,6 +87,30 @@ test('percentage and fixed promotions', () => {
   assert.deepEqual(applyPromotion(2016, { discountType: 'fixed', discountValue: 500 }), { amount: 1516, discount: 500 });
   // A fixed discount can never push the price below zero
   assert.deepEqual(applyPromotion(210, { discountType: 'fixed', discountValue: 999 }), { amount: 0, discount: 210 });
+});
+
+test('applyReferralCredit stacks a percentage discount, clamped to the amount and to 0-100', () => {
+  assert.deepEqual(applyReferralCredit(1000, 20), { amount: 800, discount: 200 });
+  assert.deepEqual(applyReferralCredit(1000, 0), { amount: 1000, discount: 0 });
+  // Clamped even if a caller somehow passes an out-of-range value — the
+  // function doesn't trust the schema's own 0-100 cap to have held.
+  assert.deepEqual(applyReferralCredit(1000, 150), { amount: 0, discount: 1000 });
+  assert.deepEqual(applyReferralCredit(1000, -20), { amount: 1000, discount: 0 });
+});
+
+test('computePrice stacks a referral credit on top of an already-applied promotion, not the raw base price', () => {
+  const promotion = { discountType: 'percentage', discountValue: 50 };
+  const price = computePrice({ plans, plan: starter, staffCount: 3, billingCycle: 'monthly', promotion, referralCreditPercent: 20 });
+  // base 630 -> promo 50% off -> 315 (promoDiscount 315) -> referral 20% of 315 -> 252 (referralDiscount 63)
+  assert.equal(price.promoDiscount, 315);
+  assert.equal(price.referralDiscount, 63);
+  assert.equal(price.amountDue, 252);
+});
+
+test('computePrice with no referral credit behaves exactly as before (referralDiscount 0)', () => {
+  const price = computePrice({ plans, plan: starter, staffCount: 3, billingCycle: 'monthly' });
+  assert.equal(price.referralDiscount, 0);
+  assert.equal(price.amountDue, 630);
 });
 
 test('computePrice honours a forced plan choice over the recommended tier', () => {

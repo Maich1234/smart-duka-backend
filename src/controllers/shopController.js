@@ -1,4 +1,6 @@
 import Shop from '../models/Shop.js';
+import Subscription from '../models/Subscription.js';
+import PlatformConfig from '../models/PlatformConfig.js';
 import cloudinary from '../config/cloudinary.js';
 import { resolvePaymentMethods } from '../constants/salePaymentMethods.js';
 
@@ -38,6 +40,42 @@ export const updateShopConfig = async (req, res) => {
 
   await shop.save();
   res.json({ success: true, data: { ...shop.toObject(), paymentMethods: resolvePaymentMethods(shop) } });
+};
+
+// Same PUBLIC_WEB_URL convention as cronController.js/bookStamp.js.
+const webUrl = () => (process.env.PUBLIC_WEB_URL || 'https://smart-duka-web-delta.vercel.app').replace(/\/+$/, '');
+
+/**
+ * GET /shop/referrals — this shop's own shareable code, its currently banked
+ * discount, and who it has referred so far. No financial or contact details
+ * of a referred shop are exposed, only name + conversion status — an owner
+ * can see *that* they referred someone, not what that shop is doing.
+ */
+export const getShopReferrals = async (req, res) => {
+  const shopId = req.user.shop._id;
+  const [shop, subscription, platform, referredShops] = await Promise.all([
+    Shop.findById(shopId).select('myReferralCode'),
+    Subscription.findOne({ shop: shopId }).select('referralDiscountPercent'),
+    PlatformConfig.get(),
+    Shop.find({ referredByShopId: shopId }).select('name createdAt referralRewardGranted').sort({ createdAt: -1 }).lean(),
+  ]);
+  if (!shop) return res.status(404).json({ success: false, message: 'Shop not found' });
+
+  res.json({
+    success: true,
+    data: {
+      code: shop.myReferralCode,
+      shareUrl: `${webUrl()}/register?ref=${shop.myReferralCode}`,
+      enabled: platform.referral?.enabled ?? false,
+      perReferralPercent: platform.referral?.percentPerReferral ?? 0,
+      discountPercentBanked: subscription?.referralDiscountPercent ?? 0,
+      referrals: referredShops.map((s) => ({
+        shopName: s.name,
+        status: s.referralRewardGranted ? 'converted' : 'pending',
+        joinedAt: s.createdAt,
+      })),
+    },
+  });
 };
 
 export const uploadShopLogo = async (req, res) => {

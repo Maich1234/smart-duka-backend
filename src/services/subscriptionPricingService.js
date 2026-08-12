@@ -71,14 +71,32 @@ export function applyPromotion(amount, promotion) {
 }
 
 /**
+ * A second, independent discount stacked on top of whatever a promotion
+ * already produced — the shop's own banked referral credit (see
+ * Subscription.referralDiscountPercent). Applied to the post-promo amount,
+ * not the raw base price, so a promo code and a referral credit both apply
+ * to the plan price rather than one discounting the other's discount.
+ * Clamped defensively even though the schema already caps the stored value
+ * at 100 — this function shouldn't trust its caller.
+ */
+export function applyReferralCredit(amount, referralCreditPercent) {
+  const pct = Math.min(Math.max(referralCreditPercent || 0, 0), 100);
+  if (pct === 0) return { amount, discount: 0 };
+  const discount = Math.min(Math.round(amount * (pct / 100)), amount);
+  return { amount: amount - discount, discount };
+}
+
+/**
  * Full price computation for a shop. `plan` may be forced (user picked a
  * card); otherwise the tier is chosen from the head-count.
  *
  * Returns everything the pricing screen and the payment initiator need:
  * { plan, staffCount, billingCycle, monthlyTotal, yearlyTotal, yearlySavings,
- *   amountDue, promoDiscount, currency }
+ *   amountDue, promoDiscount, referralDiscount, currency }
  */
-export function computePrice({ plans, plan = null, staffCount, billingCycle = 'monthly', promotion = null }) {
+export function computePrice({
+  plans, plan = null, staffCount, billingCycle = 'monthly', promotion = null, referralCreditPercent = 0,
+}) {
   const chosen = plan ?? pickPlanForStaffCount(plans, staffCount);
   if (!chosen) throw new Error('No active subscription plans are configured');
 
@@ -87,7 +105,8 @@ export function computePrice({ plans, plan = null, staffCount, billingCycle = 'm
   const yearlySavings = Math.max(monthlyTotal * 12 - yearlyTotal, 0);
 
   const base = billingCycle === 'yearly' ? yearlyTotal : monthlyTotal;
-  const { amount, discount } = applyPromotion(base, promotion);
+  const { amount: afterPromo, discount: promoDiscount } = applyPromotion(base, promotion);
+  const { amount: afterReferral, discount: referralDiscount } = applyReferralCredit(afterPromo, referralCreditPercent);
 
   return {
     plan: chosen,
@@ -96,8 +115,9 @@ export function computePrice({ plans, plan = null, staffCount, billingCycle = 'm
     monthlyTotal,
     yearlyTotal,
     yearlySavings,
-    amountDue: amount,
-    promoDiscount: discount,
+    amountDue: afterReferral,
+    promoDiscount,
+    referralDiscount,
     currency: chosen.currency ?? 'KES',
   };
 }

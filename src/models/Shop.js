@@ -147,6 +147,46 @@ const shopSchema = new mongoose.Schema({
     type: [shopPaymentMethodSchema],
     default: () => DEFAULT_PAYMENT_METHODS.map((m, i) => ({ ...m, order: i })),
   },
+  // Optional code entered at THIS shop's own signup — either an onboarding
+  // agent's code (dukana-admin-backend's onboarding flow matches it against
+  // an Agent) or another shop's own `myReferralCode` (see below). Captured
+  // verbatim, uppercased for case-insensitive matching; this repo never
+  // validates it against an Agent, only against other shops (see register.js).
+  referredByCode: {
+    type: String,
+    default: '',
+    trim: true,
+    uppercase: true,
+    maxlength: 40,
+  },
+  // Which shop referredByCode actually resolved to, if it matched another
+  // shop's own code (not an agent's) — the link the referral-discount reward
+  // is paid against. Null if referredByCode was empty, an agent's code, or a
+  // typo that matched nothing.
+  referredByShopId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Shop',
+    default: null,
+  },
+  // This shop's own shareable code — generated once at registration, unique.
+  // Someone who signs up with it becomes `referredByShopId` for this shop.
+  myReferralCode: {
+    type: String,
+    unique: true,
+    sparse: true,
+    trim: true,
+    uppercase: true,
+    maxlength: 16,
+  },
+  // Set once, the first time this shop's referral discount is actually
+  // granted to whoever referred it (see applySuccessfulPayment) — prevents a
+  // cancel/resubscribe cycle from double-rewarding the referrer, and stops a
+  // later re-enable of the feature from retroactively rewarding an old
+  // conversion that happened while it was off.
+  referralRewardGranted: {
+    type: Boolean,
+    default: false,
+  },
   // Monotonic invoice counter for this shop, bumped atomically by Sale's
   // pre-save hook via $inc.
   //

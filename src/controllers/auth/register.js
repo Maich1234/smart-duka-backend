@@ -3,9 +3,26 @@ import User from '../../models/User.js';
 import Shop from '../../models/Shop.js';
 import { CURRENT_TERMS_VERSION } from '../../constants/legal.js';
 import { sendVerificationEmail } from '../../utils/emailVerification.js';
+import { generateReferralCode } from '../../utils/referralCode.js';
+
+const MAX_CODE_ATTEMPTS = 5;
+
+/** A fresh, DB-confirmed-unique referral code for a new shop. */
+async function generateUniqueReferralCode() {
+  for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt += 1) {
+    const candidate = generateReferralCode();
+    // eslint-disable-next-line no-await-in-loop
+    const taken = await Shop.exists({ myReferralCode: candidate });
+    if (!taken) return candidate;
+  }
+  // Astronomically unlikely (8 chars over a 32-symbol alphabet) — bounded
+  // rather than an infinite loop, and the schema's unique index is the real
+  // backstop against a race either way.
+  throw new Error('Could not generate a unique referral code. Please try again.');
+}
 
 export const register = async (req, res) => {
-  const { name, email, password, shopName, address, phone, acceptedTerms } = req.body;
+  const { name, email, password, shopName, address, phone, acceptedTerms, referralCode } = req.body;
 
   if (!name || !email || !password || !shopName) {
     return res.status(400).json({ success: false, message: 'Missing required fields: name, email, password, shopName' });
@@ -27,6 +44,13 @@ export const register = async (req, res) => {
     return res.status(400).json({ success: false, message: 'Email already registered' });
   }
 
+  // Resolved before the transaction — a benign race with another shop
+  // registering at the same instant just means this lookup misses (falls
+  // back to "no referrer"), never a torn write.
+  const referredByCode = (referralCode || '').trim().toUpperCase();
+  const referrer = referredByCode ? await Shop.findOne({ myReferralCode: referredByCode }).select('_id') : null;
+  const myReferralCode = await generateUniqueReferralCode();
+
   const session = await mongoose.startSession();
   session.startTransaction();
   let user;
@@ -47,7 +71,16 @@ export const register = async (req, res) => {
       termsAcceptedAt: new Date(),
       termsVersion: CURRENT_TERMS_VERSION,
     }], { session });
-    await Shop.create([{ _id: shopId, name: shopName, address: address || '', phone: phone || '', owner: userId }], { session });
+    await Shop.create([{
+      _id: shopId,
+      name: shopName,
+      address: address || '',
+      phone: phone || '',
+      owner: userId,
+      referredByCode,
+      referredByShopId: referrer?._id ?? null,
+      myReferralCode,
+    }], { session });
 
     await session.commitTransaction();
   } catch (error) {

@@ -54,6 +54,10 @@ const subscriptionPaymentSchema = new mongoose.Schema({
   },
   promoCode: { type: String, default: null },
   promoDiscount: { type: Number, default: 0 },
+  // Snapshot of how much of this payment was covered by the shop's own
+  // banked referral credit (Subscription.referralDiscountPercent at the
+  // moment this payment was initiated) — mirrors promoDiscount exactly.
+  referralDiscount: { type: Number, default: 0 },
   // Error context for failed/cancelled charges.
   resultCode: { type: String },
   errorMessage: { type: String },

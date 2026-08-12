@@ -53,6 +53,16 @@ const platformConfigSchema = new mongoose.Schema({
   staffGraceExtraDays: { type: Number, default: 7, min: 0 },
   // How many days before expiry to push renewal reminders.
   reminderDaysBefore: { type: [Number], default: [7, 3] },
+  // Owner-to-owner referral program: a shop that refers another shop banks a
+  // stacking discount toward its own next subscription payment once the
+  // referred shop actually converts to a paying customer (see
+  // subscriptionController.js's applySuccessfulPayment). Admin-tunable
+  // rather than hardcoded so the rate/cap can change without a deploy.
+  referral: {
+    enabled: { type: Boolean, default: false },
+    percentPerReferral: { type: Number, default: 20, min: 0, max: 100 },
+    maxStackedPercent: { type: Number, default: 100, min: 0, max: 100 },
+  },
 }, { timestamps: true });
 
 /** Loads the singleton, creating an empty one on first access. */

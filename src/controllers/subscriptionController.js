@@ -3,6 +3,7 @@ import Subscription from '../models/Subscription.js';
 import SubscriptionPayment from '../models/SubscriptionPayment.js';
 import Promotion from '../models/Promotion.js';
 import PlatformConfig from '../models/PlatformConfig.js';
+import Shop from '../models/Shop.js';
 import { DEFAULT_PLANS, YEARLY_OFFER, LAUNCH_OFFER } from '../constants/subscriptionDefaults.js';
 import {
   getBillableUserCount,
@@ -140,8 +141,15 @@ export const previewPricing = async (req, res) => {
       return res.status(404).json({ success: false, message: `Unknown plan: ${planSlug}` });
     }
     const promotion = await resolvePromotion(promoCode);
+    // So the preview matches what initiatePayment will actually charge —
+    // otherwise a shop with banked referral credit sees a higher price here
+    // than what they're charged a moment later.
+    const subscription = await Subscription.findOne({ shop: shopId }).select('referralDiscountPercent');
 
-    const price = computePrice({ plans, plan, staffCount: Number(staffCount), billingCycle, promotion });
+    const price = computePrice({
+      plans, plan, staffCount: Number(staffCount), billingCycle, promotion,
+      referralCreditPercent: subscription?.referralDiscountPercent ?? 0,
+    });
     return res.json({
       success: true,
       data: {
@@ -153,6 +161,7 @@ export const previewPricing = async (req, res) => {
         yearlyTotal: price.yearlyTotal,
         yearlySavings: price.yearlySavings,
         promoDiscount: price.promoDiscount,
+        referralDiscount: price.referralDiscount,
         amountDue: price.amountDue,
         currency: price.currency,
       },
@@ -209,6 +218,7 @@ export const getMySubscription = async (req, res) => {
         plan: livePlan ?? null,
         staffCount,
         billingCycle: subscription.billingCycle,
+        referralCreditPercent: subscription.referralDiscountPercent ?? 0,
       });
       // Mid-period head-count changes are postpaid — their prorated cost
       // rides on this invoice instead of having been charged on the spot.
@@ -217,6 +227,7 @@ export const getMySubscription = async (req, res) => {
         planSlug: price.plan.slug,
         billingCycle: price.billingCycle,
         basePrice: price.amountDue,
+        referralDiscount: price.referralDiscount,
         seatCharges,
         seatAdjustments: describeSeatAdjustments(subscription),
         amountDue: price.amountDue + seatCharges,
@@ -407,7 +418,10 @@ export const initiatePayment = async (req, res) => {
       return res.status(err.status ?? 400).json({ success: false, message: err.message });
     }
 
-    const price = computePrice({ plans, plan, staffCount, billingCycle, promotion });
+    const price = computePrice({
+      plans, plan, staffCount, billingCycle, promotion,
+      referralCreditPercent: subscription?.referralDiscountPercent ?? 0,
+    });
     // Accrued mid-period seat changes settle on this invoice. Added after the
     // promotion so a discount code applies to the plan price, not to seats
     // already consumed.
@@ -489,6 +503,7 @@ export const initiatePayment = async (req, res) => {
         promotion: promotion?._id ?? null,
         promoCode: promotion?.code ?? null,
         promoDiscount: price.promoDiscount,
+        referralDiscount: price.referralDiscount,
         requestedBy: req.user._id,
         ...(idempotencyKey && { idempotencyKey }),
       });
@@ -514,7 +529,10 @@ export const initiatePayment = async (req, res) => {
       action: 'subscription.payment.initiated',
       entityType: 'SubscriptionPayment',
       entityId: payment._id,
-      details: { amount: amountDue, seatCharges, billingCycle, planSlug: plan.slug, provider: provider.key, promoCode: promotion?.code },
+      details: {
+        amount: amountDue, seatCharges, billingCycle, planSlug: plan.slug, provider: provider.key,
+        promoCode: promotion?.code, referralDiscount: price.referralDiscount || undefined,
+      },
       req,
     }).catch(() => {});
 
@@ -785,6 +803,13 @@ export async function applySuccessfulPayment(payment) {
   // Accrued mid-period seat changes were folded into this payment's amount —
   // settle them so they can't be billed twice on the following invoice.
   clearSeatAdjustments(subscription);
+  // This shop's own banked referral credit was spent on this payment (see
+  // computePrice's referralCreditPercent) — consumed in full, never
+  // fractioned across future payments, mirroring how promotion redemption is
+  // only counted on confirmed success below, never at initiation.
+  if (payment.referralDiscount > 0) {
+    subscription.referralDiscountPercent = 0;
+  }
   await subscription.save();
 
   payment.periodStart = periodStart;
@@ -794,6 +819,40 @@ export async function applySuccessfulPayment(payment) {
   if (payment.promotion) {
     await Promotion.updateOne({ _id: payment.promotion }, { $inc: { redemptionCount: 1 } });
   }
+
+  await rewardReferrerIfFirstConversion(payment.shop);
+}
+
+/**
+ * Rewards whoever referred this shop, exactly once, the first time this
+ * shop's subscription actually activates. Guarded by
+ * Shop.referralRewardGranted rather than inferred from subscription state,
+ * so a cancel/resubscribe cycle can never double-reward the referrer and a
+ * later admin re-enabling the program can never retroactively reward a
+ * conversion that happened while it was off — both cases still flip the flag
+ * without granting anything.
+ */
+async function rewardReferrerIfFirstConversion(shopId) {
+  const shop = await Shop.findById(shopId).select('referredByShopId referralRewardGranted');
+  if (!shop || !shop.referredByShopId || shop.referralRewardGranted) return;
+
+  const platform = await PlatformConfig.get();
+  const pct = platform.referral?.percentPerReferral ?? 0;
+  const cap = platform.referral?.maxStackedPercent ?? 100;
+
+  if (platform.referral?.enabled && pct > 0) {
+    const referrerSubscription = await Subscription.findOne({ shop: shop.referredByShopId });
+    if (referrerSubscription) {
+      referrerSubscription.referralDiscountPercent = Math.min(
+        (referrerSubscription.referralDiscountPercent || 0) + pct,
+        cap
+      );
+      await referrerSubscription.save();
+    }
+  }
+
+  shop.referralRewardGranted = true;
+  await shop.save();
 }
 
 // M-Pesa result codes, plus Paystack's own textual transaction statuses —

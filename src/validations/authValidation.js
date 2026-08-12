@@ -27,6 +27,7 @@ export const registerSchema = Joi.object({
   shopName: Joi.string().required(),
   address: Joi.string().optional(),
   phone: Joi.string().optional(),
+  referralCode: Joi.string().trim().max(40).allow('').optional(),
   // Must be literally true. `.valid(true)` rather than a plain boolean so
   // sending false is a validation failure rather than a silently unticked box.
   acceptedTerms: Joi.boolean().valid(true).required().messages({

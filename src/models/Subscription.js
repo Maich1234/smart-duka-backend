@@ -86,6 +86,11 @@ const subscriptionSchema = new mongoose.Schema({
     ref: 'Promotion',
     default: null,
   },
+  // Stacking discount this shop has banked by referring other shops (see
+  // Shop.referredByShopId / applySuccessfulPayment), consumed in full on the
+  // next successful payment then reset to 0 — never fractioned across
+  // multiple future payments.
+  referralDiscountPercent: { type: Number, default: 0, min: 0, max: 100 },
   cancelledAt: { type: Date, default: null },
   // Support-granted breathing room, on top of the platform-wide grace period.
   // The lever for "the owner is KES 200 short until Friday" — without it the
