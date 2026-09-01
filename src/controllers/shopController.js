@@ -1,8 +1,11 @@
 import Shop from '../models/Shop.js';
 import Subscription from '../models/Subscription.js';
 import PlatformConfig from '../models/PlatformConfig.js';
+import User from '../models/User.js';
+import EmployeeReferralPayout from '../models/EmployeeReferralPayout.js';
 import cloudinary from '../config/cloudinary.js';
 import { resolvePaymentMethods } from '../constants/salePaymentMethods.js';
+import { generateShopReferralCode, generateStaffReferralCode } from '../utils/referralCode.js';
 
 export const getShopConfig = async (req, res) => {
   const shop = await Shop.findById(req.user.shop._id);
@@ -43,7 +46,7 @@ export const updateShopConfig = async (req, res) => {
 };
 
 // Same PUBLIC_WEB_URL convention as cronController.js/bookStamp.js.
-const webUrl = () => (process.env.PUBLIC_WEB_URL || 'https://smart-duka-web-delta.vercel.app').replace(/\/+$/, '');
+const webUrl = () => (process.env.PUBLIC_WEB_URL || 'https://duqana.app').replace(/\/+$/, '');
 
 /**
  * GET /shop/referrals — this shop's own shareable code, its currently banked
@@ -61,19 +64,89 @@ export const getShopReferrals = async (req, res) => {
   ]);
   if (!shop) return res.status(404).json({ success: false, message: 'Shop not found' });
 
+  // Self-healing backfill: shops that registered before myReferralCode
+  // existed (or any other gap) otherwise show `undefined` here forever —
+  // there's no migration script, so the first read just fixes it.
+  let code = shop.myReferralCode;
+  if (!code) {
+    code = await generateShopReferralCode();
+    shop.myReferralCode = code;
+    await shop.save();
+  }
+
+  const audience = platform.referral?.shopOwner;
   res.json({
     success: true,
     data: {
-      code: shop.myReferralCode,
-      shareUrl: `${webUrl()}/register?ref=${shop.myReferralCode}`,
-      enabled: platform.referral?.enabled ?? false,
-      perReferralPercent: platform.referral?.percentPerReferral ?? 0,
+      code,
+      shareUrl: `${webUrl()}/register?ref=${code}`,
+      enabled: audience?.enabled ?? false,
+      perReferralPercent: audience?.percentPerReferral ?? 0,
       discountPercentBanked: subscription?.referralDiscountPercent ?? 0,
       referrals: referredShops.map((s) => ({
         shopName: s.name,
         status: s.referralRewardGranted ? 'converted' : 'pending',
         joinedAt: s.createdAt,
       })),
+    },
+  });
+};
+
+/**
+ * GET /shop/referrals/me — a staff member's own shareable referral code and
+ * cash-bonus ledger. Separate from getShopReferrals above: that endpoint is
+ * the shop's own (owner-facing) code and subscription-credit balance; this
+ * one is per-staff-member and pays real money, tracked in
+ * EmployeeReferralPayout and settled manually by a platform admin.
+ */
+export const getMyReferralData = async (req, res) => {
+  if (req.user.role !== 'staff') {
+    return res.status(403).json({ success: false, message: 'Not available for this account.' });
+  }
+
+  let code = req.user.myReferralCode;
+  if (!code) {
+    code = await generateStaffReferralCode();
+    // Race-safe: if two requests land here at once, the loser's write hits
+    // the unique index and is discarded — the winner's code is what sticks,
+    // and both responses still return a valid code either way.
+    const updated = await User.findOneAndUpdate(
+      { _id: req.user._id, myReferralCode: { $exists: false } },
+      { myReferralCode: code },
+      { new: true },
+    ).catch((err) => {
+      if (err.code === 11000) return null;
+      throw err;
+    });
+    if (!updated) {
+      code = (await User.findById(req.user._id).select('myReferralCode')).myReferralCode;
+    }
+  }
+
+  const [platform, payouts] = await Promise.all([
+    PlatformConfig.get(),
+    EmployeeReferralPayout.find({ staffId: req.user._id })
+      .populate('referredShopId', 'name')
+      .sort({ createdAt: -1 })
+      .lean(),
+  ]);
+
+  const audience = platform.referral?.employee;
+  res.json({
+    success: true,
+    data: {
+      code,
+      shareUrl: `${webUrl()}/register?ref=${code}`,
+      enabled: audience?.enabled ?? false,
+      cashAmount: audience?.cashAmount ?? 0,
+      payouts: payouts.map((p) => ({
+        shopName: p.referredShopId?.name ?? 'Referred shop',
+        amount: p.amount,
+        status: p.status,
+        joinedAt: p.createdAt,
+      })),
+      totalPending: payouts.filter((p) => p.status === 'pending').reduce((sum, p) => sum + p.amount, 0),
+      totalPaid: payouts.filter((p) => p.status === 'paid').reduce((sum, p) => sum + p.amount, 0),
     },
   });
 };

@@ -1,7 +1,7 @@
 {
   "name": "smart-duka-backend",
   "version": "1.0.0",
-  "description": "Backend for Dukana POS System",
+  "description": "Backend for DuQana POS System",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@google/genai": "^2.11.0",
+    "@upstash/qstash": "^2.11.3",
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.10.0",
     "cors": "^2.8.5",

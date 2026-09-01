@@ -1,6 +1,7 @@
 import express from 'express';
 import { protect, ownerOnly } from '../../middlewares/auth.js';
 import validate from '../../middlewares/validate.js';
+import { verifyMpesaCallbackToken } from '../../middlewares/verifyMpesaCallback.js';
 import {
   getPlans,
   previewPricing,
@@ -14,6 +15,7 @@ import {
   handlePaystackWebhook,
   recheckPayment,
   reconcileByMessage,
+  resendRenewalLink,
 } from '../../controllers/subscriptionController.js';
 import {
   activateTrialSchema,
@@ -25,8 +27,10 @@ import {
 
 const router = express.Router();
 
-// Safaricom posts subscription STK results here — public, no JWT auth.
-router.post('/mpesa/callback', handleMpesaCallback);
+// Safaricom posts subscription STK results here — public, no JWT auth, but
+// the final path segment is a shared secret (see verifyMpesaCallbackToken)
+// since Daraja has no callback-signing mechanism.
+router.post('/mpesa/callback/:token', verifyMpesaCallbackToken, handleMpesaCallback);
 // Paystack posts charge results here — public, no JWT auth; verified via
 // x-paystack-signature instead.
 router.post('/paystack/webhook', handlePaystackWebhook);
@@ -46,5 +50,6 @@ router.post('/pay', protect, ownerOnly, validate(initiatePaymentSchema), initiat
 router.get('/pay/:paymentId', protect, ownerOnly, getPaymentStatus);
 router.post('/pay/:paymentId/recheck', protect, ownerOnly, recheckPayment);
 router.post('/reconcile', protect, ownerOnly, validate(reconcileByMessageSchema), reconcileByMessage);
+router.post('/resend-link', protect, ownerOnly, resendRenewalLink);
 
 export default router;

@@ -3,7 +3,6 @@ import Subscription from '../models/Subscription.js';
 import SubscriptionPayment from '../models/SubscriptionPayment.js';
 import Promotion from '../models/Promotion.js';
 import PlatformConfig from '../models/PlatformConfig.js';
-import Shop from '../models/Shop.js';
 import { DEFAULT_PLANS, YEARLY_OFFER, LAUNCH_OFFER } from '../constants/subscriptionDefaults.js';
 import {
   getBillableUserCount,
@@ -16,13 +15,20 @@ import {
 import {
   getAccruedSeatTotal,
   describeSeatAdjustments,
-  clearSeatAdjustments,
 } from '../services/seatBillingService.js';
-import { getPaymentProvider, listPaymentProviders } from '../services/payments/index.js';
+import { getPaymentProvider, listPaymentProviders } from '../domains/billing/infra/payments/index.js';
+import { verifyWebhookSignature } from '../domains/billing/infra/paystackService.js';
+import { withMpesaCallbackSecret } from '../services/mpesaService.js';
 import { logAudit } from '../services/auditLogService.js';
-import { activateSeatPayment, cleanupFailedSeatPayment } from '../services/seatActivationService.js';
+import { cleanupFailedSeatPayment } from '../domains/billing/application/seatCleanup.js';
+import { applySuccessfulPayment } from '../domains/billing/application/applySuccessfulPayment.js';
+import { reconcilePayment } from '../domains/billing/application/reconcilePayment.js';
+import { paystackAmountMismatch } from '../domains/billing/domain/fraud.js';
+import { SUBSCRIPTION_PAGE_URL, getSubscriptionCallbackUrl } from '../domains/billing/domain/urls.js';
 import { MPESA_RECEIPT_PATTERN, MPESA_AMOUNT_PATTERN } from '../utils/mpesaReceipt.js';
-import { verifyWebhookSignature } from '../services/paystackService.js';
+import { sendPushToUser } from '../utils/push.js';
+import { sendEmail } from '../utils/email.js';
+import { renderSubscriptionEmail, SUBSCRIPTION_UNSUBSCRIBE_MAILTO } from '../utils/emailTemplates.js';
 
 const shopIdOf = (req) => req.user.shop._id ?? req.user.shop;
 
@@ -47,26 +53,6 @@ async function resolvePromotion(code) {
     throw err;
   }
   return promotion;
-}
-
-/**
- * The subscription STK callback needs its own public URL. Prefer the
- * dedicated env var; otherwise derive it from the sale-payment callback URL.
- */
-export function getSubscriptionCallbackUrl() {
-  if (process.env.SUBSCRIPTION_MPESA_CALLBACK_URL) return process.env.SUBSCRIPTION_MPESA_CALLBACK_URL;
-  const saleCallback = process.env.MPESA_CALLBACK_URL;
-  if (saleCallback?.includes('/mpesa/callback')) {
-    return saleCallback.replace('/mpesa/callback', '/subscriptions/mpesa/callback');
-  }
-  return null;
-}
-
-function addCycle(date, cycle) {
-  const d = new Date(date);
-  if (cycle === 'yearly') d.setFullYear(d.getFullYear() + 1);
-  else d.setMonth(d.getMonth() + 1);
-  return d;
 }
 
 /**
@@ -248,6 +234,105 @@ export const getMySubscription = async (req, res) => {
   } catch (err) {
     console.error('[Subscriptions] getMySubscription error:', err);
     return res.status(500).json({ success: false, message: 'Failed to load subscription.' });
+  }
+};
+
+const RESEND_THROTTLE_MS = 60 * 1000;
+
+/**
+ * POST /subscriptions/resend-link — owner-triggered version of the reminder
+ * cron's push + email, for the paywall's "Resend payment link" button. The
+ * mobile app has no purchase or checkout surface of its own (Play Store
+ * policy — see SUBSCRIPTION_PAGE_URL), so this is the compliant way to
+ * put the web checkout link back in front of an owner who can't find the
+ * notification or email it originally went out on: the button here only
+ * triggers a send through those same two channels, it never opens a URL
+ * itself. Throttled against `lastReminderSentAt` so a double-tap can't spam
+ * the owner's notification inbox.
+ */
+export const resendRenewalLink = async (req, res) => {
+  try {
+    const shopId = shopIdOf(req);
+    const subscription = await Subscription.findOne({ shop: shopId }).populate('plan', 'name');
+    if (!subscription) {
+      return res.status(404).json({ success: false, message: 'This shop has no subscription yet.' });
+    }
+
+    if (subscription.lastReminderSentAt && Date.now() - subscription.lastReminderSentAt.getTime() < RESEND_THROTTLE_MS) {
+      return res.json({ success: true, message: 'Already sent — check your notifications or email.' });
+    }
+
+    const platform = await PlatformConfig.get();
+    const access = deriveAccess(subscription, platform.gracePeriodDays);
+    const what = access.state === 'trialing' ? 'free trial' : 'subscription';
+    const shopName = req.user.shop?.name;
+
+    const title = 'Your DuQana payment link';
+    const pushBody = 'Tap to renew your subscription and keep your shop running.';
+    const emailMessage =
+      access.state === 'grace'
+        ? `Your ${what} has ended. You have ${access.graceDaysLeft} day${access.graceDaysLeft === 1 ? '' : 's'} left before ${shopName || 'your shop'} pauses — renew below to keep selling without interruption.`
+        : access.state === 'locked'
+          ? `Your ${what} has ended and ${shopName || 'your shop'} is currently paused. Nothing has been deleted — renew below and you're back online immediately.`
+          : `Tap below to renew your DuQana ${what} and keep ${shopName || 'your shop'} running.`;
+
+    // Push and email are independent channels — a failure in one must not
+    // block or misreport the other (this used to silently swallow email
+    // failures and always tell the caller "Sent").
+    let pushSent = true;
+    try {
+      await sendPushToUser(req.user, {
+        title,
+        body: pushBody,
+        data: { type: 'subscription_reminder', kind: 'resend', actionUrl: SUBSCRIPTION_PAGE_URL },
+      });
+    } catch (err) {
+      pushSent = false;
+      console.error('[Subscriptions] resendRenewalLink push failed for', String(req.user._id), '-', err.message);
+    }
+
+    let emailSent = false;
+    if (req.user.email) {
+      const { html, text } = renderSubscriptionEmail({
+        preheader: emailMessage,
+        ownerName: req.user.name,
+        shopName,
+        heading: access.state === 'grace' || access.state === 'locked' ? `Renew to keep ${shopName || 'your shop'} running` : 'Your DuQana renewal link',
+        message: emailMessage,
+        detailRows: [
+          { label: 'Shop', value: shopName },
+          { label: 'Plan', value: subscription.plan?.name },
+        ],
+        ctaLabel: 'Renew now',
+        ctaUrl: SUBSCRIPTION_PAGE_URL,
+      });
+      try {
+        await sendEmail(req.user.email, title, html, text, {
+          'List-Unsubscribe': `<${SUBSCRIPTION_UNSUBSCRIBE_MAILTO}>`,
+        });
+        emailSent = true;
+      } catch (err) {
+        console.error('[Subscriptions] resendRenewalLink email failed for', req.user.email, '-', err.message);
+      }
+    }
+
+    if (!pushSent && !emailSent) {
+      return res.status(502).json({ success: false, message: 'Could not send the payment link right now — please try again shortly.' });
+    }
+
+    subscription.lastReminderSentAt = new Date();
+    await subscription.save();
+
+    const message = emailSent
+      ? 'Sent — check your notifications or email.'
+      : req.user.email
+        ? 'Sent to your notifications. The email is delayed — check back shortly, or look in your spam folder.'
+        : 'Sent — check your notifications.';
+
+    return res.json({ success: true, emailSent, message });
+  } catch (err) {
+    console.error('[Subscriptions] resendRenewalLink error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to send the payment link.' });
   }
 };
 
@@ -451,11 +536,11 @@ export const initiatePayment = async (req, res) => {
     }
 
     // ── 3. Charge via the provider abstraction ─────────────────────────────
-    const callbackUrl = getSubscriptionCallbackUrl();
+    const callbackUrl = withMpesaCallbackSecret(getSubscriptionCallbackUrl());
     if (!callbackUrl) {
       return res.status(503).json({
         success: false,
-        message: 'SUBSCRIPTION_MPESA_CALLBACK_URL is not configured on the server. Contact the app administrator.',
+        message: 'SUBSCRIPTION_MPESA_CALLBACK_URL or MPESA_CALLBACK_SECRET is not configured on the server. Contact the app administrator.',
       });
     }
 
@@ -466,7 +551,7 @@ export const initiatePayment = async (req, res) => {
         phoneNumber,
         amount: amountDue,
         reference: 'DUKANA',
-        description: `Dukana ${plan.name} (${billingCycle})`,
+        description: `DuQana ${plan.name} (${billingCycle})`,
         callbackUrl,
         email: req.user.email,
       });
@@ -675,19 +760,6 @@ export const handleMpesaCallback = async (req, res) => {
 };
 
 /**
- * Paystack's popup runs client-side against the public key (unlike M-Pesa's
- * STK push, which the server initiates with the amount already locked in),
- * so the amount that reaches Paystack passed through the browser. Shared by
- * the webhook and the on-demand reconcile path — both must refuse to credit
- * a mismatch rather than trust whatever the browser told Paystack to charge.
- */
-function paystackAmountMismatch(payment, amountKobo) {
-  if (amountKobo == null) return null;
-  const expectedKobo = Math.round(payment.amount * 100);
-  return amountKobo === expectedKobo ? null : `Amount mismatch: provider confirmed ${amountKobo}, expected ${expectedKobo}.`;
-}
-
-/**
  * POST /subscriptions/paystack/webhook — Paystack's webhook, public (no
  * JWT). Same atomic-claim + idempotent-activation shape as
  * handleMpesaCallback; only `charge.success` is acted on, everything else
@@ -764,172 +836,6 @@ export const handlePaystackWebhook = async (req, res) => {
     return res.status(200).json({ received: true });
   }
 };
-
-/**
- * Extends the subscription for a payment that just succeeded. Idempotent —
- * safe to call more than once for the same payment (the reconciliation path
- * may re-run this for a payment whose activation is uncertain) — a payment
- * only ever gets `periodEnd` set once real processing has happened, so a
- * second call is a no-op rather than double-crediting a promo redemption.
- */
-export async function applySuccessfulPayment(payment) {
-  if (payment.purpose === 'seat_addition') return activateSeatPayment(payment);
-  if (payment.periodEnd) return;
-
-  const subscription = await Subscription.findById(payment.subscription);
-  if (!subscription) {
-    console.error('[Subscriptions Callback] Payment has no subscription:', payment._id);
-    return;
-  }
-
-  const now = new Date();
-  const candidates = [now];
-  if (subscription.trialEnd && subscription.trialEnd > now) candidates.push(new Date(subscription.trialEnd));
-  if (subscription.currentPeriodEnd && subscription.currentPeriodEnd > now) candidates.push(new Date(subscription.currentPeriodEnd));
-  const periodStart = new Date(Math.max(...candidates.map((d) => d.getTime())));
-  const periodEnd = addCycle(periodStart, payment.billingCycle);
-
-  subscription.status = 'active';
-  subscription.plan = payment.plan;
-  subscription.billingCycle = payment.billingCycle;
-  subscription.currentPeriodEnd = periodEnd;
-  subscription.staffCount = payment.staffCount;
-  subscription.amountPaid = payment.amount;
-  subscription.currency = payment.currency;
-  subscription.paymentProvider = payment.provider;
-  subscription.paymentReference = payment.receipt ?? payment.providerRef;
-  subscription.promotion = payment.promotion ?? subscription.promotion;
-  subscription.cancelledAt = null;
-  // Accrued mid-period seat changes were folded into this payment's amount —
-  // settle them so they can't be billed twice on the following invoice.
-  clearSeatAdjustments(subscription);
-  // This shop's own banked referral credit was spent on this payment (see
-  // computePrice's referralCreditPercent) — consumed in full, never
-  // fractioned across future payments, mirroring how promotion redemption is
-  // only counted on confirmed success below, never at initiation.
-  if (payment.referralDiscount > 0) {
-    subscription.referralDiscountPercent = 0;
-  }
-  await subscription.save();
-
-  payment.periodStart = periodStart;
-  payment.periodEnd = periodEnd;
-  await payment.save();
-
-  if (payment.promotion) {
-    await Promotion.updateOne({ _id: payment.promotion }, { $inc: { redemptionCount: 1 } });
-  }
-
-  await rewardReferrerIfFirstConversion(payment.shop);
-}
-
-/**
- * Rewards whoever referred this shop, exactly once, the first time this
- * shop's subscription actually activates. Guarded by
- * Shop.referralRewardGranted rather than inferred from subscription state,
- * so a cancel/resubscribe cycle can never double-reward the referrer and a
- * later admin re-enabling the program can never retroactively reward a
- * conversion that happened while it was off — both cases still flip the flag
- * without granting anything.
- */
-async function rewardReferrerIfFirstConversion(shopId) {
-  const shop = await Shop.findById(shopId).select('referredByShopId referralRewardGranted');
-  if (!shop || !shop.referredByShopId || shop.referralRewardGranted) return;
-
-  const platform = await PlatformConfig.get();
-  const pct = platform.referral?.percentPerReferral ?? 0;
-  const cap = platform.referral?.maxStackedPercent ?? 100;
-
-  if (platform.referral?.enabled && pct > 0) {
-    const referrerSubscription = await Subscription.findOne({ shop: shop.referredByShopId });
-    if (referrerSubscription) {
-      referrerSubscription.referralDiscountPercent = Math.min(
-        (referrerSubscription.referralDiscountPercent || 0) + pct,
-        cap
-      );
-      await referrerSubscription.save();
-    }
-  }
-
-  shop.referralRewardGranted = true;
-  await shop.save();
-}
-
-// M-Pesa result codes, plus Paystack's own textual transaction statuses —
-// distinct alphabets, no collision risk sharing one set.
-const DEFINITIVE_FAILURE_CODES = new Set(['1032', '1037', '1001', '1', '2001', '1025', 'failed', 'abandoned', 'reversed']);
-const CANCELLED_CODES = new Set(['1032', 'abandoned']);
-
-/**
- * Re-verifies a payment directly against Safaricom's STK Push Query — the
- * safety net for whenever the async callback never arrives at all, or
- * arrived but activation didn't complete (the bug this whole reconciliation
- * path exists to recover from). Safe to call on any payment that hasn't
- * been fully activated yet, regardless of its current status: `pending`,
- * `timeout`, or a `success` whose activation silently failed.
- *
- * `receiptHint` (e.g. from a user-pasted M-Pesa SMS) is stored as the
- * receipt when Safaricom's status query itself can't supply one — unlike
- * the callback, the query response never includes the receipt number.
- */
-export async function reconcilePayment(payment, { receiptHint } = {}) {
-  // Subscription payments mark completion via periodEnd; seat-addition
-  // payments never set it (there's no period to extend), so they're
-  // considered resolved once their status says success.
-  const alreadyResolved = payment.purpose === 'seat_addition' ? payment.status === 'success' : !!payment.periodEnd;
-  if (alreadyResolved) {
-    return { payment, changed: false };
-  }
-
-  const provider = getPaymentProvider(payment.provider);
-  if (!provider.queryStatus) {
-    return { payment, changed: false };
-  }
-
-  let result;
-  try {
-    result = await provider.queryStatus({ checkoutRequestId: payment.providerRef });
-  } catch (err) {
-    console.error('[Subscriptions] reconcilePayment query failed:', err.message);
-    return { payment, changed: false };
-  }
-
-  if (result.success) {
-    const mismatch = paystackAmountMismatch(payment, result.amountKobo);
-    if (mismatch) {
-      payment.status = 'failed';
-      payment.resultCode = result.resultCode;
-      payment.errorMessage = mismatch;
-      await payment.save();
-      console.error('[Subscriptions] reconcilePayment', mismatch, 'payment', String(payment._id));
-      return { payment, changed: true };
-    }
-
-    payment.status = 'success';
-    payment.resultCode = result.resultCode;
-    payment.errorMessage = null;
-    payment.receipt = payment.receipt ?? receiptHint ?? null;
-    payment.transactionDate = payment.transactionDate ?? new Date();
-    await payment.save();
-    await applySuccessfulPayment(payment);
-    return { payment, changed: true };
-  }
-
-  if (result.resultCode && DEFINITIVE_FAILURE_CODES.has(result.resultCode)) {
-    const status = CANCELLED_CODES.has(result.resultCode) ? 'cancelled' : 'failed';
-    payment.status = status;
-    payment.resultCode = result.resultCode;
-    payment.errorMessage = result.resultDesc ?? 'Payment did not complete.';
-    await payment.save();
-    await cleanupFailedSeatPayment(payment);
-    return { payment, changed: true };
-  }
-
-  // Inconclusive (still processing on Safaricom's side, or the query itself
-  // errored) — leave the payment exactly as it was; a later reconcile
-  // attempt (cron or another manual recheck) will re-verify.
-  return { payment, changed: false };
-}
 
 /** POST /subscriptions/pay/:paymentId/recheck — on-demand reconciliation. */
 export const recheckPayment = async (req, res) => {

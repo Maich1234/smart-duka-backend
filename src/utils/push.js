@@ -2,6 +2,7 @@ import { getMessaging } from 'firebase-admin/messaging';
 import { getFirebaseAdmin, isFirebaseConfigured } from '../config/firebaseAdmin.js';
 import User from '../models/User.js';
 import Notification from '../models/Notification.js';
+import Shop from '../models/Shop.js';
 
 /** Fills {{name}}/{{shopName}}/etc from a per-recipient vars object. No-op when the string has no placeholders. */
 const interpolate = (str, vars = {}) =>
@@ -12,6 +13,46 @@ const shopIdOf = (user) => user.shop?._id ?? user.shop;
 const shopNameOf = (user) => (typeof user.shop === 'object' ? user.shop?.name : undefined) ?? '';
 const shopLocationOf = (user) => (typeof user.shop === 'object' ? user.shop?.county : undefined) ?? '';
 const personalizationVars = (user) => ({ name: user.name, shopName: shopNameOf(user), location: shopLocationOf(user) });
+
+/**
+ * The shop's logo becomes the notification's large icon/image (Android shows
+ * it inline; iOS needs a Notification Service Extension to render it, so it's
+ * a no-op there until one exists). The small status-bar glyph is unrelated —
+ * Android always masks that one down to a monochrome silhouette from the
+ * static app icon, so a shop logo can never appear there.
+ *
+ * `'logoUrl' in user.shop` distinguishes a populated Shop doc from a bare
+ * ObjectId ref (which has no such property) without an extra query in the
+ * common case where the caller already populated `shop`.
+ */
+const resolveShopLogoUrl = async (user) => {
+  if (user.shop && typeof user.shop === 'object' && 'logoUrl' in user.shop) {
+    return user.shop.logoUrl || undefined;
+  }
+  const id = shopIdOf(user);
+  if (!id) return undefined;
+  const shop = await Shop.findById(id).select('logoUrl').lean();
+  return shop?.logoUrl || undefined;
+};
+
+/** Batched variant of resolveShopLogoUrl for sendPushToUsers — one query for every shop that isn't already populated. */
+const resolveShopLogoUrls = async (users) => {
+  const byShopId = new Map();
+  for (const user of users) {
+    if (user.shop && typeof user.shop === 'object' && 'logoUrl' in user.shop) continue;
+    const id = shopIdOf(user);
+    if (id) byShopId.set(String(id), null);
+  }
+  if (byShopId.size > 0) {
+    const shops = await Shop.find({ _id: { $in: [...byShopId.keys()] } }).select('logoUrl').lean();
+    for (const shop of shops) byShopId.set(String(shop._id), shop.logoUrl || undefined);
+  }
+  return (user) => {
+    if (user.shop && typeof user.shop === 'object' && 'logoUrl' in user.shop) return user.shop.logoUrl || undefined;
+    const id = shopIdOf(user);
+    return id ? byShopId.get(String(id)) ?? undefined : undefined;
+  };
+};
 
 /**
  * Persists the in-app inbox record for a push, independent of whether the
@@ -55,10 +96,11 @@ export const sendPushToUser = async (user, { title, body, data } = {}) => {
   const tokens = user.fcmTokens || [];
   if (tokens.length === 0) return { sent: 0, failed: 0 };
 
+  const imageUrl = await resolveShopLogoUrl(user);
   const app = getFirebaseAdmin();
   const response = await getMessaging(app).sendEachForMulticast({
     tokens,
-    notification: { title: finalTitle, body: finalBody },
+    notification: { title: finalTitle, body: finalBody, ...(imageUrl && { imageUrl }) },
     data: data ? Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)])) : undefined,
   });
 
@@ -114,11 +156,13 @@ export const sendPushToUsers = async (users, { title, body, data } = {}) => {
     return { targeted: users.length, sent: 0, failed: 0 };
   }
 
+  const logoUrlOf = await resolveShopLogoUrls(users);
   const messages = [];
   const tokenOwners = [];
   for (const { user, title: t, body: b } of rendered) {
+    const imageUrl = logoUrlOf(user);
     for (const token of user.fcmTokens || []) {
-      messages.push({ token, notification: { title: t, body: b }, data: payloadData });
+      messages.push({ token, notification: { title: t, body: b, ...(imageUrl && { imageUrl }) }, data: payloadData });
       tokenOwners.push({ token, userId: user._id });
     }
   }

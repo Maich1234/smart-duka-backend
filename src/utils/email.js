@@ -68,8 +68,8 @@ const isTransient = (err) => {
 // The From domain should match the authenticated mailbox — mail hosts commonly
 // refuse, or spam-file, envelopes that claim an unrelated sender.
 //
-// SMTP_FROM is easy to set wrongly: `SMTP_FROM="Dukana" <noreply@x.com>` in a
-// .env parses to the bare display name `Dukana`, because the quoted section
+// SMTP_FROM is easy to set wrongly: `SMTP_FROM="DuQana" <noreply@x.com>` in a
+// .env parses to the bare display name `DuQana`, because the quoted section
 // terminates the value. Nodemailer then finds no address and sends MAIL FROM:<>,
 // a null return-path reserved for bounces, which receivers spam-file or reject.
 // So an SMTP_FROM with no address in it is treated as a display name only.
@@ -79,8 +79,8 @@ const fromAddress = () => {
 
   if (configured?.includes('@')) return configured;
   if (configured && user) return `"${configured.replace(/"/g, '')}" <${user}>`;
-  if (user) return `"Dukana" <${user}>`;
-  return '"Dukana" <noreply@dukana.com>';
+  if (user) return `"DuQana" <${user}>`;
+  return '"DuQana" <noreply@duqana.app>';
 };
 
 // Built per send: nodemailer opens no connection here (there is no pool), so
@@ -109,15 +109,17 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * @param {string} subject - Email subject
  * @param {string} html - HTML content
  * @param {string} text - Plain text fallback (optional)
+ * @param {Record<string,string>} [headers] - Extra SMTP headers (e.g. List-Unsubscribe)
  * @throws {MailDeliveryError}
  */
-export const sendEmail = async (to, subject, html, text = null) => {
+export const sendEmail = async (to, subject, html, text = null, headers = undefined) => {
   const mailOptions = {
     from: fromAddress(),
     to,
     subject,
     html,
     text: text || html.replace(/<[^>]*>/g, ''), // simple plain text fallback
+    ...(headers ? { headers } : {}),
   };
 
   const deadline = Date.now() + SEND_BUDGET_MS;
@@ -176,11 +178,11 @@ export const sendOTPEmail = async (to, otp, name = 'User') => {
   const html = `
     <!DOCTYPE html>
     <html>
-    <head><meta charset="UTF-8"><title>Password Reset OTP - Dukana</title></head>
+    <head><meta charset="UTF-8"><title>Password Reset OTP - DuQana</title></head>
     <body style="font-family: sans-serif;">
       <div style="max-width: 500px; margin: 40px auto; background: #fff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
         <div style="background-color: #1B4F3D; padding: 24px; text-align: center;">
-          <h1 style="color: #fff; margin: 0;">Dukana</h1>
+          <h1 style="color: #fff; margin: 0;">DuQana</h1>
         </div>
         <div style="padding: 32px 24px;">
           <p>Hello <strong>${escapeHtml(name)}</strong>,</p>
@@ -190,7 +192,7 @@ export const sendOTPEmail = async (to, otp, name = 'User') => {
           <p>If you did not request this, please ignore this email.</p>
         </div>
         <div style="background-color: #f8fafc; padding: 16px; text-align: center; font-size: 12px; color: #64748b;">
-          &copy; ${new Date().getFullYear()} Dukana. All rights reserved.
+          &copy; ${new Date().getFullYear()} DuQana. All rights reserved.
         </div>
       </div>
     </body>
@@ -198,7 +200,7 @@ export const sendOTPEmail = async (to, otp, name = 'User') => {
   `;
   const text = `Hello ${name},\n\nYou requested to reset your password. Your OTP is: ${otp}\nThis code expires in 10 minutes.\n\nIf you did not request this, please ignore this email.`;
 
-  await sendEmail(to, 'Password Reset OTP - Dukana', html, text);
+  await sendEmail(to, 'Password Reset OTP - DuQana', html, text);
 };
 
 function escapeHtml(str) {

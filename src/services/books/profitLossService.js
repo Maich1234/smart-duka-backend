@@ -8,7 +8,7 @@ import { buildBookDocument, money, periodBounds } from './bookDocument.js';
  *
  * Called *Simplified* on purpose, and the footnotes say why. It is not an
  * IFRS statement: there is no depreciation, no accruals, no tax line and no
- * opening/closing stock adjustment, because Dukana does not capture the
+ * opening/closing stock adjustment, because DuQana does not capture the
  * inputs for any of them. A shopkeeper taking this to a lender should be able
  * to see from the document itself what it does and doesn't cover.
  *
@@ -101,7 +101,7 @@ export async function buildProfitLoss({ shop, ownerName, from, to }) {
 
   const footnotes = [
     'Simplified Profit & Loss — not an IFRS or audited financial statement.',
-    'Excludes depreciation, tax, and any opening/closing stock adjustment, none of which Dukana records.',
+    'Excludes depreciation, tax, and any opening/closing stock adjustment, none of which DuQana records.',
     'Cost of goods sold uses the cost captured at the moment of each sale, so later price changes never rewrite past profit.',
   ];
   if (refunded > 0) {

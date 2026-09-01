@@ -159,13 +159,35 @@ const shopSchema = new mongoose.Schema({
     uppercase: true,
     maxlength: 40,
   },
-  // Which shop referredByCode actually resolved to, if it matched another
-  // shop's own code (not an agent's) — the link the referral-discount reward
-  // is paid against. Null if referredByCode was empty, an agent's code, or a
-  // typo that matched nothing.
+  // Which kind of code referredByCode actually resolved to — drives which of
+  // the *ById fields below is populated and which reward path
+  // rewardReferrerIfFirstConversion takes. Null if referredByCode was empty
+  // or a typo that matched nothing.
+  referredByType: {
+    type: String,
+    enum: ['shop', 'staff', 'agent', null],
+    default: null,
+  },
+  // Populated only when referredByType === 'shop' — the link the
+  // shop-owner referral-discount reward is paid against.
   referredByShopId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Shop',
+    default: null,
+  },
+  // Populated only when referredByType === 'staff' — the referring
+  // employee's User._id, the link the employee cash-bonus ledger
+  // (EmployeeReferralPayout) is created against.
+  referredByStaffId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+  },
+  // Populated only when referredByType === 'agent'. No `ref`: Agent lives in
+  // dukana-admin-backend's own database, unreachable from this connection —
+  // same reasoning CommissionRecord.js uses for its own cross-DB id fields.
+  referredByAgentId: {
+    type: mongoose.Schema.Types.ObjectId,
     default: null,
   },
   // This shop's own shareable code — generated once at registration, unique.

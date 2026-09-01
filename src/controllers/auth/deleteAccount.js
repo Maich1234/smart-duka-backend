@@ -161,7 +161,7 @@ async function notifyOwnerOfDeletionRequest(staffUser) {
 
   await sendPushToUser(owner, {
     title: 'Staff account closure request',
-    body: `${staffUser.name} has asked to close their Dukana account. Open their profile to approve or decline.`,
+    body: `${staffUser.name} has asked to close their DuQana account. Open their profile to approve or decline.`,
     data: { type: 'staff_deletion_request', staffId: String(staffUser._id) },
   });
 }
@@ -475,7 +475,7 @@ export async function remindScheduledDeletions(now = new Date()) {
     const days = Math.max(1, Math.ceil((new Date(user.deletionScheduledAt) - now) / DAY_MS));
     await sendPushToUser(user, {
       title: 'Your account closes soon',
-      body: `Dukana will close your account in ${days} day${days === 1 ? '' : 's'}. Open the app to cancel.`,
+      body: `DuQana will close your account in ${days} day${days === 1 ? '' : 's'}. Open the app to cancel.`,
       data: { type: 'account_deletion_pending' },
     }).catch(() => {});
   }

@@ -1,4 +1,5 @@
 import User from '../models/User.js';
+import Subscription from '../models/Subscription.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -180,6 +181,24 @@ export function deriveAccess(subscription, gracePeriodDays = 3, now = new Date()
   }
 
   return { state: 'locked', daysLeft: 0, graceDaysLeft: 0, expiresAt, cancelled };
+}
+
+const ACCESS_ALLOWED_FOR_INSIGHTS = ['trialing', 'active', 'grace'];
+
+/**
+ * Narrows a shop list down to shops with live access (trialing/active/grace)
+ * — used by the routine insight crons (daily sales anomaly, depletion,
+ * end-of-day summary) so a locked shop doesn't keep getting analytics pushes
+ * for a screen its owner can no longer open. Subscription reminders are a
+ * separate cron and deliberately keep notifying locked shops too.
+ */
+export async function filterShopsWithActiveAccess(shops, gracePeriodDays) {
+  const subscriptions = await Subscription.find({ shop: { $in: shops.map((s) => s._id) } }).lean();
+  const byShop = new Map(subscriptions.map((s) => [String(s.shop), s]));
+  return shops.filter((shop) => {
+    const access = deriveAccess(byShop.get(String(shop._id)) ?? null, gracePeriodDays);
+    return ACCESS_ALLOWED_FOR_INSIGHTS.includes(access.state);
+  });
 }
 
 /**

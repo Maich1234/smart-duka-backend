@@ -18,7 +18,7 @@ const columnWidth = (type) => (type === 'money' ? 16 : type === 'date' ? 14 : ty
 
 export async function renderXlsx(doc) {
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'Dukana';
+  wb.creator = 'DuQana';
   wb.created = new Date(doc.meta.generatedAt);
 
   const ws = wb.addWorksheet(doc.title.slice(0, 31));
@@ -44,7 +44,7 @@ export async function renderXlsx(doc) {
   }
 
   if (doc.stamp) {
-    const stamp = ws.addRow([`Verified by Dukana · Document ${doc.stamp.documentId}`]);
+    const stamp = ws.addRow([`Verified by DuQana · Document ${doc.stamp.documentId}`]);
     stamp.font = { size: 10, bold: true, color: { argb: 'FF0F766E' } };
     ws.mergeCells(stamp.number, 1, stamp.number, Math.max(colCount, 2));
     const link = ws.addRow([doc.stamp.verifyUrl]);
@@ -141,12 +141,12 @@ export async function renderXlsx(doc) {
 
   if (doc.stamp) {
     ws.addRow([]);
-    const heading = ws.addRow(['Verified by Dukana']);
+    const heading = ws.addRow(['Verified by DuQana']);
     heading.font = { bold: true, size: 11, color: { argb: 'FF0F766E' } };
     for (const [label, value] of [
       ['Document', doc.stamp.documentId],
       ['Check at', doc.stamp.verifyUrl],
-      ['', 'Confirms this came from Dukana and has not been altered. Not an audit.'],
+      ['', 'Confirms this came from DuQana and has not been altered. Not an audit.'],
     ]) {
       const row = ws.addRow([label, value]);
       row.font = { size: 9, color: { argb: 'FF64748B' } };

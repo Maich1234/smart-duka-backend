@@ -12,6 +12,21 @@ export function normalizeKenyanPhone(phone) {
   return String(phone).replace(/^\+/, '');
 }
 
+/**
+ * Safaricom's Daraja API has no callback-signing mechanism, so every
+ * callback URL we hand it embeds this shared secret as its final path
+ * segment instead — checked by verifyMpesaCallbackToken on the receiving
+ * route. Without this, anyone who learns a pending transaction's reference
+ * (e.g. a staff member reading their own /mpesa/initiate response) could
+ * POST a forged "payment succeeded"/"refund succeeded" result straight to
+ * the endpoint. Returns null if the server isn't configured with a secret.
+ */
+export function withMpesaCallbackSecret(baseUrl) {
+  const secret = process.env.MPESA_CALLBACK_SECRET;
+  if (!secret || !baseUrl) return null;
+  return `${baseUrl.replace(/\/+$/, '')}/${secret}`;
+}
+
 function getTimestamp() {
   return new Date()
     .toISOString()
@@ -95,7 +110,7 @@ export async function initiateSTKPush({ config, phoneNumber, amount, accountRefe
     PartyB: config.shortcode,
     PhoneNumber: phone,
     CallBackURL: callbackUrl,
-    AccountReference: accountReference || 'Dukana',
+    AccountReference: accountReference || 'DuQana',
     TransactionDesc: transactionDesc || 'Sale Payment',
   };
 

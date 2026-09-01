@@ -4,8 +4,9 @@ import User from '../src/models/User.js';
 import Subscription from '../src/models/Subscription.js';
 import SubscriptionPayment from '../src/models/SubscriptionPayment.js';
 import PlatformConfig from '../src/models/PlatformConfig.js';
-import mpesaProvider from '../src/services/payments/mpesaProvider.js';
-import { activateSeatPayment, cleanupFailedSeatPayment } from '../src/services/seatActivationService.js';
+import mpesaProvider from '../src/domains/billing/infra/payments/mpesaProvider.js';
+import { activateSeatPayment } from '../src/services/seatActivationService.js';
+import { cleanupFailedSeatPayment } from '../src/domains/billing/application/seatCleanup.js';
 import { resolveStaffEmailSlot, initiateSeatPayment } from '../src/controllers/seatPaymentController.js';
 import { createStaff, updateStaff, deleteStaff } from '../src/controllers/staffController.js';
 
@@ -45,6 +46,7 @@ function makeRes() {
 beforeEach(() => {
   mock.restoreAll();
   process.env.SUBSCRIPTION_MPESA_CALLBACK_URL = 'https://example.test/subscriptions/mpesa/callback';
+  process.env.MPESA_CALLBACK_SECRET = 'test-secret';
   // createStaff reads this to decide whether to recommend an immediate
   // top-up payment; default it off so tests that don't care about that
   // feature aren't left hanging on an unmocked DB call.

@@ -3,16 +3,23 @@ import User from '../models/User.js';
 import NotificationLog from '../models/NotificationLog.js';
 import Subscription from '../models/Subscription.js';
 import SubscriptionPayment from '../models/SubscriptionPayment.js';
+import SubscriptionPlan from '../models/SubscriptionPlan.js';
 import PlatformConfig from '../models/PlatformConfig.js';
 import PushCampaign from '../models/PushCampaign.js';
 import { sendPushToUser } from '../utils/push.js';
 import { sendEmail } from '../utils/email.js';
+import { renderSubscriptionEmail, SUBSCRIPTION_UNSUBSCRIBE_MAILTO } from '../utils/emailTemplates.js';
 import { getDepletionAnalytics } from '../services/depletionService.js';
 import { generateDailySummary } from '../services/dailySummaryService.js';
 import { dueReminder } from '../services/subscriptionPricingService.js';
 import { detectSalesAnomaly } from '../services/intelligence/salesAnomalyService.js';
 import { claimAndDispatchCampaign } from '../services/pushCampaignService.js';
-import { reconcilePayment } from './subscriptionController.js';
+import { reconcilePayment } from '../domains/billing/application/reconcilePayment.js';
+import { SUBSCRIPTION_PAGE_URL } from '../domains/billing/domain/urls.js';
+import BillingEvent from '../domains/billing/events/BillingEvent.js';
+import { publishToQStash } from '../domains/billing/events/publish.js';
+import { dispatchBillingEvent } from '../domains/billing/events/dispatch.js';
+import { filterShopsWithActiveAccess } from '../services/subscriptionPricingService.js';
 import {
   purgeScheduledDeletions,
   remindScheduledDeletions,
@@ -20,12 +27,6 @@ import {
 } from './auth/deleteAccount.js';
 
 const STOCKOUT_CRITICAL_DAYS = 3;
-
-// Same PUBLIC_WEB_URL convention as utils/bookStamp.js. The web app already
-// has a complete, tested checkout flow at this path — the mobile app has no
-// purchase surface (Play Store policy), so this is the only place a renewal
-// link may point.
-const SUBSCRIPTION_PAGE_URL = `${(process.env.PUBLIC_WEB_URL || 'https://smart-duka-web-delta.vercel.app').replace(/\/+$/, '')}/owner/subscription`;
 
 let warnedMissingCronSecret = false;
 
@@ -56,7 +57,12 @@ export const dailySalesCheck = async (req, res) => {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
 
-  const shops = await Shop.find({ isActive: true });
+  const platform = await PlatformConfig.get();
+  // Locked shops can't open the screen this push is about (the owner tab
+  // layout funnels every route to the paywall) — skip them rather than
+  // spend a push, and the underlying Gemini/analytics work, on a shop that
+  // can't act on it.
+  const shops = await filterShopsWithActiveAccess(await Shop.find({ isActive: true }), platform.gracePeriodDays);
   const notified = [];
   const failed = [];
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -101,7 +107,11 @@ export const depletionAlerts = async (req, res) => {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
 
-  const shops = await Shop.find({ isActive: true });
+  const platform = await PlatformConfig.get();
+  // Same reasoning as dailySalesCheck: a locked shop's owner is funneled to
+  // the paywall for every route, so a depletion alert would just push them
+  // to a screen they can't open.
+  const shops = await filterShopsWithActiveAccess(await Shop.find({ isActive: true }), platform.gracePeriodDays);
   const notified = [];
   const failed = [];
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -148,7 +158,14 @@ export const dailyBusinessSummary = async (req, res) => {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
 
-  const shops = await Shop.find({ isActive: true, shiftManagementEnabled: true });
+  const platform = await PlatformConfig.get();
+  // Same reasoning as dailySalesCheck: a locked shop's owner is funneled to
+  // the paywall for every route, so a summary push would just point them at
+  // a screen they can't open.
+  const shops = await filterShopsWithActiveAccess(
+    await Shop.find({ isActive: true, shiftManagementEnabled: true }),
+    platform.gracePeriodDays,
+  );
   const todayStr = new Date().toISOString().slice(0, 10);
   const notified = [];
   const failed = [];
@@ -222,6 +239,20 @@ export const subscriptionReminders = async (req, res) => {
 
   const notified = [];
   const failed = [];
+  const emailFailures = [];
+
+  // Batch-fetched by id rather than populated onto `subscription` itself,
+  // so `subscription.shop`/`subscription.plan` stay raw ObjectIds everywhere
+  // below (User.find, notified/failed logging) exactly as before — only the
+  // email copy needs the display names.
+  const shopIds = [...new Set(candidates.map((s) => String(s.shop)))];
+  const planIds = [...new Set(candidates.map((s) => s.plan).filter(Boolean).map(String))];
+  const [shopDocs, planDocs] = await Promise.all([
+    Shop.find({ _id: { $in: shopIds } }, 'name').lean(),
+    SubscriptionPlan.find({ _id: { $in: planIds } }, 'name').lean(),
+  ]);
+  const shopNameById = new Map(shopDocs.map((s) => [String(s._id), s.name]));
+  const planNameById = new Map(planDocs.map((p) => [String(p._id), p.name]));
 
   for (const subscription of candidates) {
     try {
@@ -232,15 +263,17 @@ export const subscriptionReminders = async (req, res) => {
       const what = access.state === 'trialing' || (access.state === 'grace' && !subscription.currentPeriodEnd)
         ? 'free trial'
         : 'subscription';
+      const shopName = shopNameById.get(String(subscription.shop));
+      const planName = planNameById.get(String(subscription.plan));
 
       let title;
       let body;
       if (due.kind === 'grace') {
-        title = '⚠️ Your Dukana access is about to pause';
+        title = 'Your DuQana access is about to pause';
         body = `Your ${what} has ended. Pay within ${access.graceDaysLeft} day${access.graceDaysLeft === 1 ? '' : 's'} to keep selling without interruption.`;
       } else {
         const days = access.daysLeft;
-        title = days <= 3 ? `⏳ ${days} day${days === 1 ? '' : 's'} left on your ${what}` : `Your Dukana ${what} ends soon`;
+        title = days <= 3 ? `${days} day${days === 1 ? '' : 's'} left on your ${what}` : `Your DuQana ${what} ends soon`;
         body = `Your ${what} ends in ${days} day${days === 1 ? '' : 's'}. Renew with M-PESA in a minute to keep your shop running.`;
       }
 
@@ -254,16 +287,36 @@ export const subscriptionReminders = async (req, res) => {
 
         // Best-effort: push + inbox above already succeeded independently, so a
         // slow/flaky mail host (documented ~26-27s response times) must not
-        // fail the whole reminder for this shop.
+        // fail the whole reminder for this shop. The failure is still tracked
+        // (emailFailures) instead of only console-logged, so it's visible in
+        // the cron's own response rather than silently miscounted as notified.
         if (owner.email) {
+          const { html, text } = renderSubscriptionEmail({
+            preheader: body,
+            ownerName: owner.name,
+            shopName,
+            heading: due.kind === 'grace' ? `Renew to keep ${shopName || 'your shop'} running` : 'Your subscription is ending soon',
+            message: body,
+            detailRows: [
+              { label: 'Shop', value: shopName },
+              { label: 'Plan', value: planName },
+              {
+                label: 'Renews',
+                value: access.expiresAt
+                  ? access.expiresAt.toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })
+                  : null,
+              },
+            ],
+            ctaLabel: 'Renew now',
+            ctaUrl: SUBSCRIPTION_PAGE_URL,
+          });
           try {
-            await sendEmail(
-              owner.email,
-              title,
-              `<p>${body}</p><p><a href="${SUBSCRIPTION_PAGE_URL}">Renew now</a></p>`
-            );
+            await sendEmail(owner.email, title, html, text, {
+              'List-Unsubscribe': `<${SUBSCRIPTION_UNSUBSCRIBE_MAILTO}>`,
+            });
           } catch (err) {
             console.error('[cron] subscription reminder email failed for', owner.email, '-', err.message);
+            emailFailures.push({ shop: String(subscription.shop), owner: owner.email });
           }
         }
       }
@@ -278,7 +331,14 @@ export const subscriptionReminders = async (req, res) => {
     }
   }
 
-  res.json({ success: true, processed: candidates.length, notified: notified.length, failed, results: notified });
+  res.json({
+    success: true,
+    processed: candidates.length,
+    notified: notified.length,
+    failed,
+    emailFailures,
+    results: notified,
+  });
 };
 
 /**
@@ -347,6 +407,45 @@ export const subscriptionPaymentReconcile = async (req, res) => {
   }
 
   res.json({ success: true, processed: candidates.length, reconciled: results.length, results });
+};
+
+/**
+ * GET /cron/billing-events-sweep — durability backstop for the QStash
+ * outbox. QStash's own automatic retries (and DLQ) handle the common case;
+ * this only matters when the initial publish itself silently failed (no
+ * `publishedAt`) or a claimed dispatch never finished (frozen mid-run,
+ * `publishedAt` set but still `pending`/`processing` long after). Runs once
+ * daily via Vercel Cron — the Hobby plan only allows daily cron jobs, so
+ * this backstop's own worst case is ~24h, acceptable since it's a narrow
+ * second-order fallback, not the primary retry path.
+ */
+export const billingEventsSweep = async (req, res) => {
+  if (!verifyCronSecret(req)) {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
+  }
+
+  const staleCutoff = new Date(Date.now() - 10 * 60 * 1000);
+  const stale = await BillingEvent.find({
+    status: { $in: ['pending', 'processing'] },
+    createdAt: { $lt: staleCutoff },
+  });
+
+  const results = [];
+  for (const event of stale) {
+    try {
+      if (!event.publishedAt) {
+        await publishToQStash(event);
+        results.push({ event: String(event._id), action: 'republished' });
+      } else {
+        const { status } = await dispatchBillingEvent(event._id);
+        results.push({ event: String(event._id), action: 'dispatched', status });
+      }
+    } catch (err) {
+      console.error('[cron] billing events sweep failed for', String(event._id), err.message);
+    }
+  }
+
+  res.json({ success: true, processed: stale.length, swept: results.length, results });
 };
 
 /**

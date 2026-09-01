@@ -31,7 +31,7 @@ app.use((req, res, next) => {
 // Health check stays above the DB middleware so uptime probes don't open a
 // Mongo connection.
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Dukana API is running' });
+  res.json({ status: 'OK', message: 'DuQana API is running' });
 });
 
 app.use(async (req, res, next) => {

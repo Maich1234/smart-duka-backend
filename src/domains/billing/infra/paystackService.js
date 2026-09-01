@@ -1,11 +1,11 @@
 import crypto from 'crypto';
-import PlatformConfig from '../models/PlatformConfig.js';
-import { decrypt } from './encryptionService.js';
+import PlatformConfig from '../../../models/PlatformConfig.js';
+import { decrypt } from '../../../services/encryptionService.js';
 
 const BASE_URL = 'https://api.paystack.co';
 
 /**
- * Reads Dukana's own Paystack account — platform-level, like the Daraja
+ * Reads DuQana's own Paystack account — platform-level, like the Daraja
  * credentials in mpesaProvider, never a shop's own config. Admin-managed
  * (super-admin → Platform Config), same as M-Pesa, rather than env vars —
  * lets it be set/rotated/disabled without a deploy.
@@ -18,7 +18,7 @@ export async function getConfig() {
   if (!paystack?.publicKey) missing.push('Public Key');
   if (!paystack?.secretKey) missing.push('Secret Key');
   if (missing.length > 0) {
-    const err = new Error(`Dukana platform Paystack is not configured (${missing.join(', ')}). Configure it from the super-admin Platform Config page.`);
+    const err = new Error(`DuQana platform Paystack is not configured (${missing.join(', ')}). Configure it from the super-admin Platform Config page.`);
     err.code = 'PLATFORM_PAYMENTS_UNCONFIGURED';
     throw err;
   }

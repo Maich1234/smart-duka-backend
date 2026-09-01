@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import PaymentConfig from '../models/PaymentConfig.js';
 import MpesaTransaction from '../models/MpesaTransaction.js';
 import Sale from '../models/Sale.js';
-import { initiateSTKPush, parseSTKCallback, parseReversalResult, normalizeKenyanPhone } from '../services/mpesaService.js';
+import { initiateSTKPush, parseSTKCallback, parseReversalResult, normalizeKenyanPhone, withMpesaCallbackSecret } from '../services/mpesaService.js';
 import { restoreSaleStock } from '../services/saleStockService.js';
 import { logAudit } from '../services/auditLogService.js';
 
@@ -77,11 +77,11 @@ export const initiatePayment = async (req, res) => {
       });
     }
 
-    const CALLBACK_URL = process.env.MPESA_CALLBACK_URL;
+    const CALLBACK_URL = withMpesaCallbackSecret(process.env.MPESA_CALLBACK_URL);
     if (!CALLBACK_URL) {
       return res.status(503).json({
         success: false,
-        message: 'MPESA_CALLBACK_URL is not configured on the server. Contact the app administrator.',
+        message: 'MPESA_CALLBACK_URL or MPESA_CALLBACK_SECRET is not configured on the server. Contact the app administrator.',
       });
     }
 
@@ -92,7 +92,7 @@ export const initiatePayment = async (req, res) => {
         config: mpesaConfig,
         phoneNumber,
         amount,
-        accountReference: accountReference || 'Dukana',
+        accountReference: accountReference || 'DuQana',
         transactionDesc: 'Sale Payment',
         callbackUrl: CALLBACK_URL,
       });
@@ -114,7 +114,7 @@ export const initiatePayment = async (req, res) => {
         merchantRequestId: stkResult.merchantRequestId,
         phoneNumber: normalizeKenyanPhone(phoneNumber),
         amount,
-        accountReference: accountReference || 'Dukana',
+        accountReference: accountReference || 'DuQana',
         status: 'pending',
         requestedBy: req.user._id,
         ...(idempotencyKey && { idempotencyKey }),

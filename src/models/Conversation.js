@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-// One thread per owner's chat with Dukana AI. `owner` is explicit rather
+// One thread per owner's chat with DuQana AI. `owner` is explicit rather
 // than inferred from `shop` so a future multi-owner shop still scopes
 // conversations per person, not per shop.
 const conversationSchema = new mongoose.Schema({

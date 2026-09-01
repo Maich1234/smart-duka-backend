@@ -1,4 +1,4 @@
-const SYSTEM_EMAIL_ROOT = 'dukana.app';
+const SYSTEM_EMAIL_ROOT = 'duqana.app';
 const SLUG_LENGTH_THRESHOLD = 15;
 
 function wordsOf(name) {

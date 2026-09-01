@@ -12,7 +12,7 @@ async function main() {
   await mongoose.connect(process.env.MONGO_URI);
 
   // NB: this address is a literal lookup key for a row that already exists in
-  // production, created before the Dukana rename. It is deliberately NOT
+  // production, created before the DuQana rename. It is deliberately NOT
   // renamed — changing it makes this query match nothing and the backfill
   // silently no-ops. Same reason `admin@wabunifu.com` below stays as-is.
   const superAdminResult = await AdminUser.updateOne(

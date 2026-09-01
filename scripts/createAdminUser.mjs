@@ -1,5 +1,5 @@
 /**
- * Bootstraps a Dukana internal admin account. Most accounts are now
+ * Bootstraps a DuQana internal admin account. Most accounts are now
  * created via the admin-management API (super_admin only, see
  * adminManagementController.js); this script remains as a break-glass
  * bootstrap path independent of the API/DB app layer — e.g. for creating

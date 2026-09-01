@@ -8,14 +8,14 @@
 export const HELP_TOPICS = [
   {
     slug: 'getting-started',
-    title: 'Getting Started with Dukana',
+    title: 'Getting Started with DuQana',
     category: 'Getting Started',
-    summary: 'What Dukana does, and the difference between an owner and a staff account.',
+    summary: 'What DuQana does, and the difference between an owner and a staff account.',
     keywords: ['intro', 'overview', 'owner', 'staff', 'role', 'account'],
     sections: [
       {
         paragraphs: [
-          'Dukana helps you run a shop from your phone: add products, record sales, track stock, manage staff, and see reports — all in one place.',
+          'DuQana helps you run a shop from your phone: add products, record sales, track stock, manage staff, and see reports — all in one place.',
         ],
       },
       {
@@ -130,7 +130,7 @@ export const HELP_TOPICS = [
         bullets: [
           'Quantity — how many you currently have in stock',
           "Track Inventory — turn this off for items you don't want stock warnings for (it's switched off automatically for Bundles and Variant products, since their stock comes from their parts)",
-          'Low Stock Alert — the quantity at which Dukana warns you to restock',
+          'Low Stock Alert — the quantity at which DuQana warns you to restock',
         ],
       },
       {
@@ -166,7 +166,7 @@ export const HELP_TOPICS = [
       {
         heading: 'Low Stock Alert',
         paragraphs: [
-          'Each product has a Low Stock Alert number. When the quantity on hand drops to or below that number, Dukana flags it as low stock and can send you a notification, so you know to restock before you run out.',
+          'Each product has a Low Stock Alert number. When the quantity on hand drops to or below that number, DuQana flags it as low stock and can send you a notification, so you know to restock before you run out.',
         ],
       },
       {
@@ -187,7 +187,7 @@ export const HELP_TOPICS = [
     sections: [
       {
         paragraphs: [
-          'If you sell a combination of products together as one item — a combo meal, a cleaning kit, a gift set — set it up as a Bundle. A Bundle is Dukana\'s version of a "recipe" or bill of materials: instead of tracking its own stock, it\'s made of a list of other products and quantities.',
+          'If you sell a combination of products together as one item — a combo meal, a cleaning kit, a gift set — set it up as a Bundle. A Bundle is DuQana\'s version of a "recipe" or bill of materials: instead of tracking its own stock, it\'s made of a list of other products and quantities.',
         ],
       },
       {
@@ -195,7 +195,7 @@ export const HELP_TOPICS = [
         bullets: [
           'Create the Bundle product and give it its own selling price (usually less than buying the parts separately)',
           'Add each component product and how many of it the bundle uses',
-          'When a Bundle is sold, Dukana automatically reduces the stock of each component — you never adjust the bundle\'s own stock',
+          'When a Bundle is sold, DuQana automatically reduces the stock of each component — you never adjust the bundle\'s own stock',
           'The bundle is only available to sell if all of its components are in stock',
         ],
       },
@@ -214,7 +214,7 @@ export const HELP_TOPICS = [
     sections: [
       {
         paragraphs: [
-          "Dukana's discounts are \"Buy X Get Y Free\" promotions set up on individual products — there's no separate percentage-off or coupon-code discount, and cashiers never type in a discount at checkout.",
+          "DuQana's discounts are \"Buy X Get Y Free\" promotions set up on individual products — there's no separate percentage-off or coupon-code discount, and cashiers never type in a discount at checkout.",
         ],
       },
       {
@@ -227,7 +227,7 @@ export const HELP_TOPICS = [
       {
         heading: 'How it applies at checkout',
         paragraphs: [
-          "There's nothing for staff to turn on — the moment a customer buys enough of a product to qualify, Dukana applies the best available promotion for that product automatically and reduces the total. If a product has more than one promotion, only the one that saves the customer the most is used; they don't stack.",
+          "There's nothing for staff to turn on — the moment a customer buys enough of a product to qualify, DuQana applies the best available promotion for that product automatically and reduces the total. If a product has more than one promotion, only the one that saves the customer the most is used; they don't stack.",
         ],
       },
       {
@@ -357,7 +357,7 @@ export const HELP_TOPICS = [
       {
         heading: 'The QR code',
         paragraphs: [
-          'Each receipt includes a unique QR code. Scanning it opens a page inside Dukana showing "Verified Authentic Receipt" with the receipt details — this proves the receipt is genuine and wasn\'t altered.',
+          'Each receipt includes a unique QR code. Scanning it opens a page inside DuQana showing "Verified Authentic Receipt" with the receipt details — this proves the receipt is genuine and wasn\'t altered.',
         ],
       },
       {
@@ -403,27 +403,27 @@ export const HELP_TOPICS = [
   },
   {
     slug: 'smart-duka-ai',
-    title: 'Dukana AI',
-    category: 'Dukana AI',
-    summary: 'What Dukana AI does, how to turn it on, and what data it uses.',
-    keywords: ['ai', 'gemini', 'dukana ai', 'insights', 'chat', 'business consultant', 'privacy', 'toggle'],
+    title: 'DuQana AI',
+    category: 'DuQana AI',
+    summary: 'What DuQana AI does, how to turn it on, and what data it uses.',
+    keywords: ['ai', 'gemini', 'duqana ai', 'insights', 'chat', 'business consultant', 'privacy', 'toggle'],
     sections: [
       {
         paragraphs: [
-          'Dukana AI is an optional, subscription-included feature that reads a summary of your shop\'s real numbers and explains them in plain language — it doesn\'t generate its own figures or make decisions for you. It powers the Daily Insight and the "Ask Dukana" business chat.',
+          'DuQana AI is an optional, subscription-included feature that reads a summary of your shop\'s real numbers and explains them in plain language — it doesn\'t generate its own figures or make decisions for you. It powers the Daily Insight and the "Ask DuQana" business chat.',
         ],
       },
       {
         heading: 'Turning it on or off',
         paragraphs: [
-          "Go to Profile → Dukana AI. If you're on an active subscription, you'll see a switch — turn it on to start using Daily Insight and chat. Turning it off immediately stops any data being sent to Gemini; your shop keeps working as normal, just without the AI features.",
+          "Go to Profile → DuQana AI. If you're on an active subscription, you'll see a switch — turn it on to start using Daily Insight and chat. Turning it off immediately stops any data being sent to Gemini; your shop keeps working as normal, just without the AI features.",
         ],
       },
       {
         heading: 'What it can do',
         bullets: [
           'Daily Insight — a health score and a short explanation of what changed in your business today',
-          'Ask Dukana — a chat where you can ask questions about your sales, stock, staff, and expenses',
+          'Ask DuQana — a chat where you can ask questions about your sales, stock, staff, and expenses',
         ],
       },
       {
@@ -435,7 +435,7 @@ export const HELP_TOPICS = [
       {
         heading: 'Subscription required',
         paragraphs: [
-          "Dukana AI is included with any active subscription (trial, paid, or grace period). If your subscription isn't active, Profile shows what the feature offers and the current status of your subscription.",
+          "DuQana AI is included with any active subscription (trial, paid, or grace period). If your subscription isn't active, Profile shows what the feature offers and the current status of your subscription.",
         ],
       },
     ],
@@ -449,13 +449,13 @@ export const HELP_TOPICS = [
     keywords: ['faq', 'frequently asked questions', 'free', 'offline', 'mpesa', 'staff', 'security', 'data'],
     sections: [
       {
-        heading: 'Is Dukana free to use?',
+        heading: 'Is DuQana free to use?',
         paragraphs: [
           'Yes. The Free plan lets you get started with up to 50 products and 1 staff account at no cost. Upgrade when you need more.',
         ],
       },
       {
-        heading: 'Does Dukana work offline?',
+        heading: 'Does DuQana work offline?',
         paragraphs: [
           'Yes. The mobile app queues sales offline and syncs automatically when you reconnect. The web app requires an internet connection.',
         ],
@@ -467,7 +467,7 @@ export const HELP_TOPICS = [
         ],
       },
       {
-        heading: 'Can multiple staff use Dukana at the same time?',
+        heading: 'Can multiple staff use DuQana at the same time?',
         paragraphs: [
           'Yes. Each staff member gets their own login with customisable permissions, and the owner sees all activity in real time.',
         ],

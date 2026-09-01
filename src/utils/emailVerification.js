@@ -38,7 +38,7 @@ export const sendVerificationEmail = async (user) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Verify Your Email - Dukana</title>
+      <title>Verify Your Email - DuQana</title>
       <style>
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         .container { max-width: 500px; margin: 40px auto; background: #fff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
@@ -52,27 +52,27 @@ export const sendVerificationEmail = async (user) => {
     <body>
       <div class="container">
         <div class="header">
-          <h1>Dukana</h1>
+          <h1>DuQana</h1>
         </div>
         <div class="content">
           <p>Hello <strong>${escapeHtml(user.name)}</strong>,</p>
-          <p>Please verify your email address to start using Dukana.</p>
+          <p>Please verify your email address to start using DuQana.</p>
           <div class="code-box">${code}</div>
           <p>Enter this code in the app to complete your verification.</p>
           <p>This code expires in <strong>24 hours</strong>.</p>
           <p>If you did not create this account, please ignore this email.</p>
         </div>
         <div class="footer">
-          &copy; ${new Date().getFullYear()} Dukana. All rights reserved.
+          &copy; ${new Date().getFullYear()} DuQana. All rights reserved.
         </div>
       </div>
     </body>
     </html>
   `;
 
-  const text = `Hello ${user.name},\n\nPlease verify your email address to start using Dukana.\n\nYour verification code is: ${code}\n\nThis code expires in 24 hours.\n\nIf you did not create this account, please ignore this email.\n\n-- Dukana Team`;
+  const text = `Hello ${user.name},\n\nPlease verify your email address to start using DuQana.\n\nYour verification code is: ${code}\n\nThis code expires in 24 hours.\n\nIf you did not create this account, please ignore this email.\n\n-- DuQana Team`;
 
-  await sendEmail(user.email, 'Verify your email - Dukana', html, text);
+  await sendEmail(user.email, 'Verify your email - DuQana', html, text);
 };
 
 function escapeHtml(str) {

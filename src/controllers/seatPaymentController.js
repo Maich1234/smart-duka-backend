@@ -3,9 +3,11 @@ import Subscription from '../models/Subscription.js';
 import SubscriptionPayment from '../models/SubscriptionPayment.js';
 import { DEFAULT_STAFF_PERMISSIONS, withImpliedPermissions } from '../constants/permissions.js';
 import { getBillableUserCount, computeSeatAdditionImpact } from '../services/subscriptionPricingService.js';
-import { getPaymentProvider } from '../services/payments/index.js';
-import { cleanupFailedSeatPayment } from '../services/seatActivationService.js';
-import { getSubscriptionCallbackUrl, reconcilePayment } from './subscriptionController.js';
+import { getPaymentProvider } from '../domains/billing/infra/payments/index.js';
+import { cleanupFailedSeatPayment } from '../domains/billing/application/seatCleanup.js';
+import { reconcilePayment } from '../domains/billing/application/reconcilePayment.js';
+import { getSubscriptionCallbackUrl } from '../domains/billing/domain/urls.js';
+import { withMpesaCallbackSecret } from '../services/mpesaService.js';
 import { logAudit } from '../services/auditLogService.js';
 import { MPESA_RECEIPT_PATTERN, MPESA_AMOUNT_PATTERN } from '../utils/mpesaReceipt.js';
 import { isSystemGeneratedEmail } from '../utils/staffEmailSlug.js';
@@ -114,12 +116,12 @@ export const initiateSeatPayment = async (req, res) => {
       permissions: withImpliedPermissions(permissions ?? DEFAULT_STAFF_PERMISSIONS),
     });
 
-    const callbackUrl = getSubscriptionCallbackUrl();
+    const callbackUrl = withMpesaCallbackSecret(getSubscriptionCallbackUrl());
     if (!callbackUrl) {
       await pendingStaff.deleteOne();
       return res.status(503).json({
         success: false,
-        message: 'SUBSCRIPTION_MPESA_CALLBACK_URL is not configured on the server. Contact the app administrator.',
+        message: 'SUBSCRIPTION_MPESA_CALLBACK_URL or MPESA_CALLBACK_SECRET is not configured on the server. Contact the app administrator.',
       });
     }
 
@@ -130,7 +132,7 @@ export const initiateSeatPayment = async (req, res) => {
         phoneNumber,
         amount,
         reference: 'DUKANA',
-        description: `Dukana — add staff seat (${subscription.plan.name})`,
+        description: `DuQana — add staff seat (${subscription.plan.name})`,
         callbackUrl,
       });
     } catch (err) {

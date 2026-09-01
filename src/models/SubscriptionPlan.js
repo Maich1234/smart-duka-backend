@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 // A sellable subscription tier. Every number and line of marketing copy the
 // app shows on the pricing screen lives here so pricing, promotions, and
 // trial length can change without an app release. Managed later from the
-// Dukana super-admin page; seeded from constants/subscriptionDefaults.js
+// DuQana super-admin page; seeded from constants/subscriptionDefaults.js
 // when the collection is empty.
 const subscriptionPlanSchema = new mongoose.Schema({
   slug: {

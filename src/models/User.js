@@ -62,6 +62,19 @@ const userSchema = new mongoose.Schema({
     type: [String],
     default: [],
   },
+  // This staff member's own shareable referral code — generated once (at
+  // createStaff, or lazily on first GET /shop/referrals/me for accounts that
+  // predate this feature) so staff can refer new shop owners for a cash
+  // bonus, separately from the owner's own Shop.myReferralCode. Owners never
+  // get one here.
+  myReferralCode: {
+    type: String,
+    unique: true,
+    sparse: true,
+    trim: true,
+    uppercase: true,
+    maxlength: 10,
+  },
   // Proof of consent to the Terms of Service and Privacy Policy: which
   // version, and when. Recorded at registration from the signup checkbox.
   //

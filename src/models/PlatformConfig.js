@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-// Dukana's own (company-level) configuration — a singleton document.
+// DuQana's own (company-level) configuration — a singleton document.
 // Subscription payments are collected with these Daraja credentials, never a
 // shop's own PaymentConfig. Will be managed from the super-admin page;
 // seeded once via scripts/seedPlatformConfig.mjs.
@@ -17,7 +17,7 @@ const platformMpesaSchema = new mongoose.Schema({
   configuredAt: { type: Date },
 }, { _id: false });
 
-// Dukana's own Paystack account — card/bank subscription payments, same
+// DuQana's own Paystack account — card/bank subscription payments, same
 // "never a shop's own account" rule as platformMpesaSchema. publicKey isn't
 // sensitive (it's handed to the web client to open the payment popup) and is
 // stored plain; secretKey uses the same encrypted-blob scheme as M-Pesa's.
@@ -26,6 +26,42 @@ const platformPaystackSchema = new mongoose.Schema({
   publicKey: { type: String, trim: true },
   secretKey: { type: String },
   configuredAt: { type: Date },
+}, { _id: false });
+
+// Shared by all three referral audiences below: whether the program is live
+// at all, and an optional time-box. Both PATCH-able independently per
+// audience from the admin Referrals tab.
+const referralAudienceBaseFields = {
+  enabled: { type: Boolean, default: false },
+  startsAt: { type: Date, default: null },
+  endsAt: { type: Date, default: null },
+};
+
+// Owner-to-owner referral program: a shop that refers another shop banks a
+// stacking discount toward its own next subscription payment once the
+// referred shop actually converts to a paying customer (see
+// subscriptionController.js's rewardReferrerIfFirstConversion).
+const shopOwnerReferralSchema = new mongoose.Schema({
+  ...referralAudienceBaseFields,
+  percentPerReferral: { type: Number, default: 20, min: 0, max: 100 },
+  maxStackedPercent: { type: Number, default: 100, min: 0, max: 100 },
+}, { _id: false });
+
+// Staff referral program: a fixed KES cash bonus, tracked in
+// EmployeeReferralPayout and settled manually by a platform admin — never a
+// subscription-credit like the shop-owner program above.
+const employeeReferralSchema = new mongoose.Schema({
+  ...referralAudienceBaseFields,
+  cashAmount: { type: Number, default: 0, min: 0 },
+}, { _id: false });
+
+// Agent referral program: deliberately no reward field here. An agent's
+// payout stays entirely on the existing CommissionRule/CommissionRecord
+// machinery in dukana-admin-backend — this toggle only gates whether an
+// agent-code redemption at shop signup is allowed to auto-link an
+// Onboarding row (see agentReferralLinkService.js there).
+const agentReferralSchema = new mongoose.Schema({
+  ...referralAudienceBaseFields,
 }, { _id: false });
 
 const platformConfigSchema = new mongoose.Schema({
@@ -53,15 +89,13 @@ const platformConfigSchema = new mongoose.Schema({
   staffGraceExtraDays: { type: Number, default: 7, min: 0 },
   // How many days before expiry to push renewal reminders.
   reminderDaysBefore: { type: [Number], default: [7, 3] },
-  // Owner-to-owner referral program: a shop that refers another shop banks a
-  // stacking discount toward its own next subscription payment once the
-  // referred shop actually converts to a paying customer (see
-  // subscriptionController.js's applySuccessfulPayment). Admin-tunable
-  // rather than hardcoded so the rate/cap can change without a deploy.
+  // Three independent referral programs — shop owners, employees, and
+  // agents each have their own enable switch, date window, and reward shape.
+  // Admin-tunable rather than hardcoded so each can change without a deploy.
   referral: {
-    enabled: { type: Boolean, default: false },
-    percentPerReferral: { type: Number, default: 20, min: 0, max: 100 },
-    maxStackedPercent: { type: Number, default: 100, min: 0, max: 100 },
+    shopOwner: { type: shopOwnerReferralSchema, default: () => ({}) },
+    employee: { type: employeeReferralSchema, default: () => ({}) },
+    agent: { type: agentReferralSchema, default: () => ({}) },
   },
 }, { timestamps: true });
 

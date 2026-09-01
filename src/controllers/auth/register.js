@@ -1,24 +1,38 @@
 import mongoose from 'mongoose';
 import User from '../../models/User.js';
 import Shop from '../../models/Shop.js';
+import AgentReferralCode from '../../models/AgentReferralCode.js';
+import AgentReferralRedemption from '../../models/AgentReferralRedemption.js';
 import { CURRENT_TERMS_VERSION } from '../../constants/legal.js';
 import { sendVerificationEmail } from '../../utils/emailVerification.js';
-import { generateReferralCode } from '../../utils/referralCode.js';
+import { generateShopReferralCode } from '../../utils/referralCode.js';
 
-const MAX_CODE_ATTEMPTS = 5;
+/**
+ * Resolves a signup's referralCode input against the three possible
+ * issuers, in order: another shop's own code, a staff member's own code, an
+ * agent's code (mirrored from dukana-admin-backend — see
+ * AgentReferralCode.js). First match wins; no match is a silent no-op, same
+ * as the pre-existing shop-only behavior.
+ */
+async function resolveReferrer(referredByCode) {
+  if (!referredByCode) return { referredByType: null, referredByShopId: null, referredByStaffId: null, referredByAgentId: null };
 
-/** A fresh, DB-confirmed-unique referral code for a new shop. */
-async function generateUniqueReferralCode() {
-  for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt += 1) {
-    const candidate = generateReferralCode();
-    // eslint-disable-next-line no-await-in-loop
-    const taken = await Shop.exists({ myReferralCode: candidate });
-    if (!taken) return candidate;
+  const shopMatch = await Shop.findOne({ myReferralCode: referredByCode }).select('_id');
+  if (shopMatch) {
+    return { referredByType: 'shop', referredByShopId: shopMatch._id, referredByStaffId: null, referredByAgentId: null };
   }
-  // Astronomically unlikely (8 chars over a 32-symbol alphabet) — bounded
-  // rather than an infinite loop, and the schema's unique index is the real
-  // backstop against a race either way.
-  throw new Error('Could not generate a unique referral code. Please try again.');
+
+  const staffMatch = await User.findOne({ role: 'staff', myReferralCode: referredByCode }).select('_id');
+  if (staffMatch) {
+    return { referredByType: 'staff', referredByShopId: null, referredByStaffId: staffMatch._id, referredByAgentId: null };
+  }
+
+  const agentMatch = await AgentReferralCode.findOne({ code: referredByCode, active: true }).select('agentId');
+  if (agentMatch) {
+    return { referredByType: 'agent', referredByShopId: null, referredByStaffId: null, referredByAgentId: agentMatch.agentId };
+  }
+
+  return { referredByType: null, referredByShopId: null, referredByStaffId: null, referredByAgentId: null };
 }
 
 export const register = async (req, res) => {
@@ -48,8 +62,8 @@ export const register = async (req, res) => {
   // registering at the same instant just means this lookup misses (falls
   // back to "no referrer"), never a torn write.
   const referredByCode = (referralCode || '').trim().toUpperCase();
-  const referrer = referredByCode ? await Shop.findOne({ myReferralCode: referredByCode }).select('_id') : null;
-  const myReferralCode = await generateUniqueReferralCode();
+  const { referredByType, referredByShopId, referredByStaffId, referredByAgentId } = await resolveReferrer(referredByCode);
+  const myReferralCode = await generateShopReferralCode();
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -78,7 +92,10 @@ export const register = async (req, res) => {
       phone: phone || '',
       owner: userId,
       referredByCode,
-      referredByShopId: referrer?._id ?? null,
+      referredByType,
+      referredByShopId,
+      referredByStaffId,
+      referredByAgentId,
       myReferralCode,
     }], { session });
 
@@ -106,6 +123,23 @@ export const register = async (req, res) => {
   } catch (err) {
     emailSent = false;
     console.error('[register] verification email failed for', user.email, '-', err.message);
+  }
+
+  // Same non-fatal, post-commit pattern as the verification email above.
+  // dukana-admin-backend's daily cron reads this row (see
+  // agentReferralLinkService.js there) to create the Onboarding link this
+  // backend has no connection to write directly.
+  if (referredByType === 'agent') {
+    try {
+      await AgentReferralRedemption.create({
+        agentId: referredByAgentId,
+        code: referredByCode,
+        shopId: user.shop,
+        ownerUserId: user._id,
+      });
+    } catch (err) {
+      console.error('[register] agent referral redemption record failed for', user.shop, '-', err.message);
+    }
   }
 
   res.status(201).json({

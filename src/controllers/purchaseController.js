@@ -282,6 +282,18 @@ export const updatePurchase = async (req, res) => {
   try {
     const purchase = await Purchase.findOne({ _id: existing._id, shop }).session(session);
 
+    // Editing a completed purchase reverses and re-applies its stock below —
+    // the same stock movement createPurchase gates behind owner approval, so
+    // a staffer denied that approval on create can't get it back through edit.
+    if (purchase.status === 'completed' && needsOwnerApproval(req.user)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(403).json({
+        success: false,
+        message: 'You need update-inventory permission to edit a completed purchase — ask an owner to make this change.',
+      });
+    }
+
     if (purchase.inventoryUpdated) {
       await reversePurchaseStock(purchase, session);
     }

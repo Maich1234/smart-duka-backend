@@ -88,7 +88,7 @@ export const TOOL_DECLARATIONS = [
   {
     name: 'search_help_topics',
     description:
-      "Searches Dukana's Help Center for how-to guidance on using the app itself — adding products, product types, managing stock, discounts, staff permissions, recording sales, reading reports, receipts/QR/ratings, shop settings, Dukana AI, and general FAQs. Use for 'how do I', 'where do I find', 'what does X mean' questions about using the app. Never use this for this shop's actual numbers — those always need a data tool.",
+      "Searches DuQana's Help Center for how-to guidance on using the app itself — adding products, product types, managing stock, discounts, staff permissions, recording sales, reading reports, receipts/QR/ratings, shop settings, DuQana AI, and general FAQs. Use for 'how do I', 'where do I find', 'what does X mean' questions about using the app. Never use this for this shop's actual numbers — those always need a data tool.",
     parameters: {
       type: Type.OBJECT,
       properties: { query: { type: Type.STRING, description: "What the user wants to know how to do, e.g. 'add a product' or 'set up mpesa'." } },

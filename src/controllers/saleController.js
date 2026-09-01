@@ -7,7 +7,7 @@ import { signReceiptToken } from '../utils/receiptToken.js';
 import { resolveSaleLine, SaleLineError } from '../services/pricingEngine.js';
 import { getCommissionSummary } from '../services/commissionService.js';
 import { restoreSaleStock } from '../services/saleStockService.js';
-import { initiateReversal } from '../services/mpesaService.js';
+import { initiateReversal, withMpesaCallbackSecret } from '../services/mpesaService.js';
 import { logAudit } from '../services/auditLogService.js';
 import { getActiveShift } from '../services/shiftService.js';
 import { parsePagination, paginatedResult } from '../utils/pagination.js';
@@ -197,12 +197,29 @@ export const createSale = async (req, res) => {
           mpesaReceiptNumber,
         } : {}),
       }], { session });
-    });
 
-    // Link the M-Pesa transaction to this sale outside the session (best-effort)
-    if (mpesaTx) {
-      MpesaTransaction.findByIdAndUpdate(mpesaTx._id, { saleId: sale._id }).catch(() => {});
-    }
+      // Claim the M-Pesa transaction atomically, inside the same transaction
+      // as the sale it pays for. The `mpesaTx.saleId` check above ran before
+      // this transaction started, so it can't see a concurrent createSale
+      // request for the same transactionId (e.g. two client-side retries
+      // carrying different idempotency keys) — both could read `saleId: null`
+      // and both reach here. This conditional update is the actual guard:
+      // MongoDB serializes concurrent writes to the same document, so at most
+      // one of two racing transactions matches `saleId: null` and commits: the
+      // other gets a WriteConflict, withTransaction retries it, and the retry
+      // sees `saleId` already set and lands in the throw below — a clean 400,
+      // not a second sale for the same payment.
+      if (mpesaTx) {
+        const claimed = await MpesaTransaction.findOneAndUpdate(
+          { _id: mpesaTx._id, saleId: null },
+          { $set: { saleId: sale._id } },
+          { session },
+        );
+        if (!claimed) {
+          throw new SaleRejection(400, 'This M-Pesa transaction has already been linked to a sale.');
+        }
+      }
+    });
 
     const saleObj = sale.toObject();
     saleObj.receiptToken = signReceiptToken(sale._id);
@@ -373,9 +390,11 @@ export const refundSale = async (req, res) => {
       });
     }
 
-    const resultUrl = getReversalResultUrl();
-    if (!resultUrl) {
-      return res.status(503).json({ success: false, message: 'MPESA_REVERSAL_RESULT_URL is not configured on the server. Contact the app administrator.' });
+    const resultUrlBase = getReversalResultUrl();
+    const resultUrl = withMpesaCallbackSecret(resultUrlBase);
+    const queueTimeoutUrl = resultUrlBase ? withMpesaCallbackSecret(`${resultUrlBase}-timeout`) : null;
+    if (!resultUrl || !queueTimeoutUrl) {
+      return res.status(503).json({ success: false, message: 'MPESA_REVERSAL_RESULT_URL or MPESA_CALLBACK_SECRET is not configured on the server. Contact the app administrator.' });
     }
 
     let reversal;
@@ -386,7 +405,7 @@ export const refundSale = async (req, res) => {
         amount: sale.totalAmount,
         remarks: reason || `Refund ${sale.invoiceNumber}`,
         resultUrl,
-        queueTimeoutUrl: `${resultUrl}-timeout`,
+        queueTimeoutUrl,
       });
     } catch (err) {
       return res.status(503).json({ success: false, message: reversalErrorMessage(err) });

@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 /**
  * Authenticity stamp for a generated book.
  *
- * This attests **origin and integrity**, not accuracy: that Dukana
+ * This attests **origin and integrity**, not accuracy: that DuQana
  * produced this document, for this shop and period, with these totals, and
  * that none of it has been altered since. It is deliberately not an audit
  * opinion — the P&L's own footnotes say it isn't an IFRS statement, and a
@@ -14,7 +14,7 @@ import jwt from 'jsonwebtoken';
  * receipt token carries only an id for the server to look up, a book has
  * nothing stored to look up — so the token carries the attested figures
  * themselves. That is what lets a verifier compare the numbers printed on a
- * PDF against the numbers Dukana signed, and see a doctored document for
+ * PDF against the numbers DuQana signed, and see a doctored document for
  * what it is.
  *
  * No expiry. Financial records must stay verifiable for years.
@@ -82,4 +82,4 @@ export function verifyBookStamp(token) {
 
 /** Where a QR on the document points. */
 export const bookVerifyUrl = (token) =>
-  `${(process.env.PUBLIC_WEB_URL || 'https://smart-duka-web-delta.vercel.app').replace(/\/+$/, '')}/verify/${token}`;
+  `${(process.env.PUBLIC_WEB_URL || 'https://duqana.app').replace(/\/+$/, '')}/verify/${token}`;

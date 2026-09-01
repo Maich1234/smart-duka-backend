@@ -6,6 +6,7 @@ import {
   subscriptionReminders,
   pushCampaignDispatch,
   subscriptionPaymentReconcile,
+  billingEventsSweep,
   accountDeletions,
 } from '../../controllers/cronController.js';
 
@@ -19,6 +20,7 @@ router.get('/daily-summary', dailyBusinessSummary);
 router.get('/subscription-reminders', subscriptionReminders);
 router.get('/push-campaign-dispatch', pushCampaignDispatch);
 router.get('/subscription-payment-reconcile', subscriptionPaymentReconcile);
+router.get('/billing-events-sweep', billingEventsSweep);
 router.get('/account-deletions', accountDeletions);
 
 export default router;

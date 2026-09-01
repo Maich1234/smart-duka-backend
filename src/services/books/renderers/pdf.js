@@ -79,7 +79,7 @@ export function renderPdf(doc) {
       info: {
         Title: `${doc.title} — ${doc.period.label}`,
         Author: sanitize(doc.shop.name),
-        Creator: 'Dukana',
+        Creator: 'DuQana',
       },
     });
 
@@ -265,10 +265,10 @@ export function renderPdf(doc) {
       const textX = qrX + qrSize + 12;
       const textWidth = boxWidth - (qrSize + 34);
       pdf.font('Helvetica-Bold').fontSize(8).fillColor(TEAL)
-        .text('Verified by Dukana', textX, top + 12, { width: textWidth, lineBreak: false });
+        .text('Verified by DuQana', textX, top + 12, { width: textWidth, lineBreak: false });
       pdf.font('Helvetica').fontSize(6.5).fillColor(MUTED)
         .text(
-          'Scan to confirm this document came from Dukana and has not been altered. This is not an audit or an accountant\u2019s opinion.',
+          'Scan to confirm this document came from DuQana and has not been altered. This is not an audit or an accountant\u2019s opinion.',
           textX, top + 24, { width: textWidth }
         );
       pdf.font('Helvetica-Bold').fontSize(7.5).fillColor(INK)

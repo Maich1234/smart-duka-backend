@@ -13,8 +13,8 @@ import { getConfig, verifyTransaction } from '../paystackService.js';
  * — unlike mpesaProvider — nothing here can guarantee up front what actually
  * gets charged. The integrity check has to happen after the fact, comparing
  * what Paystack confirms was charged against what we expected
- * (subscriptionController's reconcilePayment and the webhook handler both do
- * this before ever crediting a subscription).
+ * (reconcilePayment and the webhook handler both do this before ever
+ * crediting a subscription).
  */
 export default {
   key: 'bank',

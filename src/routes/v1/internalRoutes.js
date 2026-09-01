@@ -1,7 +1,7 @@
 import express from 'express';
 import { protectInternal } from '../../middlewares/internalAuth.js';
 import SubscriptionPayment from '../../models/SubscriptionPayment.js';
-import { reconcilePayment } from '../../controllers/subscriptionController.js';
+import { reconcilePayment } from '../../domains/billing/application/reconcilePayment.js';
 import { claimAndDispatchCampaign } from '../../services/pushCampaignService.js';
 
 const router = express.Router();

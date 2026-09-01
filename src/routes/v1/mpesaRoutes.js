@@ -1,6 +1,7 @@
 import express from 'express';
 import { protect, staffOrOwner, ownerOnly } from '../../middlewares/auth.js';
 import validate from '../../middlewares/validate.js';
+import { verifyMpesaCallbackToken } from '../../middlewares/verifyMpesaCallback.js';
 import {
   initiatePayment,
   getTransactionStatus,
@@ -17,12 +18,14 @@ import { initiateSTKPushSchema, verifyReceiptSchema, transactionQuerySchema } fr
 
 const router = express.Router();
 
-// Safaricom sends the callback here — must be publicly accessible (no JWT auth)
-router.post('/callback', handleCallback);
+// Safaricom sends the callback here — must be publicly accessible (no JWT
+// auth), but the final path segment is a shared secret (see
+// verifyMpesaCallbackToken) since Daraja has no callback-signing mechanism.
+router.post('/callback/:token', verifyMpesaCallbackToken, handleCallback);
 
-// Transaction Reversal (refund) result + queue-timeout callbacks — also public
-router.post('/reversal-result', handleReversalResult);
-router.post('/reversal-result-timeout', handleReversalTimeout);
+// Transaction Reversal (refund) result + queue-timeout callbacks — same secret gate.
+router.post('/reversal-result/:token', verifyMpesaCallbackToken, handleReversalResult);
+router.post('/reversal-result-timeout/:token', verifyMpesaCallbackToken, handleReversalTimeout);
 
 // Staff can initiate STK Push during checkout
 router.post('/initiate', protect, staffOrOwner, validate(initiateSTKPushSchema), initiatePayment);

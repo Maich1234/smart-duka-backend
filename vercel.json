@@ -38,6 +38,10 @@
    "schedule": "0 8 * * *"
   },
   {
+   "path": "/api/v1/cron/billing-events-sweep",
+   "schedule": "20 8 * * *"
+  },
+  {
    "path": "/api/v1/cron/account-deletions",
    "schedule": "0 3 * * *"
   }
