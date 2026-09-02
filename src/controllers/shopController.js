@@ -6,6 +6,7 @@ import EmployeeReferralPayout from '../models/EmployeeReferralPayout.js';
 import cloudinary from '../config/cloudinary.js';
 import { resolvePaymentMethods } from '../constants/salePaymentMethods.js';
 import { generateShopReferralCode, generateStaffReferralCode } from '../utils/referralCode.js';
+import { PUBLIC_WEB_URL } from '../utils/publicWebUrl.js';
 
 export const getShopConfig = async (req, res) => {
   const shop = await Shop.findById(req.user.shop._id);
@@ -45,8 +46,7 @@ export const updateShopConfig = async (req, res) => {
   res.json({ success: true, data: { ...shop.toObject(), paymentMethods: resolvePaymentMethods(shop) } });
 };
 
-// Same PUBLIC_WEB_URL convention as cronController.js/bookStamp.js.
-const webUrl = () => (process.env.PUBLIC_WEB_URL || 'https://duqana.app').replace(/\/+$/, '');
+const webUrl = () => PUBLIC_WEB_URL;
 
 /**
  * GET /shop/referrals — this shop's own shareable code, its currently banked

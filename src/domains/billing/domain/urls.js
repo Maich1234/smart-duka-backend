@@ -1,9 +1,10 @@
-// Same PUBLIC_WEB_URL convention as utils/bookStamp.js. The web app already
-// has a complete, tested checkout flow at this path — the mobile app has no
-// purchase surface (Play Store policy), so this is the only place a renewal
-// link may point. Shared by the reminder cron and the owner-triggered resend
-// so both point at exactly the same URL.
-export const SUBSCRIPTION_PAGE_URL = `${(process.env.PUBLIC_WEB_URL || 'https://duqana.app').replace(/\/+$/, '')}/owner/subscription`;
+import { PUBLIC_WEB_URL } from '../../../utils/publicWebUrl.js';
+
+// The web app already has a complete, tested checkout flow at this path —
+// the mobile app has no purchase surface (Play Store policy), so this is the
+// only place a renewal link may point. Shared by the reminder cron and the
+// owner-triggered resend so both point at exactly the same URL.
+export const SUBSCRIPTION_PAGE_URL = `${PUBLIC_WEB_URL}/owner/subscription`;
 
 /**
  * The subscription STK callback needs its own public URL. Prefer the

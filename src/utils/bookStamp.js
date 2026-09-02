@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import { PUBLIC_WEB_URL } from './publicWebUrl.js';
 
 /**
  * Authenticity stamp for a generated book.
@@ -81,5 +82,4 @@ export function verifyBookStamp(token) {
 }
 
 /** Where a QR on the document points. */
-export const bookVerifyUrl = (token) =>
-  `${(process.env.PUBLIC_WEB_URL || 'https://duqana.app').replace(/\/+$/, '')}/verify/${token}`;
+export const bookVerifyUrl = (token) => `${PUBLIC_WEB_URL}/verify/${token}`;
