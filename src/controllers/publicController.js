@@ -4,7 +4,7 @@ import Rating from '../models/Rating.js';
 import { verifyReceiptToken } from '../utils/receiptToken.js';
 import { sendEmail } from '../utils/email.js';
 
-const SUPPORT_INBOX = process.env.SUPPORT_EMAIL || 'info@dukana.app';
+const SUPPORT_INBOX = process.env.SUPPORT_EMAIL || 'info@duqana.app';
 
 export const getPublicReceipt = async (req, res) => {
   const saleId = verifyReceiptToken(req.params.token);

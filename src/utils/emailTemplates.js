@@ -22,7 +22,7 @@ const BRAND = {
   bg: '#F8FAFC',
 };
 
-const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || 'info@dukana.app';
+const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || 'info@duqana.app';
 const SUPPORT_PHONE = '+254 107 596 454';
 const FONT_STACK = '-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif';
 

@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { getPublicReceipt, submitPublicRating, verifyBookDocument, submitContactMessage } from '../../controllers/publicController.js';
 import { createRateLimitStore } from '../../utils/rateLimitStore.js';
 import validate from '../../middlewares/validate.js';
+import { verifyTurnstile } from '../../middlewares/verifyTurnstile.js';
 import { contactMessageSchema } from '../../validations/publicValidation.js';
 
 const router = express.Router();
@@ -35,6 +36,6 @@ router.post('/receipt/:token/rating', submitPublicRating);
 // Reached by scanning the QR on a downloaded financial record.
 router.get('/books/verify/:token', verifyBookDocument);
 // The marketing site's contact form.
-router.post('/contact', contactLimiter, validate(contactMessageSchema), submitContactMessage);
+router.post('/contact', contactLimiter, verifyTurnstile, validate(contactMessageSchema), submitContactMessage);
 
 export default router;

@@ -6,4 +6,5 @@ export const contactMessageSchema = Joi.object({
   phone: Joi.string().trim().max(32).allow('', null).optional(),
   subject: Joi.string().trim().min(1).max(120).required(),
   message: Joi.string().trim().min(1).max(5000).required(),
+  turnstileToken: Joi.string().required(),
 }).unknown(false);
