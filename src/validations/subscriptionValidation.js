@@ -3,7 +3,7 @@ import Joi from 'joi';
 // Same locked format as mpesaValidation: the app shows a fixed +254 prefix.
 const KENYAN_PHONE_PATTERN = /^\+254[17]\d{8}$/;
 
-const billingCycle = Joi.string().valid('monthly', 'yearly');
+const billingCycle = Joi.string().valid('monthly', 'quarterly', 'yearly');
 const planSlug = Joi.string().trim().lowercase().max(50);
 const promoCode = Joi.string().trim().uppercase().max(30);
 

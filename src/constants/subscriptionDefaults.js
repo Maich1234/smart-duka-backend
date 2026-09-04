@@ -11,6 +11,7 @@ export const DEFAULT_PLANS = [
     description: 'Everything a small duka needs to sell, track stock, and get paid.',
     billingType: 'per_staff',
     monthlyPrice: 210,
+    quarterlyDiscountPercent: 10,
     yearlyDiscountPercent: 20,
     maxStaff: 9,
     extraStaffPrice: 0,
@@ -50,6 +51,7 @@ export const DEFAULT_PLANS = [
     description: 'Everything in Starter, built for bigger teams at a better price.',
     billingType: 'flat',
     monthlyPrice: 2000,
+    quarterlyDiscountPercent: 10,
     yearlyDiscountPercent: 20,
     maxStaff: 20,
     // Each user beyond maxStaff adds this to the monthly price.

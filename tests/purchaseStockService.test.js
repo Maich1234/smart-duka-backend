@@ -20,6 +20,17 @@ test('weighted average: heavier prior stock pulls the average toward the old cos
   assert.equal(computeWeightedAverageCost(90, 100, 10, 200), 110);
 });
 
+test('weighted average: negative prior stock (sold before it was purchased) carries no cost basis to blend', () => {
+  // -2 units @ 100 (a debt with no real cost basis), receiving 3 @ 120 — must
+  // land on the incoming cost, not a distorted blend (the naive formula
+  // would compute (-2*100 + 3*120) / 1 = 160, above both inputs).
+  assert.equal(computeWeightedAverageCost(-2, 100, 3, 120), 120);
+});
+
+test('weighted average: receipt that leaves the balance still negative also takes the incoming cost', () => {
+  assert.equal(computeWeightedAverageCost(-5, 100, 2, 120), 120);
+});
+
 const standardProduct = (over = {}) => ({
   _id: 'p1',
   name: 'Sugar 1kg',

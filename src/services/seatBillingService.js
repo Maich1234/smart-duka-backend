@@ -1,11 +1,11 @@
-import { monthlyTotalForPlan, yearlyTotalForPlan } from './subscriptionPricingService.js';
+import { totalForCycle } from './subscriptionPricingService.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Nominal period lengths used for proration. The exact calendar length of the
 // period isn't stored (only currentPeriodEnd is), and a nominal divisor is
 // both close enough for a sub-KES-1 rounding and stable across month lengths.
-const PERIOD_DAYS = { monthly: 30, yearly: 365 };
+const PERIOD_DAYS = { monthly: 30, quarterly: 90, yearly: 365 };
 
 const clamp01 = (n) => Math.min(1, Math.max(0, n));
 
@@ -27,9 +27,7 @@ export function periodFractionRemaining(subscription, now = new Date()) {
 
 /** Full-period price for a head-count on a plan, respecting the billing cycle. */
 function totalFor(plan, count, billingCycle) {
-  return billingCycle === 'yearly'
-    ? yearlyTotalForPlan(plan, count)
-    : monthlyTotalForPlan(plan, count);
+  return totalForCycle(plan, count, billingCycle);
 }
 
 /**

@@ -5,10 +5,11 @@ import { resolveSaleLine, SaleLineError } from '../src/services/pricingEngine.js
 // resolveSaleLine only queries the database for bundle components that are
 // not already in productCache — every test pre-seeds the cache, so no DB.
 
-const ctx = (cacheEntries = []) => ({
+const ctx = (cacheEntries = [], negativeStockAlerts = []) => ({
   shop: 'shop-1',
   session: null,
   productCache: new Map(cacheEntries),
+  negativeStockAlerts,
 });
 
 const standardProduct = (over = {}) => ({
@@ -38,10 +39,20 @@ test('standard: rejects fractional quantity', async () => {
   );
 });
 
-test('standard: rejects insufficient stock without mutating it', async () => {
+test('standard: insufficient stock is allowed — sells through and records the alert', async () => {
   const product = standardProduct({ quantity: 2 });
-  await assert.rejects(resolveSaleLine(product, { quantity: 5 }, ctx()), SaleLineError);
-  assert.equal(product.quantity, 2);
+  const negativeStockAlerts = [];
+  const line = await resolveSaleLine(product, { quantity: 5 }, ctx([], negativeStockAlerts));
+  assert.equal(line.subtotal, 750, 'full quantity is still priced and sold');
+  assert.equal(product.quantity, -3, 'stock is allowed to go negative');
+  assert.deepEqual(negativeStockAlerts, [{ productName: 'Sugar 1kg', resultingQuantity: -3 }]);
+});
+
+test('standard: selling within stock records no negative-stock alert', async () => {
+  const product = standardProduct({ quantity: 10 });
+  const negativeStockAlerts = [];
+  await resolveSaleLine(product, { quantity: 3 }, ctx([], negativeStockAlerts));
+  assert.deepEqual(negativeStockAlerts, []);
 });
 
 test('standard: untracked inventory never blocks or deducts', async () => {
@@ -101,16 +112,16 @@ test('bundle: deducts every component from the cache', async () => {
   assert.equal(chips.quantity, 7);
 });
 
-test('bundle: insufficient component stock rejects the line', async () => {
+test('bundle: insufficient component stock sells through and alerts on the component', async () => {
   const soda = { _id: 'c1', name: 'Soda', trackInventory: true, quantity: 1 };
   const bundle = standardProduct({
     productType: 'bundle',
     bundleItems: [{ product: 'c1', quantity: 2 }],
   });
-  await assert.rejects(
-    resolveSaleLine(bundle, { quantity: 1 }, ctx([['c1', soda]])),
-    SaleLineError
-  );
+  const negativeStockAlerts = [];
+  await resolveSaleLine(bundle, { quantity: 1 }, ctx([['c1', soda]], negativeStockAlerts));
+  assert.equal(soda.quantity, -1);
+  assert.deepEqual(negativeStockAlerts, [{ productName: 'Soda', resultingQuantity: -1 }]);
 });
 
 test('configurable: deducts the chosen variant and snapshots its name', async () => {
@@ -128,6 +139,20 @@ test('configurable: deducts the chosen variant and snapshots its name', async ()
   assert.equal(line.unitPrice, 100);
   assert.equal(line.variantName, '1L');
   assert.equal(variants[1].quantity, 4);
+});
+
+test('configurable: insufficient variant stock sells through and alerts with the variant name', async () => {
+  const variants = [{ _id: 'v1', name: '500ml', sellingPrice: 60, quantity: 1 }];
+  const product = standardProduct({
+    productType: 'configurable',
+    variants: Object.assign(variants, {
+      id(id) { return this.find((v) => v._id === id) ?? null; },
+    }),
+  });
+  const negativeStockAlerts = [];
+  await resolveSaleLine(product, { quantity: 3, variantId: 'v1' }, ctx([], negativeStockAlerts));
+  assert.equal(variants[0].quantity, -2);
+  assert.deepEqual(negativeStockAlerts, [{ productName: 'Sugar 1kg (500ml)', resultingQuantity: -2 }]);
 });
 
 test('configurable: missing variantId rejects', async () => {

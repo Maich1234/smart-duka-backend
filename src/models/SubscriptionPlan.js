@@ -25,6 +25,8 @@ const subscriptionPlanSchema = new mongoose.Schema({
     required: true,
   },
   monthlyPrice: { type: Number, required: true, min: 0 },
+  // Quarterly price is computed as monthly × 3 × (1 − quarterlyDiscountPercent/100).
+  quarterlyDiscountPercent: { type: Number, default: 10, min: 0, max: 100 },
   // Yearly price is computed as monthly × 12 × (1 − yearlyDiscountPercent/100)
   // unless yearlyPrice is set explicitly.
   yearlyDiscountPercent: { type: Number, default: 20, min: 0, max: 100 },

@@ -39,12 +39,20 @@ const bundleUnitCost = (components) => {
   return Math.round(total * 100) / 100;
 };
 
-const checkAndDeductStock = (product, amount) => {
+/**
+ * Deducts stock unconditionally — a shop is allowed to sell ahead of what's
+ * been entered as purchased, so this never blocks the sale. When the
+ * deduction takes the product below zero, it's recorded onto
+ * `negativeStockAlerts` so the caller can alert the owner once the sale
+ * commits (see notifyOwnersNegativeStock in saleController.js).
+ */
+const checkAndDeductStock = (product, amount, negativeStockAlerts) => {
   if (!product.trackInventory) return;
-  if (product.quantity < amount) {
-    throw new SaleLineError(`Insufficient stock for ${product.name}. Available: ${product.quantity}`);
+  const resultingQuantity = product.quantity - amount;
+  if (resultingQuantity < 0) {
+    negativeStockAlerts.push({ productName: product.name, resultingQuantity });
   }
-  product.quantity -= amount;
+  product.quantity = resultingQuantity;
 };
 
 /**
@@ -133,7 +141,7 @@ const getCachedProduct = async (productId, { shop, session, productCache }) => {
  *
  * Returns { unitPrice, unitCost, subtotal, quantity, variantId?, variantName?, unitOfMeasure?, productType }
  */
-export const resolveSaleLine = async (product, requestedItem, { shop, session, productCache }) => {
+export const resolveSaleLine = async (product, requestedItem, { shop, session, productCache, negativeStockAlerts }) => {
   const quantity = Number(requestedItem.quantity);
   const productType = product.productType || 'standard';
 
@@ -141,7 +149,7 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
     case 'standard': {
       requireWholeQuantity(quantity, product.name);
       const unitPrice = product.sellingPrice;
-      checkAndDeductStock(product, quantity);
+      checkAndDeductStock(product, quantity, negativeStockAlerts);
       const { subtotal, discountAmount, appliedPromotionLabel } = applyPromotions(product.promotions, quantity, unitPrice);
       return {
         unitPrice,
@@ -167,7 +175,7 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
       if (product.maxPrice != null && unitPrice > product.maxPrice) {
         throw new SaleLineError(`Price for ${product.name} cannot exceed ${product.maxPrice}`);
       }
-      checkAndDeductStock(product, quantity);
+      checkAndDeductStock(product, quantity, negativeStockAlerts);
       const { subtotal, discountAmount, appliedPromotionLabel } = applyPromotions(product.promotions, quantity, unitPrice);
       return {
         unitPrice,
@@ -187,7 +195,7 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
         throw new SaleLineError(`Quantity for ${product.name} must be greater than 0`);
       }
       const unitPrice = product.sellingPrice;
-      checkAndDeductStock(product, quantity);
+      checkAndDeductStock(product, quantity, negativeStockAlerts);
       const { subtotal, discountAmount, appliedPromotionLabel } = applyPromotions(product.promotions, quantity, unitPrice);
       return {
         unitPrice,
@@ -212,7 +220,7 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
       if (!(unitPrice > 0)) {
         throw new SaleLineError(`Price for ${product.name} must be greater than 0`);
       }
-      checkAndDeductStock(product, quantity);
+      checkAndDeductStock(product, quantity, negativeStockAlerts);
       const { subtotal, discountAmount, appliedPromotionLabel } = applyPromotions(product.promotions, quantity, unitPrice);
       return {
         unitPrice,
@@ -240,7 +248,7 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
         if (!component) {
           throw new SaleLineError(`A component product in bundle ${product.name} no longer exists`);
         }
-        checkAndDeductStock(component, bundleItem.quantity * quantity);
+        checkAndDeductStock(component, bundleItem.quantity * quantity, negativeStockAlerts);
         components.push({ doc: component, quantity: bundleItem.quantity });
       }
       const subtotal = unitPrice * quantity;
@@ -265,10 +273,15 @@ export const resolveSaleLine = async (product, requestedItem, { shop, session, p
       if (!variant) {
         throw new SaleLineError(`Variant not found for ${product.name}`);
       }
-      if (variant.quantity < quantity) {
-        throw new SaleLineError(`Insufficient stock for ${product.name} (${variant.name}). Available: ${variant.quantity}`);
+      // Same "never block, just alert" treatment as checkAndDeductStock above.
+      const resultingVariantQuantity = variant.quantity - quantity;
+      if (resultingVariantQuantity < 0) {
+        negativeStockAlerts.push({
+          productName: `${product.name} (${variant.name})`,
+          resultingQuantity: resultingVariantQuantity,
+        });
       }
-      variant.quantity -= quantity;
+      variant.quantity = resultingVariantQuantity;
       productCache.set(product._id.toString(), product);
 
       const subtotal = variant.sellingPrice * quantity;

@@ -42,10 +42,17 @@ export function monthlyTotalForPlan(plan, staffCount) {
  * shown before a new staff account is created.
  */
 export function computeSeatAdditionImpact(plan, currentStaffCount, billingCycle = 'monthly') {
-  const totalFor = (count) => (billingCycle === 'yearly' ? yearlyTotalForPlan(plan, count) : monthlyTotalForPlan(plan, count));
+  const totalFor = (count) => totalForCycle(plan, count, billingCycle);
   const currentAmount = totalFor(currentStaffCount);
   const projectedAmount = totalFor(currentStaffCount + 1);
   return { currentAmount, projectedAmount, increased: projectedAmount > currentAmount };
+}
+
+/** Quarterly total: monthly × 3 less the quarterly discount. */
+export function quarterlyTotalForPlan(plan, staffCount) {
+  const monthly = monthlyTotalForPlan(plan, staffCount);
+  const discount = (plan.quarterlyDiscountPercent ?? 0) / 100;
+  return Math.round(monthly * 3 * (1 - discount));
 }
 
 /** Yearly total: explicit override, else monthly × 12 less the yearly discount. */
@@ -56,6 +63,13 @@ export function yearlyTotalForPlan(plan, staffCount) {
   const monthly = monthlyTotalForPlan(plan, staffCount);
   const discount = (plan.yearlyDiscountPercent ?? 0) / 100;
   return Math.round(monthly * 12 * (1 - discount));
+}
+
+/** Full-period total for a head-count on a plan, for any billing cycle. */
+export function totalForCycle(plan, staffCount, billingCycle = 'monthly') {
+  if (billingCycle === 'yearly') return yearlyTotalForPlan(plan, staffCount);
+  if (billingCycle === 'quarterly') return quarterlyTotalForPlan(plan, staffCount);
+  return monthlyTotalForPlan(plan, staffCount);
 }
 
 /**
@@ -92,8 +106,9 @@ export function applyReferralCredit(amount, referralCreditPercent) {
  * card); otherwise the tier is chosen from the head-count.
  *
  * Returns everything the pricing screen and the payment initiator need:
- * { plan, staffCount, billingCycle, monthlyTotal, yearlyTotal, yearlySavings,
- *   amountDue, promoDiscount, referralDiscount, currency }
+ * { plan, staffCount, billingCycle, monthlyTotal, quarterlyTotal, yearlyTotal,
+ *   quarterlySavings, yearlySavings, amountDue, promoDiscount,
+ *   referralDiscount, currency }
  */
 export function computePrice({
   plans, plan = null, staffCount, billingCycle = 'monthly', promotion = null, referralCreditPercent = 0,
@@ -102,10 +117,12 @@ export function computePrice({
   if (!chosen) throw new Error('No active subscription plans are configured');
 
   const monthlyTotal = monthlyTotalForPlan(chosen, staffCount);
+  const quarterlyTotal = quarterlyTotalForPlan(chosen, staffCount);
   const yearlyTotal = yearlyTotalForPlan(chosen, staffCount);
+  const quarterlySavings = Math.max(monthlyTotal * 3 - quarterlyTotal, 0);
   const yearlySavings = Math.max(monthlyTotal * 12 - yearlyTotal, 0);
 
-  const base = billingCycle === 'yearly' ? yearlyTotal : monthlyTotal;
+  const base = totalForCycle(chosen, staffCount, billingCycle);
   const { amount: afterPromo, discount: promoDiscount } = applyPromotion(base, promotion);
   const { amount: afterReferral, discount: referralDiscount } = applyReferralCredit(afterPromo, referralCreditPercent);
 
@@ -114,7 +131,9 @@ export function computePrice({
     staffCount,
     billingCycle,
     monthlyTotal,
+    quarterlyTotal,
     yearlyTotal,
+    quarterlySavings,
     yearlySavings,
     amountDue: afterReferral,
     promoDiscount,

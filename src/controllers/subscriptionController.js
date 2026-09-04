@@ -8,6 +8,7 @@ import {
   getBillableUserCount,
   pickPlanForStaffCount,
   monthlyTotalForPlan,
+  quarterlyTotalForPlan,
   yearlyTotalForPlan,
   computePrice,
   deriveAccess,
@@ -73,12 +74,15 @@ export const getPlans = async (req, res) => {
     const recommended = pickPlanForStaffCount(plans, staffCount);
     const pricedPlans = plans.map((plan) => {
       const monthlyTotal = monthlyTotalForPlan(plan, staffCount);
+      const quarterlyTotal = quarterlyTotalForPlan(plan, staffCount);
       const yearlyTotal = yearlyTotalForPlan(plan, staffCount);
       return {
         ...plan,
         pricing: {
           monthlyTotal,
+          quarterlyTotal,
           yearlyTotal,
+          quarterlySavings: Math.max(monthlyTotal * 3 - quarterlyTotal, 0),
           yearlySavings: Math.max(monthlyTotal * 12 - yearlyTotal, 0),
         },
         recommended: recommended != null && String(plan._id) === String(recommended._id),
@@ -144,7 +148,9 @@ export const previewPricing = async (req, res) => {
         staffCount: price.staffCount,
         billingCycle: price.billingCycle,
         monthlyTotal: price.monthlyTotal,
+        quarterlyTotal: price.quarterlyTotal,
         yearlyTotal: price.yearlyTotal,
+        quarterlySavings: price.quarterlySavings,
         yearlySavings: price.yearlySavings,
         promoDiscount: price.promoDiscount,
         referralDiscount: price.referralDiscount,

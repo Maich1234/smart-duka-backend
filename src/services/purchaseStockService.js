@@ -32,7 +32,11 @@ const makeProductCache = (shop, session) => {
  */
 export const computeWeightedAverageCost = (priorQuantity, priorCost, incomingQuantity, incomingUnitCost) => {
   const newQuantity = round2(priorQuantity + incomingQuantity);
-  if (newQuantity <= 0) return incomingUnitCost;
+  // A negative priorQuantity (sold before it was ever purchased into the
+  // system) carries no real cost basis to blend in — treat it like starting
+  // from zero. Otherwise its negative term skews the "average" past both
+  // inputs (e.g. -2 units @ 100 + 3 incoming @ 120 would compute to 160).
+  if (newQuantity <= 0 || priorQuantity <= 0) return incomingUnitCost;
   return round2((priorQuantity * priorCost + incomingQuantity * incomingUnitCost) / newQuantity);
 };
 
@@ -124,7 +128,9 @@ export async function applyPurchaseReceiptStock(purchase, session) {
 /**
  * Reverses the stock this purchase previously added — used when soft-deleting
  * ("cancelling") a completed purchase. Best-effort and quantity-only per
- * line: clamps at 0 (stock may have already been sold on), skips
+ * line: plain subtraction, no floor — stock may have already been sold on
+ * since this purchase (or have started negative before it), and either way
+ * subtracting back out is what correctly restores the prior balance. Skips
  * products/variants deleted since, and deliberately does NOT unwind the
  * weighted-average cost update the receipt made (see plan decision #5 —
  * retroactive recosting is out of scope). Must run inside the caller's
@@ -153,7 +159,7 @@ export async function reversePurchaseStock(purchase, session) {
     touched.add(product._id.toString());
 
     const priorQuantity = target.quantity;
-    const newQuantity = Math.max(0, round2(priorQuantity - item.quantity));
+    const newQuantity = round2(priorQuantity - item.quantity);
     target.quantity = newQuantity;
 
     movements.push({

@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import Product from '../models/Product.js';
 import Sale from '../models/Sale.js';
+import User from '../models/User.js';
 import MpesaTransaction from '../models/MpesaTransaction.js';
 import PaymentConfig from '../models/PaymentConfig.js';
 import { signReceiptToken } from '../utils/receiptToken.js';
@@ -12,6 +13,7 @@ import { logAudit } from '../services/auditLogService.js';
 import { getActiveShift } from '../services/shiftService.js';
 import { parsePagination, paginatedResult } from '../utils/pagination.js';
 import { escapeRegex } from '../utils/escapeRegex.js';
+import { sendPushToUser } from '../utils/push.js';
 import {
   MPESA_METHOD_KEY,
   enabledMethodKeys,
@@ -31,6 +33,31 @@ class SaleRejection extends Error {
     this.status = status;
   }
 }
+
+/**
+ * Alerts every owner of the shop that a sale just took one or more items
+ * below zero stock. This is allowed — a shop can sell ahead of what's been
+ * entered as purchased — but the owner needs to know so they can true up
+ * inventory. Best-effort per owner, mirrors notifyOwnersShiftClosed in
+ * shiftController.js.
+ */
+const notifyOwnersNegativeStock = async (shop, staffName, items) => {
+  const title = items.length === 1
+    ? `⚠️ ${items[0].productName} is now below zero stock`
+    : `⚠️ ${items.length} items went below zero stock`;
+  const body = `${staffName} sold past available stock — ${items
+    .map((i) => `${i.productName}: ${i.resultingQuantity}`)
+    .join(', ')}`;
+
+  const owners = await User.find({ shop, role: 'owner' });
+  for (const owner of owners) {
+    await sendPushToUser(owner, {
+      title,
+      body,
+      data: { type: 'negative_stock_alert' },
+    }).catch((err) => console.error('[sale] owner negative-stock push failed:', err.message));
+  }
+};
 
 export const createSale = async (req, res) => {
   if (req.user.role !== 'owner' && !req.user.permissions?.includes('record_sale')) {
@@ -99,6 +126,7 @@ export const createSale = async (req, res) => {
   try {
     let sale;
     let saleItems;
+    let negativeStockAlerts;
 
     // withTransaction (not a bare startTransaction/commitTransaction pair)
     // because MongoDB raises a WriteConflict whenever two transactions touch
@@ -123,6 +151,7 @@ export const createSale = async (req, res) => {
       let totalAmount = 0;
       let totalCommission = 0;
       saleItems = [];
+      negativeStockAlerts = [];
       // Keeps every product/bundle-component doc touched during this sale in
       // memory so it's mutated and saved exactly once, even when referenced
       // by more than one cart line (e.g. shared bundle components). Rebuilt
@@ -144,7 +173,7 @@ export const createSale = async (req, res) => {
 
         let resolved;
         try {
-          resolved = await resolveSaleLine(product, item, { shop, session, productCache });
+          resolved = await resolveSaleLine(product, item, { shop, session, productCache, negativeStockAlerts });
         } catch (err) {
           if (err instanceof SaleLineError) throw new SaleRejection(err.status, err.message);
           throw err;
@@ -223,6 +252,11 @@ export const createSale = async (req, res) => {
 
     const saleObj = sale.toObject();
     saleObj.receiptToken = signReceiptToken(sale._id);
+    if (negativeStockAlerts.length > 0) {
+      // Awaited (not fire-and-forget): this backend runs on Vercel, which
+      // kills async work started after the response goes out.
+      await notifyOwnersNegativeStock(shop, req.user.name, negativeStockAlerts);
+    }
     res.status(201).json({ success: true, data: saleObj, message: 'Sale recorded successfully' });
   } catch (error) {
     if (error instanceof SaleRejection) {

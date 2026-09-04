@@ -56,11 +56,13 @@ const productSchema = new mongoose.Schema({
     required: [true, 'Cost price is required'],
     min: 0,
   },
+  // No `min: 0` — a sale is allowed to take this below zero (stock physically
+  // in the shop but not yet purchased into the system); saleController.js
+  // alerts the owner whenever that happens. See pricingEngine.js.
   quantity: {
     type: Number,
     required: true,
     default: 0,
-    min: 0,
   },
   lowStockAlert: {
     type: Number,
@@ -112,7 +114,8 @@ const productSchema = new mongoose.Schema({
     name: { type: String, required: true, trim: true },
     sellingPrice: { type: Number, required: true, min: 0 },
     costPrice: { type: Number, required: true, min: 0 },
-    quantity: { type: Number, default: 0, min: 0 },
+    // No `min: 0` — same reasoning as the top-level `quantity` field above.
+    quantity: { type: Number, default: 0 },
     sku: { type: String, trim: true },
     barcode: { type: String, trim: true },
     lowStockAlert: { type: Number, default: 5, min: 0 },

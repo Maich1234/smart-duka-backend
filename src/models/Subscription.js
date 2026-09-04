@@ -65,7 +65,7 @@ const subscriptionSchema = new mongoose.Schema({
   trialEnd: { type: Date, default: null, index: true },
   billingCycle: {
     type: String,
-    enum: ['monthly', 'yearly'],
+    enum: ['monthly', 'quarterly', 'yearly'],
     default: 'monthly',
   },
   // End of the last paid period. Null while trialing/unpaid.

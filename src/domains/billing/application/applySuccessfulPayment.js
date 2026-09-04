@@ -7,6 +7,7 @@ import { rewardReferrerIfFirstConversion } from './rewardReferrerIfFirstConversi
 function addCycle(date, cycle) {
   const d = new Date(date);
   if (cycle === 'yearly') d.setFullYear(d.getFullYear() + 1);
+  else if (cycle === 'quarterly') d.setMonth(d.getMonth() + 3);
   else d.setMonth(d.getMonth() + 1);
   return d;
 }

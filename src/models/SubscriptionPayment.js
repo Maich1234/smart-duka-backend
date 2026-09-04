@@ -21,7 +21,7 @@ const subscriptionPaymentSchema = new mongoose.Schema({
     ref: 'SubscriptionPlan',
     required: true,
   },
-  billingCycle: { type: String, enum: ['monthly', 'yearly'], required: true },
+  billingCycle: { type: String, enum: ['monthly', 'quarterly', 'yearly'], required: true },
   staffCount: { type: Number, required: true, min: 1 },
   // Always computed server-side by subscriptionPricingService — never client input.
   amount: { type: Number, required: true, min: 0 },
