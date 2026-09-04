@@ -5,8 +5,9 @@ import { deriveAccess } from '../services/subscriptionPricingService.js';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Gates the *transactional* API — recording sales, moving stock, purchases,
- * expenses — behind a live subscription.
+ * Gates the *transactional* API — recording sales, voiding/refunding them,
+ * starting shifts, moving stock, purchases, expenses — behind a live
+ * subscription.
  *
  * Distinct from requireActiveSubscription (which guards the paid extras:
  * AI, reports, analytics) in two ways that matter:

@@ -15,11 +15,11 @@ router.use(protect);
 router.post('/', staffOrOwner, requirePaidShop, idempotency, validate(createSaleSchema), createSale);
 // Owner (or staff granted 'void_sale') corrects a mis-recorded sale.
 // idempotency: void can be queued offline and retried — must not double-restore stock.
-router.post('/:id/void', staffOrOwner, idempotency, voidSale);
+router.post('/:id/void', staffOrOwner, requirePaidShop, idempotency, voidSale);
 // Owner (or staff granted 'refund_own_sales'/'refund_all_sales') returns the
 // customer's money — via M-Pesa reversal for mpesa sales, over the counter
 // otherwise. idempotency: a retried request must not fire a second reversal.
-router.post('/:id/refund', staffOrOwner, idempotency, refundSale);
+router.post('/:id/refund', staffOrOwner, requirePaidShop, idempotency, refundSale);
 router.get('/stats', staffOrOwner, getSalesStats);
 router.get('/', staffOrOwner, validate(saleQuerySchema, 'query'), getSales);
 router.get('/me', staffOrOwner, getMySales);
