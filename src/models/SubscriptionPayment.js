@@ -26,9 +26,11 @@ const subscriptionPaymentSchema = new mongoose.Schema({
   // Always computed server-side by subscriptionPricingService — never client input.
   amount: { type: Number, required: true, min: 0 },
   currency: { type: String, default: 'KES', uppercase: true, trim: true },
+  // 'free': the server-computed price was covered entirely by a promo/
+  // referral discount — no provider was ever charged.
   provider: {
     type: String,
-    enum: ['mpesa', 'card', 'bank'],
+    enum: ['mpesa', 'card', 'bank', 'free'],
     required: true,
   },
   // Provider correlation ids (M-Pesa: CheckoutRequestID / MerchantRequestID).

@@ -23,10 +23,12 @@ import { withMpesaCallbackSecret } from '../services/mpesaService.js';
 import { logAudit } from '../services/auditLogService.js';
 import { cleanupFailedSeatPayment } from '../domains/billing/application/seatCleanup.js';
 import { applySuccessfulPayment } from '../domains/billing/application/applySuccessfulPayment.js';
+import { activateFreeSubscription } from '../domains/billing/application/activateFreeSubscription.js';
 import { reconcilePayment } from '../domains/billing/application/reconcilePayment.js';
 import { paystackAmountMismatch } from '../domains/billing/domain/fraud.js';
 import { SUBSCRIPTION_PAGE_URL, getSubscriptionCallbackUrl } from '../domains/billing/domain/urls.js';
 import { MPESA_RECEIPT_PATTERN, MPESA_AMOUNT_PATTERN } from '../utils/mpesaReceipt.js';
+import { KENYAN_PHONE_PATTERN } from '../validations/subscriptionValidation.js';
 import { sendPushToUser } from '../utils/push.js';
 import { sendEmail } from '../utils/email.js';
 import { renderSubscriptionEmail, SUBSCRIPTION_UNSUBSCRIBE_MAILTO } from '../utils/emailTemplates.js';
@@ -518,12 +520,10 @@ export const initiatePayment = async (req, res) => {
     // already consumed.
     const seatCharges = getAccruedSeatTotal(subscription);
     const amountDue = price.amountDue + seatCharges;
-    if (amountDue <= 0) {
-      return res.status(400).json({ success: false, message: 'Nothing to pay — the promo covers the full amount. Contact support to apply it.' });
-    }
 
-    // A shop that skipped the trial can still pay: create its subscription
-    // shell now; the successful payment flips it to active.
+    // A shop that skipped the trial can still pay (or activate for free):
+    // create its subscription shell now regardless of amountDue; the
+    // successful payment flips it to active either way.
     if (!subscription) {
       try {
         subscription = await Subscription.create({
@@ -541,6 +541,51 @@ export const initiatePayment = async (req, res) => {
       }
     }
 
+    // A promo/referral discount fully covering the invoice: nothing to
+    // charge, so no payment provider is ever involved. amountDue is entirely
+    // server-computed above (plan price, promo, referral credit, seat
+    // charges) — nothing here is trusted from the client.
+    if (amountDue <= 0) {
+      try {
+        const payment = await activateFreeSubscription({
+          shopId, subscription, plan, billingCycle, staffCount, price, promotion,
+          requestedBy: req.user._id, idempotencyKey, req,
+        });
+        return res.status(201).json({
+          success: true,
+          data: {
+            paymentId: payment._id,
+            status: 'success',
+            amount: 0,
+            currency: price.currency,
+            billingCycle,
+            planSlug: plan.slug,
+            publicKey: null,
+            providerRef: null,
+          },
+          message: 'Your promo code covers the full amount — subscription activated for free.',
+        });
+      } catch (err) {
+        // Idempotency-race recovery, same pattern as the charged path below.
+        if (err.code === 11000 && idempotencyKey) {
+          const existing = await SubscriptionPayment.findOne({ shop: shopId, idempotencyKey });
+          if (existing) {
+            return res.json({
+              success: true,
+              idempotent: true,
+              data: { paymentId: existing._id, status: existing.status, amount: existing.amount },
+              message: existing.status === 'success' ? 'Already activated.' : `Duplicate request — payment already ${existing.status}.`,
+            });
+          }
+        }
+        if (err.code === 'PROMOTION_UNAVAILABLE') {
+          return res.status(400).json({ success: false, message: err.message });
+        }
+        console.error('[Subscriptions] activateFreeSubscription error:', err);
+        return res.status(500).json({ success: false, message: 'Could not activate the subscription. Please try again.' });
+      }
+    }
+
     // ── 3. Charge via the provider abstraction ─────────────────────────────
     const callbackUrl = withMpesaCallbackSecret(getSubscriptionCallbackUrl());
     if (!callbackUrl) {
@@ -551,6 +596,9 @@ export const initiatePayment = async (req, res) => {
     }
 
     const provider = getPaymentProvider(providerKey);
+    if (provider.key === 'mpesa' && !KENYAN_PHONE_PATTERN.test(phoneNumber ?? '')) {
+      return res.status(400).json({ success: false, message: 'Phone number must be in +2547XXXXXXXX or +2541XXXXXXXX format' });
+    }
     let charge;
     try {
       charge = await provider.charge({

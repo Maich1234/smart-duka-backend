@@ -8,6 +8,7 @@ import User from '../src/models/User.js';
 import mpesaProvider from '../src/domains/billing/infra/payments/mpesaProvider.js';
 import bankProvider from '../src/domains/billing/infra/payments/bankProvider.js';
 import { applySuccessfulPayment } from '../src/domains/billing/application/applySuccessfulPayment.js';
+import { activateFreeSubscription } from '../src/domains/billing/application/activateFreeSubscription.js';
 import { reconcilePayment } from '../src/domains/billing/application/reconcilePayment.js';
 import { paystackAmountMismatch } from '../src/domains/billing/domain/fraud.js';
 import {
@@ -61,8 +62,11 @@ test('applySuccessfulPayment: subscription purpose activates, stacks the period 
     save: async function () { this.saved = true; },
   };
   mock.method(Subscription, 'findById', async () => subscription);
-  let promoUpdate;
-  mock.method(Promotion, 'updateOne', async (filter, update) => { promoUpdate = { filter, update }; });
+  let promoClaim;
+  mock.method(Promotion, 'findOneAndUpdate', async (filter, update) => {
+    promoClaim = { filter, update };
+    return { _id: filter._id, redemptionCount: 1 };
+  });
   mock.method(Shop, 'findById', () => ({ select: async () => null })); // no referrer on this shop — just proves it was called
 
   const payment = {
@@ -100,13 +104,143 @@ test('applySuccessfulPayment: subscription purpose activates, stacks the period 
   assert.equal(payment.periodEnd.getTime(), expectedEnd.getTime());
   assert.ok(payment.saved);
 
-  assert.deepEqual(promoUpdate.filter, { _id: 'promo-1' });
-  assert.deepEqual(promoUpdate.update, { $inc: { redemptionCount: 1 } });
+  assert.equal(promoClaim.filter._id, 'promo-1');
+  assert.equal(promoClaim.filter.active, true, 'the claim must re-check eligibility, not blindly increment');
+  assert.deepEqual(promoClaim.update, { $inc: { redemptionCount: 1 } });
+});
+
+test('applySuccessfulPayment: a free activation whose promotion lost the redemption race throws and mutates nothing', async () => {
+  const subscription = {
+    save: async () => { throw new Error('must not activate — the claim failed before any mutation'); },
+  };
+  mock.method(Subscription, 'findById', async () => subscription);
+  mock.method(Promotion, 'findOneAndUpdate', async () => null); // lost the race: cap/expiry/inactive
+
+  const payment = {
+    purpose: 'subscription',
+    shop: 'shop-1',
+    subscription: 'sub-1',
+    plan: 'plan-1',
+    billingCycle: 'monthly',
+    provider: 'free',
+    promotion: 'promo-1',
+    save: async () => { throw new Error('must not save — the claim failed before any mutation'); },
+  };
+
+  await assert.rejects(applySuccessfulPayment(payment), /no longer available/);
+});
+
+test('applySuccessfulPayment: an already-charged payment whose promotion lost the redemption race still activates, without a credit', async () => {
+  const subscription = { seatAdjustments: [], save: async function () { this.saved = true; } };
+  mock.method(Subscription, 'findById', async () => subscription);
+  mock.method(Promotion, 'findOneAndUpdate', async () => null); // lost the race
+  mock.method(Shop, 'findById', () => ({ select: async () => null }));
+
+  const payment = {
+    purpose: 'subscription',
+    shop: 'shop-1',
+    subscription: 'sub-1',
+    plan: 'plan-1',
+    billingCycle: 'monthly',
+    staffCount: 3,
+    amount: 500,
+    currency: 'KES',
+    provider: 'mpesa',
+    promotion: 'promo-1',
+    save: async function () { this.saved = true; },
+  };
+
+  await assert.doesNotReject(applySuccessfulPayment(payment));
+  assert.equal(subscription.status, 'active', 'money already changed hands — activation must not be stranded by a redemption-cap race');
 });
 
 test('applySuccessfulPayment: no subscription document → logs and returns without throwing', async () => {
   mock.method(Subscription, 'findById', async () => null);
   await assert.doesNotReject(applySuccessfulPayment({ purpose: 'subscription', shop: 'shop-1', subscription: 'missing-sub' }));
+});
+
+// ── activateFreeSubscription ─────────────────────────────────────────────────
+
+test('activateFreeSubscription: creates a zero-value success payment with provider "free", activates the subscription, and claims the promotion', async () => {
+  const subscription = { _id: 'sub-1', seatAdjustments: [], save: async function () { this.saved = true; } };
+  mock.method(Subscription, 'findById', async () => subscription);
+  mock.method(Shop, 'findById', () => ({ select: async () => null }));
+
+  let created;
+  mock.method(SubscriptionPayment, 'create', async (doc) => {
+    created = { ...doc, save: async function () { this.saved = true; } };
+    return created;
+  });
+  let claimedId;
+  mock.method(Promotion, 'findOneAndUpdate', async (filter) => {
+    claimedId = filter._id;
+    return { _id: filter._id, redemptionCount: 1 };
+  });
+
+  const plan = { _id: 'plan-1', slug: 'starter', name: 'Starter' };
+  const price = { currency: 'KES', promoDiscount: 500, referralDiscount: 0 };
+  const promotion = { _id: 'promo-1', code: 'FREE100' };
+
+  const payment = await activateFreeSubscription({
+    shopId: 'shop-1',
+    subscription,
+    plan,
+    billingCycle: 'monthly',
+    staffCount: 2,
+    price,
+    promotion,
+    requestedBy: 'user-1',
+    idempotencyKey: 'key-1',
+    req: {},
+  });
+
+  assert.equal(created.provider, 'free');
+  assert.equal(created.status, 'success');
+  assert.equal(created.amount, 0);
+  assert.equal(created.promoCode, 'FREE100');
+  assert.equal(claimedId, 'promo-1');
+  assert.equal(subscription.status, 'active');
+  assert.ok(payment.saved);
+});
+
+test('activateFreeSubscription: no promo code, amountDue <= 0 purely from referral credit — still activates, no promotion touched', async () => {
+  const subscription = { _id: 'sub-1', seatAdjustments: [], save: async function () { this.saved = true; } };
+  mock.method(Subscription, 'findById', async () => subscription);
+  mock.method(Shop, 'findById', () => ({ select: async () => null }));
+  mock.method(SubscriptionPayment, 'create', async (doc) => ({ ...doc, save: async function () { this.saved = true; } }));
+  const findOneAndUpdate = mock.method(Promotion, 'findOneAndUpdate', async () => { throw new Error('must not be called — no promotion on this payment'); });
+
+  const plan = { _id: 'plan-1', slug: 'starter', name: 'Starter' };
+  const price = { currency: 'KES', promoDiscount: 0, referralDiscount: 1000 };
+
+  await assert.doesNotReject(activateFreeSubscription({
+    shopId: 'shop-1', subscription, plan, billingCycle: 'monthly', staffCount: 1, price, promotion: null, requestedBy: 'user-1', req: {},
+  }));
+  assert.equal(findOneAndUpdate.mock.callCount(), 0);
+});
+
+test('activateFreeSubscription: promotion lost its redemption race — marks the just-created payment failed and rethrows, without activating', async () => {
+  const subscription = { _id: 'sub-1', save: async () => { throw new Error('must not activate'); } };
+  mock.method(Subscription, 'findById', async () => subscription);
+  mock.method(Promotion, 'findOneAndUpdate', async () => null);
+
+  let created;
+  mock.method(SubscriptionPayment, 'create', async (doc) => {
+    created = { ...doc, save: async function () { this.saved = true; } };
+    return created;
+  });
+
+  const plan = { _id: 'plan-1', slug: 'starter', name: 'Starter' };
+  const price = { currency: 'KES', promoDiscount: 500, referralDiscount: 0 };
+  const promotion = { _id: 'promo-1', code: 'FREE100' };
+
+  await assert.rejects(
+    activateFreeSubscription({ shopId: 'shop-1', subscription, plan, billingCycle: 'monthly', staffCount: 2, price, promotion, requestedBy: 'user-1', req: {} }),
+    /no longer available/
+  );
+
+  assert.equal(created.status, 'failed');
+  assert.ok(created.saved, 'the failed payment record must be persisted, not left dangling, as the audit trail of the attempt');
 });
 
 // ── reconcilePayment ─────────────────────────────────────────────────────────
