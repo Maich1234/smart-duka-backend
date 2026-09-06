@@ -147,3 +147,83 @@ export function renderSubscriptionEmail({
 
   return { html, text };
 }
+
+/**
+ * Renders a branded transactional email for a security-setting alert
+ * (password change, contact-info change, permissions change, etc). Unlike
+ * renderSubscriptionEmail this has no mandatory CTA button — most of these
+ * notices are informational, not an action the recipient needs to take.
+ * @returns {{ html: string, text: string }}
+ */
+export function renderSecurityAlertEmail({ name, heading, message, when, ip, severity = 'info' }) {
+  const greetName = name ? escapeHtml(name.split(' ')[0]) : 'there';
+  const accent = severity === 'warning' ? '#B45309' : BRAND.green;
+  const rows = [
+    { label: 'When', value: when },
+    { label: 'IP address', value: ip },
+  ].filter((r) => r.value);
+
+  const rowsHtml = rows
+    .map(
+      (r) => `
+        <tr>
+          <td style="padding:10px 0;border-top:1px solid ${BRAND.border};color:${BRAND.textSecondary};font-size:14px;font-family:${FONT_STACK};">${escapeHtml(r.label)}</td>
+          <td style="padding:10px 0;border-top:1px solid ${BRAND.border};color:${BRAND.text};font-size:14px;font-weight:600;text-align:right;font-family:${FONT_STACK};">${escapeHtml(r.value)}</td>
+        </tr>`
+    )
+    .join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<title>${escapeHtml(heading)}</title>
+</head>
+<body style="margin:0;padding:0;background-color:${BRAND.bg};-webkit-text-size-adjust:100%;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${BRAND.bg};">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background-color:#FFFFFF;border-radius:16px;overflow:hidden;border:1px solid ${BRAND.border};">
+          <tr>
+            <td style="background-color:${BRAND.green};padding:28px 32px;" align="center">
+              <span style="font-family:${FONT_STACK};font-size:22px;font-weight:800;letter-spacing:0.5px;color:${BRAND.gold};">DuQana</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:36px 40px 8px;font-family:${FONT_STACK};">
+              <p style="margin:0 0 12px;font-size:12px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:${accent};">Security notice</p>
+              <h1 style="margin:0 0 16px;font-size:20px;line-height:28px;color:${BRAND.text};font-weight:700;">${escapeHtml(heading)}</h1>
+              <p style="margin:0 0 16px;font-size:15px;line-height:24px;color:${BRAND.text};">Hi ${greetName},</p>
+              <p style="margin:0 0 20px;font-size:15px;line-height:24px;color:${BRAND.text};">${escapeHtml(message)}</p>
+              ${rowsHtml ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0 24px;">${rowsHtml}</table>` : ''}
+              <p style="margin:0 0 24px;font-size:14px;line-height:22px;color:${BRAND.textSecondary};">Didn't do this? Contact us immediately at <a href="mailto:${SUPPORT_EMAIL}" style="color:${BRAND.green};">${SUPPORT_EMAIL}</a> or call ${SUPPORT_PHONE}.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 40px 28px;border-top:1px solid ${BRAND.border};font-family:${FONT_STACK};">
+              <p style="margin:0;font-size:12px;line-height:18px;color:${BRAND.textSecondary};">This is an automated security notice from DuQana — replies to this address aren't monitored.</p>
+              <p style="margin:12px 0 0;font-size:11px;line-height:16px;color:${BRAND.textMuted};">&copy; ${new Date().getFullYear()} DuQana.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const text = [
+    `Hi ${name ? name.split(' ')[0] : 'there'},`,
+    '',
+    message,
+    '',
+    ...rows.map((r) => `${r.label}: ${r.value}`),
+    '',
+    `Didn't do this? Contact us at ${SUPPORT_EMAIL} or call ${SUPPORT_PHONE}.`,
+    "This is an automated security notice from DuQana — replies aren't monitored.",
+  ].join('\n');
+
+  return { html, text };
+}

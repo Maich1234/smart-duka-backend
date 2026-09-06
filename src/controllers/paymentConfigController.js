@@ -1,6 +1,7 @@
 import PaymentConfig from '../models/PaymentConfig.js';
 import { encrypt, decrypt } from '../services/encryptionService.js';
 import { logAudit } from '../services/auditLogService.js';
+import { notifySecurityEvent } from '../utils/securityAlerts.js';
 
 function maskCredential(encryptedValue) {
   if (!encryptedValue) return null;
@@ -131,6 +132,7 @@ export const saveMpesaConfig = async (req, res) => {
       details: { environment, businessName, shortcode },
       req,
     }).catch(() => {});
+    await notifySecurityEvent(req.user, 'mpesa_config_updated', { req });
 
     return res.json({ success: true, message: 'M-Pesa configuration saved successfully.' });
   } catch (err) {
@@ -171,6 +173,7 @@ export const disconnectMpesa = async (req, res) => {
       entityId: config?._id,
       req,
     }).catch(() => {});
+    await notifySecurityEvent(req.user, 'mpesa_disconnected', { req });
 
     return res.json({ success: true, message: 'M-Pesa account disconnected.' });
   } catch (err) {

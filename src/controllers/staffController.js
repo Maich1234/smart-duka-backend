@@ -11,8 +11,12 @@ import { resolveStaffEmailSlot } from './seatPaymentController.js';
 import { revokeAllSessions } from '../services/refreshTokenService.js';
 import { logAudit } from '../services/auditLogService.js';
 import { sendPushToUser } from '../utils/push.js';
+import { notifySecurityEvent } from '../utils/securityAlerts.js';
 import { isSystemGeneratedEmail } from '../utils/staffEmailSlug.js';
 import { sendVerificationEmail } from '../utils/emailVerification.js';
+
+/** Order-independent equality for the permissions string arrays, so resending the same set isn't flagged as a change. */
+const sameStringSet = (a = [], b = []) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
 
 /**
  * Login guarantees at most one unrevoked+unexpired RefreshToken per staff
@@ -203,15 +207,47 @@ export const updateStaff = async (req, res) => {
   // reactivate was a free seat: the old seat-payment gate only ever guarded
   // creation, leaving this endpoint as an open bypass.
   const activationChanged = isActive !== undefined && isActive !== staff.isActive;
+  const previousEmail = staff.email;
+  const nextPermissions = permissions ? withImpliedPermissions(permissions) : null;
+  const permissionsChanged = !!nextPermissions && !sameStringSet(nextPermissions, staff.permissions);
 
+  // Security-relevant changes to alert/audit — collected before mutating so
+  // the "changed to X" wording reflects what actually moved.
+  const changes = [];
   if (name) staff.name = name;
-  if (email) staff.email = email;
-  if (phone) staff.phone = phone;
-  if (isActive !== undefined) staff.isActive = isActive;
-  if (permissions) staff.permissions = withImpliedPermissions(permissions);
+  if (email && email !== staff.email) {
+    changes.push(`email changed to ${email}`);
+    staff.email = email;
+  }
+  if (phone && phone !== staff.phone) {
+    changes.push(`phone number changed to ${phone}`);
+    staff.phone = phone;
+  }
+  if (activationChanged) {
+    changes.push(isActive ? 'account reactivated' : 'account deactivated');
+    staff.isActive = isActive;
+  }
+  if (permissionsChanged) changes.push('permissions updated');
+  if (nextPermissions) staff.permissions = nextPermissions;
   if (commissionEligible !== undefined) staff.commissionEligible = commissionEligible;
 
   await staff.save();
+
+  if (changes.length > 0) {
+    await logAudit({
+      shopId,
+      userId: staff._id,
+      action: 'auth.staff_update',
+      entityType: 'User',
+      entityId: staff._id,
+      details: { changes, performedBy: req.user._id },
+      req,
+    });
+    // Alert the pre-change email — if this account is ever taken over, the
+    // real staff member is still warned even when the change comes from
+    // their own owner's account.
+    await notifySecurityEvent(staff, 'staff_account_updated', { req, detail: changes.join(', '), email: previousEmail || staff.email });
+  }
 
   let adjustment = null;
   if (activationChanged) {
@@ -280,6 +316,7 @@ export const resetStaffPassword = async (req, res) => {
     details: { performedBy: req.user._id },
     req,
   });
+  await notifySecurityEvent(staff, 'password_change', { req, detail: 'This was done by your shop owner.' });
 
   res.json({ success: true, message: 'Password reset successfully' });
 };
@@ -305,6 +342,9 @@ export const forceLogoutStaff = async (req, res) => {
       body: 'You were signed out by your shop owner.',
       data: { type: 'force_logout', deviceId: activeSession.deviceId },
     }).catch((err) => console.error('[forceLogoutStaff] push failed', err.message));
+    // Push already sent above with the force-logout data type the client
+    // acts on — this only adds the email leg of the alert.
+    await notifySecurityEvent(staff, 'force_logout', { req, skipPush: true });
   }
 
   res.json({ success: true, message: 'Staff member signed out' });
@@ -353,5 +393,17 @@ export const updateStaffPermissions = async (req, res) => {
 
   staff.permissions = withImpliedPermissions(permissions);
   await staff.save();
+
+  await logAudit({
+    shopId: req.user.shop._id,
+    userId: staff._id,
+    action: 'auth.permissions_update',
+    entityType: 'User',
+    entityId: staff._id,
+    details: { performedBy: req.user._id },
+    req,
+  });
+  await notifySecurityEvent(staff, 'permissions_updated', { req });
+
   res.json({ success: true, data: staff.permissions });
 };

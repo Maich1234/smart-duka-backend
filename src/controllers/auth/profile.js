@@ -1,4 +1,6 @@
 import User from '../../models/User.js';
+import { logAudit } from '../../services/auditLogService.js';
+import { notifySecurityEvent } from '../../utils/securityAlerts.js';
 
 export const getProfile = async (req, res) => {
   const user = await User.findById(req.user._id).select('-password').populate('shop');
@@ -8,12 +10,27 @@ export const getProfile = async (req, res) => {
 export const updateProfile = async (req, res) => {
   const { name, email, phone } = req.body;
   const user = await User.findById(req.user._id);
+  const previousEmail = user.email;
 
+  const changes = [];
   if (name) user.name = name;
-  if (email) user.email = email;
-  if (phone) user.phone = phone;
+  if (email && email !== user.email) {
+    changes.push(`email changed to ${email}`);
+    user.email = email;
+  }
+  if (phone && phone !== user.phone) {
+    changes.push(`phone number changed to ${phone}`);
+    user.phone = phone;
+  }
 
   await user.save();
+
+  if (changes.length > 0) {
+    await logAudit({ shopId: user.shop, userId: user._id, action: 'auth.profile_update', details: { changes }, req });
+    // Alert the pre-change email — if an attacker is the one making this
+    // change, that's the address the real account owner still controls.
+    await notifySecurityEvent(user, 'profile_updated', { req, detail: changes.join(', '), email: previousEmail || user.email });
+  }
 
   res.json({
     success: true,
