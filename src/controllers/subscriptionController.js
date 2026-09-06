@@ -12,6 +12,7 @@ import {
   yearlyTotalForPlan,
   computePrice,
   deriveAccess,
+  canTransact,
 } from '../services/subscriptionPricingService.js';
 import {
   getAccruedSeatTotal,
@@ -201,6 +202,12 @@ export const getMySubscription = async (req, res) => {
     ]);
 
     const access = deriveAccess(subscription, platform.gracePeriodDays);
+    // The till (offline-first: a sale completes locally before the network
+    // is ever touched, see PosScreen.tsx) has no other way to learn this
+    // shop's real cutoff — read from the persisted cache, it's what stands
+    // between "lock takes effect once online" and "lock never takes effect
+    // while offline". Same math as requirePaidShop so the two can't drift.
+    const { allowed: canSell } = canTransact(access, { subscription, platform, role: req.user.role });
 
     let renewal = null;
     if (subscription) {
@@ -234,7 +241,7 @@ export const getMySubscription = async (req, res) => {
       success: true,
       data: {
         subscription,
-        access,
+        access: { ...access, canTransact: canSell },
         gracePeriodDays: platform.gracePeriodDays,
         renewal,
       },

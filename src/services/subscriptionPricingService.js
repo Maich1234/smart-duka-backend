@@ -202,6 +202,30 @@ export function deriveAccess(subscription, gracePeriodDays = 3, now = new Date()
   return { state: 'locked', daysLeft: 0, graceDaysLeft: 0, expiresAt, cancelled };
 }
 
+/**
+ * Whether `role` may still record a transaction for this shop right now, and
+ * (for a staff account still inside its extra window) how many days of that
+ * runway are left.
+ *
+ * This is requirePaidShop's own staff-grace math, pulled out here so the live
+ * 403 check and the value handed to the client (getMySubscription's
+ * `access.canTransact`, read by the till before it completes an offline-first
+ * sale) can never drift apart — a client that is offline for the entire owner
+ * grace window plus `staffGraceExtraDays` has no other way to learn its true
+ * cutoff moved.
+ */
+export function canTransact(access, { subscription, platform, role }) {
+  if (access.state !== 'locked') return { allowed: true, staffGraceDaysLeft: null };
+  if (role !== 'staff' || !access.expiresAt) return { allowed: false, staffGraceDaysLeft: null };
+
+  const staffGraceEnd = new Date(
+    new Date(access.expiresAt).getTime()
+    + (platform.gracePeriodDays + (subscription?.graceExtensionDays ?? 0) + platform.staffGraceExtraDays) * DAY_MS,
+  );
+  const allowed = new Date() <= staffGraceEnd;
+  return { allowed, staffGraceDaysLeft: allowed ? Math.ceil((staffGraceEnd - new Date()) / DAY_MS) : null };
+}
+
 const ACCESS_ALLOWED_FOR_INSIGHTS = ['trialing', 'active', 'grace'];
 
 /**

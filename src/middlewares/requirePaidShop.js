@@ -1,8 +1,6 @@
 import Subscription from '../models/Subscription.js';
 import PlatformConfig from '../models/PlatformConfig.js';
-import { deriveAccess } from '../services/subscriptionPricingService.js';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
+import { deriveAccess, canTransact } from '../services/subscriptionPricingService.js';
 
 /**
  * Gates the *transactional* API — recording sales, voiding/refunding them,
@@ -40,19 +38,13 @@ export const requirePaidShop = async (req, res, next) => {
     req.subscription = subscription;
     req.access = access;
 
-    if (access.state !== 'locked') return next();
-
-    // Locked for the owner — staff may still have runway.
-    if (req.user.role === 'staff' && access.expiresAt) {
-      const staffGraceEnd = new Date(
-        new Date(access.expiresAt).getTime()
-        + (platform.gracePeriodDays + (subscription?.graceExtensionDays ?? 0) + platform.staffGraceExtraDays) * DAY_MS,
-      );
-      if (new Date() <= staffGraceEnd) {
-        req.staffGraceDaysLeft = Math.ceil((staffGraceEnd - new Date()) / DAY_MS);
-        res.set('X-Subscription-Grace-Days-Left', String(req.staffGraceDaysLeft));
-        return next();
+    const { allowed, staffGraceDaysLeft } = canTransact(access, { subscription, platform, role: req.user.role });
+    if (allowed) {
+      if (staffGraceDaysLeft != null) {
+        req.staffGraceDaysLeft = staffGraceDaysLeft;
+        res.set('X-Subscription-Grace-Days-Left', String(staffGraceDaysLeft));
       }
+      return next();
     }
 
     return res.status(403).json({
