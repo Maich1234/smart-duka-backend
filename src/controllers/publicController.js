@@ -1,10 +1,56 @@
 import { verifyBookStamp } from '../utils/bookStamp.js';
 import Sale from '../models/Sale.js';
 import Rating from '../models/Rating.js';
+import Shop from '../models/Shop.js';
+import SubscriptionPlan from '../models/SubscriptionPlan.js';
 import { verifyReceiptToken } from '../utils/receiptToken.js';
 import { sendEmail } from '../utils/email.js';
 
-const SUPPORT_INBOX = process.env.SUPPORT_EMAIL || 'info@duqana.app';
+const SUPPORT_INBOX = process.env.SUPPORT_EMAIL || 'info@duqana.co.ke';
+
+/**
+ * GET /public/stats — the marketing site's stat tiles. Real platform-wide
+ * counts; deciding how to floor small numbers for display is the marketing
+ * site's call, so this stays honest raw data rather than pre-dressed copy.
+ */
+export const getPlatformStats = async (req, res) => {
+  const [shopCount, transactionCount, ratingAgg] = await Promise.all([
+    Shop.countDocuments({ isActive: true }),
+    Sale.countDocuments({ status: { $nin: ['voided', 'refunded'] } }),
+    Rating.aggregate([
+      { $group: { _id: null, avgStars: { $avg: '$stars' }, totalRatings: { $sum: 1 } } },
+    ]),
+  ]);
+  const ratingResult = ratingAgg[0];
+
+  res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+  res.json({
+    success: true,
+    data: {
+      shopCount,
+      transactionCount,
+      rating: ratingResult
+        ? { average: Math.round(ratingResult.avgStars * 10) / 10, count: ratingResult.totalRatings }
+        : null,
+    },
+  });
+};
+
+/**
+ * GET /public/plans — the marketing site's pricing section. Mirrors
+ * subscriptionController's authenticated plan list but with no shop to price
+ * against, so it returns the plan's own base rate rather than a staff-count
+ * total — a per-staff plan's `monthlyPrice` already *is* its starting price.
+ */
+export const getPublicPlans = async (req, res) => {
+  const plans = await SubscriptionPlan.find({ active: true })
+    .sort({ displayOrder: 1 })
+    .select('slug name tagline description billingType monthlyPrice maxStaff extraStaffPrice trialDays currency highlights badge')
+    .lean();
+
+  res.set('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+  res.json({ success: true, data: { plans } });
+};
 
 export const getPublicReceipt = async (req, res) => {
   const saleId = verifyReceiptToken(req.params.token);
