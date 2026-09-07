@@ -7,6 +7,7 @@ import 'express-async-errors';
 import connectDB from './config/db.js';
 import routes from './routes/v1/index.js';
 import errorHandler from './middlewares/errorHandler.js';
+import { isOriginAllowed } from './middlewares/csrf.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -48,18 +49,15 @@ app.use(async (req, res, next) => {
 
 // Explicit allowlist + credentials:true — required for cookie-based web
 // sessions (a browser discards Set-Cookie from, and never sends cookies
-// back to, a `*`-origin CORS response). Mobile and other non-browser
-// clients send no Origin header and are unaffected by CORS either way.
-// Falls back to allow-all when unset, same as before, so local dev isn't
-// blocked by default — CORS_ALLOWED_ORIGINS must be set with real origins
-// in production.
-const corsAllowlist = (process.env.CORS_ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
+// back to, a `*`-origin CORS response). isOriginAllowed (shared with the
+// CSRF middleware, see csrf.js) falls back to allow-all in local dev when
+// CORS_ALLOWED_ORIGINS is unset, but fails CLOSED in production — with
+// cookie sessions live, reflecting an arbitrary Origin back with
+// credentials:true would let any website a logged-in owner merely visits
+// read their authenticated API responses.
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || corsAllowlist.length === 0 || corsAllowlist.includes(origin)) {
-      return callback(null, true);
-    }
-    callback(new Error('Not allowed by CORS'));
+    callback(null, isOriginAllowed(origin));
   },
   credentials: true,
 }));

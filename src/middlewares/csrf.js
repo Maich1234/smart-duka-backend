@@ -1,4 +1,4 @@
-function getAllowlist() {
+export function getAllowlist() {
   return (process.env.CORS_ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
 }
 
@@ -13,6 +13,29 @@ function requestOrigin(req) {
 }
 
 /**
+ * The single "is this browser Origin one of ours" decision — shared by CORS
+ * (app.js), requireAllowedOrigin, and verifyCsrf below, so there's one copy
+ * of this logic rather than three that could quietly drift apart.
+ *
+ * A falsy origin (no Origin/Referer header at all) always passes: that's a
+ * native client or server-to-server call, not a browser request, and none
+ * of these checks exist to gate those — CORS itself is a browser-only
+ * mechanism.
+ *
+ * An empty allowlist is a legitimate local-dev convenience (nothing
+ * configured to check against yet) but a dangerous default in a real
+ * deployment: with cookie sessions live, silently allowing every origin
+ * through with credentials is what makes CORS reflection and login-CSRF
+ * actually exploitable. Production fails CLOSED instead.
+ */
+export function isOriginAllowed(origin) {
+  if (!origin) return true;
+  const allowlist = getAllowlist();
+  if (allowlist.length === 0) return process.env.NODE_ENV !== 'production';
+  return allowlist.includes(origin);
+}
+
+/**
  * Rejects a request whose Origin/Referer isn't one of our own frontends.
  * Applied to login/register, which run before any session cookie exists —
  * so the double-submit check below can't apply yet — to block "login CSRF":
@@ -21,23 +44,10 @@ function requestOrigin(req) {
  * doesn't stop this: it only blocks a page's JS from *reading* a
  * cross-origin response, not from firing a request that still reaches the
  * server and still gets its Set-Cookie honored.
- *
- * A request with no Origin/Referer header at all (native mobile clients
- * don't send either) is allowed through — this check exists to catch
- * browser-originated cross-site requests, not to gate non-browser clients.
- *
- * No-ops if CORS_ALLOWED_ORIGINS isn't configured (local dev).
  */
 export const requireAllowedOrigin = (req, res, next) => {
-  const allowlist = getAllowlist();
-  if (allowlist.length === 0) return next();
-
-  const origin = requestOrigin(req);
-  if (origin === null) return next();
-  if (!allowlist.includes(origin)) {
-    return res.status(403).json({ success: false, message: 'Request rejected.' });
-  }
-  next();
+  if (isOriginAllowed(requestOrigin(req))) return next();
+  res.status(403).json({ success: false, message: 'Request rejected.' });
 };
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -56,12 +66,8 @@ export const verifyCsrf = (req, res, next) => {
     return next();
   }
 
-  const allowlist = getAllowlist();
-  if (allowlist.length > 0) {
-    const origin = requestOrigin(req);
-    if (origin !== null && !allowlist.includes(origin)) {
-      return res.status(403).json({ success: false, message: 'Request rejected.' });
-    }
+  if (!isOriginAllowed(requestOrigin(req))) {
+    return res.status(403).json({ success: false, message: 'Request rejected.' });
   }
 
   const headerToken = req.headers['x-csrf-token'];

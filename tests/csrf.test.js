@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { requireAllowedOrigin, verifyCsrf } from '../src/middlewares/csrf.js';
+import { requireAllowedOrigin, verifyCsrf, isOriginAllowed } from '../src/middlewares/csrf.js';
 
 const ORIGINAL_ALLOWLIST = process.env.CORS_ALLOWED_ORIGINS;
 
@@ -51,6 +51,60 @@ test('requireAllowedOrigin: no-ops when CORS_ALLOWED_ORIGINS is unset (local dev
   let called = false;
   requireAllowedOrigin(req, res, () => { called = true; });
   assert.ok(called);
+});
+
+test('requireAllowedOrigin: FAILS CLOSED when unset in production, for a browser-originated request', () => {
+  delete process.env.CORS_ALLOWED_ORIGINS;
+  const originalNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  try {
+    const req = { headers: { origin: 'https://anything.example.com' } };
+    const res = fakeRes();
+    let called = false;
+    requireAllowedOrigin(req, res, () => { called = true; });
+    assert.equal(called, false, 'an unconfigured allowlist must not silently allow every origin in production');
+    assert.equal(res.statusCode, 403);
+  } finally {
+    process.env.NODE_ENV = originalNodeEnv;
+  }
+});
+
+test('requireAllowedOrigin: still allows a no-Origin request (native client) even when unset in production', () => {
+  delete process.env.CORS_ALLOWED_ORIGINS;
+  const originalNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  try {
+    const req = { headers: {} };
+    const res = fakeRes();
+    let called = false;
+    requireAllowedOrigin(req, res, () => { called = true; });
+    assert.ok(called, 'the fail-closed behavior targets browser requests, not native/server-to-server callers');
+  } finally {
+    process.env.NODE_ENV = originalNodeEnv;
+  }
+});
+
+test('isOriginAllowed: this is what app.js\'s CORS setup calls directly — verify its production fail-closed behavior end to end', () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  try {
+    delete process.env.CORS_ALLOWED_ORIGINS;
+
+    process.env.NODE_ENV = 'production';
+    assert.equal(isOriginAllowed('https://evil.example.com'), false, 'an unconfigured allowlist must reject a browser origin in production');
+    assert.equal(isOriginAllowed(undefined), true, 'no Origin header (mobile/server-to-server) is never a CORS concern');
+    assert.equal(isOriginAllowed(''), true);
+
+    process.env.NODE_ENV = 'development';
+    assert.equal(isOriginAllowed('https://evil.example.com'), true, 'local dev keeps the permissive fallback');
+
+    process.env.NODE_ENV = 'production';
+    process.env.CORS_ALLOWED_ORIGINS = 'https://duqana.co.ke';
+    assert.equal(isOriginAllowed('https://duqana.co.ke'), true);
+    assert.equal(isOriginAllowed('https://evil.example.com'), false);
+  } finally {
+    process.env.NODE_ENV = originalNodeEnv;
+    delete process.env.CORS_ALLOWED_ORIGINS;
+  }
 });
 
 test('verifyCsrf: Bearer-authenticated (mobile) requests are exempt', () => {
@@ -120,4 +174,24 @@ test('verifyCsrf: a cross-site Origin is rejected even with a stolen-looking mat
   verifyCsrf(req, res, () => { called = true; });
   assert.equal(called, false);
   assert.equal(res.statusCode, 403);
+});
+
+test('verifyCsrf: FAILS CLOSED on a browser-originated mutating request when unset in production, even with a matching token pair', () => {
+  delete process.env.CORS_ALLOWED_ORIGINS;
+  const originalNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  try {
+    const req = {
+      method: 'POST',
+      cookies: { access_token: 'x', csrf_token: 'secret-123' },
+      headers: { origin: 'https://anything.example.com', 'x-csrf-token': 'secret-123' },
+    };
+    const res = fakeRes();
+    let called = false;
+    verifyCsrf(req, res, () => { called = true; });
+    assert.equal(called, false, 'a matching double-submit pair must not paper over a missing allowlist in production');
+    assert.equal(res.statusCode, 403);
+  } finally {
+    process.env.NODE_ENV = originalNodeEnv;
+  }
 });
