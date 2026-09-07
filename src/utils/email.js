@@ -80,7 +80,7 @@ const fromAddress = () => {
   if (configured?.includes('@')) return configured;
   if (configured && user) return `"${configured.replace(/"/g, '')}" <${user}>`;
   if (user) return `"DuQana" <${user}>`;
-  return '"DuQana" <noreply@duqana.app>';
+  return '"DuQana" <noreply@duqana.co.ke>';
 };
 
 // Built per send: nodemailer opens no connection here (there is no pool), so

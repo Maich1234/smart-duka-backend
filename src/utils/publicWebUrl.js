@@ -1,4 +1,4 @@
-const FALLBACK = 'https://duqana.app';
+const FALLBACK = 'https://duqana.co.ke';
 
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]']);
 

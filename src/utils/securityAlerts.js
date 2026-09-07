@@ -4,7 +4,7 @@ import { renderSecurityAlertEmail } from './emailTemplates.js';
 
 // System-generated staff addresses (see utils/staffEmailSlug.js) are never
 // real inboxes — sending an alert there would just fail or vanish silently.
-const isSystemGeneratedAddress = (email) => (email || '').toLowerCase().endsWith('.duqana.app');
+const isSystemGeneratedAddress = (email) => (email || '').toLowerCase().endsWith('.duqana.co.ke');
 
 const ipOf = (req) => req?.ip ?? req?.headers?.['x-forwarded-for']?.split(',')[0]?.trim();
 
