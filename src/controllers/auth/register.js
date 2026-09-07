@@ -27,14 +27,27 @@ export const register = async (req, res) => {
 
   const existingUser = await User.findOne({ email });
   if (existingUser) {
-    return res.status(400).json({ success: false, message: 'Email already registered' });
+    return res.status(400).json({
+      success: false,
+      message: 'Email already registered',
+      fieldErrors: [{ field: 'email', message: 'Email already registered' }],
+    });
   }
 
-  // Resolved before the transaction — a benign race with another shop
-  // registering at the same instant just means this lookup misses (falls
-  // back to "no referrer"), never a torn write.
+  // Resolved before the transaction, so a code that doesn't match anything
+  // can be rejected before we touch the database. A typo is far likelier
+  // than the code being for a shop whose own signup transaction hasn't
+  // committed yet — and since the field is optional, someone hitting that
+  // rare race can simply clear it and finish signing up.
   const referredByCode = (referralCode || '').trim().toUpperCase();
   const { referredByType, referredByShopId, referredByStaffId, referredByAgentId } = await resolveReferrer(referredByCode);
+  if (referredByCode && !referredByType) {
+    return res.status(400).json({
+      success: false,
+      message: 'Referral code not found',
+      fieldErrors: [{ field: 'referralCode', message: 'Referral code not found. Check it or leave this field blank.' }],
+    });
+  }
   const myReferralCode = await generateShopReferralCode();
 
   const session = await mongoose.startSession();

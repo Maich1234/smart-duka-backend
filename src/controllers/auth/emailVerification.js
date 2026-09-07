@@ -16,18 +16,30 @@ export const verifyEmail = async (req, res) => {
   // Find user by email
   const user = await User.findOne({ email });
   if (!user) {
-    return res.status(404).json({ success: false, message: 'User not found' });
+    return res.status(404).json({
+      success: false,
+      message: 'User not found',
+      fieldErrors: [{ field: 'email', message: 'User not found' }],
+    });
   }
 
   // Find the verification record
   const record = await EmailVerificationToken.findOne({ userId: user._id, code });
   if (!record) {
-    return res.status(400).json({ success: false, message: 'Invalid or expired verification code' });
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid or expired verification code',
+      fieldErrors: [{ field: 'code', message: 'Invalid or expired verification code' }],
+    });
   }
 
   if (record.expiresAt < new Date()) {
     await EmailVerificationToken.deleteOne({ _id: record._id });
-    return res.status(400).json({ success: false, message: 'Code expired. Please request a new verification email.' });
+    return res.status(400).json({
+      success: false,
+      message: 'Code expired. Please request a new verification email.',
+      fieldErrors: [{ field: 'code', message: 'Code expired. Please request a new verification email.' }],
+    });
   }
 
   if (user.isEmailVerified) {
@@ -52,7 +64,11 @@ export const resendVerificationEmailByEmail = async (req, res) => {
 
   const user = await User.findOne({ email });
   if (!user) {
-    return res.status(404).json({ success: false, message: 'User not found' });
+    return res.status(404).json({
+      success: false,
+      message: 'User not found',
+      fieldErrors: [{ field: 'email', message: 'User not found' }],
+    });
   }
 
   if (user.isEmailVerified) {

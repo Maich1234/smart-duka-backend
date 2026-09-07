@@ -10,7 +10,13 @@ export const login = async (req, res) => {
 
   const user = await User.findOne({ email }).populate('shop');
   if (!user) {
-    return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    // Deliberately identical message/field to the wrong-password case below —
+    // never reveal which half of the credential pair was wrong.
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid email or password',
+      fieldErrors: [{ field: 'password', message: 'Invalid email or password' }],
+    });
   }
 
   if (!user.isActive) {
@@ -23,7 +29,11 @@ export const login = async (req, res) => {
 
   const isPasswordMatch = await user.comparePassword(password);
   if (!isPasswordMatch) {
-    return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid email or password',
+      fieldErrors: [{ field: 'password', message: 'Invalid email or password' }],
+    });
   }
 
   // Staff seats are one-device-at-a-time; owners may run several devices at
