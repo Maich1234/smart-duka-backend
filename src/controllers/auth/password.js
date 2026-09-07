@@ -33,7 +33,11 @@ export const forgotPassword = async (req, res) => {
 
   const user = await User.findOne({ email });
   if (!user) {
-    return res.status(404).json({ success: false, message: 'No account found with that email' });
+    return res.status(404).json({
+      success: false,
+      message: 'No account found with that email',
+      fieldErrors: [{ field: 'email', message: 'No account found with that email' }],
+    });
   }
 
   await OTP.deleteMany({ email });
@@ -63,12 +67,20 @@ export const verifyOTP = async (req, res) => {
   
   const otpRecord = await OTP.findOne({ email, otp });
   if (!otpRecord) {
-    return res.status(400).json({ success: false, message: 'Invalid OTP' });
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid OTP',
+      fieldErrors: [{ field: 'otp', message: 'Invalid OTP' }],
+    });
   }
 
   if (otpRecord.expiresAt < new Date()) {
     await OTP.deleteOne({ _id: otpRecord._id });
-    return res.status(400).json({ success: false, message: 'OTP expired' });
+    return res.status(400).json({
+      success: false,
+      message: 'OTP expired',
+      fieldErrors: [{ field: 'otp', message: 'OTP expired' }],
+    });
   }
 
   // Don't consume the OTP here — clients verify first, then call
@@ -81,17 +93,29 @@ export const resetPassword = async (req, res) => {
   const { email, otp, newPassword } = req.body;
   const otpRecord = await OTP.findOne({ email, otp });
   if (!otpRecord) {
-    return res.status(400).json({ success: false, message: 'Invalid OTP' });
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid OTP',
+      fieldErrors: [{ field: 'otp', message: 'Invalid OTP' }],
+    });
   }
 
   if (otpRecord.expiresAt < new Date()) {
     await OTP.deleteOne({ _id: otpRecord._id });
-    return res.status(400).json({ success: false, message: 'OTP expired' });
+    return res.status(400).json({
+      success: false,
+      message: 'OTP expired',
+      fieldErrors: [{ field: 'otp', message: 'OTP expired' }],
+    });
   }
 
   const user = await User.findOne({ email });
   if (!user) {
-    return res.status(404).json({ success: false, message: 'User not found' });
+    return res.status(404).json({
+      success: false,
+      message: 'User not found',
+      fieldErrors: [{ field: 'email', message: 'User not found' }],
+    });
   }
 
   user.password = newPassword;
