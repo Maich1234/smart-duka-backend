@@ -2,9 +2,11 @@ import mongoose from 'mongoose';
 import PaymentConfig from '../models/PaymentConfig.js';
 import MpesaTransaction from '../models/MpesaTransaction.js';
 import Sale from '../models/Sale.js';
-import { initiateSTKPush, parseSTKCallback, parseReversalResult, normalizeKenyanPhone, withMpesaCallbackSecret } from '../services/mpesaService.js';
+import { initiateSTKPush, parseSTKCallback, parseReversalResult, parseB2CResult, normalizeKenyanPhone, withMpesaCallbackSecret } from '../services/mpesaService.js';
 import { restoreSaleStock } from '../services/saleStockService.js';
 import { logAudit } from '../services/auditLogService.js';
+import B2CTransaction from '../models/B2CTransaction.js';
+import { notifyCommissionPayoutResult } from '../services/adminNotifyService.js';
 
 /** Validates that all required M-Pesa config fields are present and non-empty. */
 function validateMpesaConfig(mpesa) {
@@ -356,6 +358,81 @@ export const handleReversalTimeout = async (req, res) => {
     }).catch(() => {});
   } catch (err) {
     console.error('[M-Pesa Reversal Timeout] Processing error:', err.message);
+  }
+};
+
+/**
+ * Safaricom B2C result callback — the outcome of a payout initiated via
+ * POST /internal/b2c/payout (see controllers/internal/b2cController.js).
+ * Same ack-first, idempotency-checked shape as handleReversalResult.
+ */
+export const handleB2CResult = async (req, res) => {
+  res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+
+  try {
+    const parsed = parseB2CResult(req.body);
+
+    const transaction = await B2CTransaction.findOne({ conversationId: parsed.conversationId });
+    if (!transaction) {
+      console.error('[M-Pesa B2C] Unknown conversation id:', parsed.conversationId);
+      return;
+    }
+    // Duplicate callback delivery — never process twice.
+    if (transaction.status !== 'pending') return;
+
+    transaction.status = parsed.success ? 'completed' : 'failed';
+    transaction.resultCode = parsed.resultCode;
+    transaction.resultDesc = parsed.resultDesc;
+    if (parsed.success) {
+      transaction.mpesaReceiptNumber = parsed.mpesaReceiptNumber;
+      transaction.transactionCompletedAt = parsed.transactionCompletedAt ? new Date(parsed.transactionCompletedAt) : new Date();
+    }
+    await transaction.save();
+
+    const delivered = await notifyCommissionPayoutResult({
+      reference: transaction.reference,
+      status: transaction.status,
+      mpesaReceiptNumber: transaction.mpesaReceiptNumber,
+      resultDesc: transaction.resultDesc,
+    });
+    if (delivered) {
+      transaction.reconciledAt = new Date();
+      await transaction.save();
+    }
+  } catch (err) {
+    console.error('[M-Pesa B2C] Processing error:', err.message);
+  }
+};
+
+/**
+ * Safaricom B2C queue-timeout endpoint — the request never reached the
+ * processor. Same shape as handleReversalTimeout.
+ */
+export const handleB2CTimeout = async (req, res) => {
+  res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+
+  try {
+    const originatorId = req.body?.Result?.OriginatorConversationID ?? req.body?.OriginatorConversationID;
+    if (!originatorId) return;
+
+    const transaction = await B2CTransaction.findOne({ originatorConversationId: originatorId });
+    if (!transaction || transaction.status !== 'pending') return;
+
+    transaction.status = 'failed';
+    transaction.resultDesc = 'Timed out in Safaricom queue';
+    await transaction.save();
+
+    const delivered = await notifyCommissionPayoutResult({
+      reference: transaction.reference,
+      status: transaction.status,
+      resultDesc: transaction.resultDesc,
+    });
+    if (delivered) {
+      transaction.reconciledAt = new Date();
+      await transaction.save();
+    }
+  } catch (err) {
+    console.error('[M-Pesa B2C Timeout] Processing error:', err.message);
   }
 };
 

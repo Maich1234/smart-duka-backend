@@ -16,6 +16,9 @@ export const protect = async (req, res, next) => {
         return res.status(401).json({ success: false, message: 'Account deactivated. Please contact owner.' });
       }
       req.user = user;
+      if (decoded.impersonation) {
+        req.impersonation = { adminId: decoded.adminId };
+      }
       next();
     } catch (error) {
       console.error(error);

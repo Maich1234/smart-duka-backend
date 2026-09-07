@@ -20,6 +20,7 @@ import {
   previewAccountDeletion,
   cancelAccountDeletion,
   mintWebviewToken,
+  endImpersonation,
 } from '../../controllers/auth/index.js';
 import { protect, ownerOnly } from '../../middlewares/auth.js';
 import validate from '../../middlewares/validate.js';
@@ -101,6 +102,9 @@ router.delete('/device-token', protect, unregisterDeviceToken);
 
 // Mints a short-lived token for the mobile app's embedded Setup Guide WebView.
 router.post('/webview-token', protect, ownerOnly, mintWebviewToken);
+
+// Logs the end of an admin "login as" support session (no-op otherwise).
+router.post('/impersonation/end', protect, endImpersonation);
 
 // Account deletion (Google Play requirement). Rate-limited like the other
 // password-checking endpoints: the confirmation is password-gated, so an

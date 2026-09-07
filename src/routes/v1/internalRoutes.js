@@ -3,6 +3,8 @@ import { protectInternal } from '../../middlewares/internalAuth.js';
 import SubscriptionPayment from '../../models/SubscriptionPayment.js';
 import { reconcilePayment } from '../../domains/billing/application/reconcilePayment.js';
 import { claimAndDispatchCampaign } from '../../services/pushCampaignService.js';
+import { mintImpersonationToken } from '../../controllers/internal/impersonationController.js';
+import { initiateB2CPayout } from '../../controllers/internal/b2cController.js';
 
 const router = express.Router();
 
@@ -57,5 +59,19 @@ router.post('/push-campaigns/:id/dispatch', async (req, res) => {
   }
   res.json({ success: true, data: campaign });
 });
+
+/**
+ * POST /internal/impersonation-token — mints a short-lived shop-user access
+ * token so an admin can open the web app already logged in as a shop owner
+ * or staff member, for support. See src/controllers/internal/impersonationController.js.
+ */
+router.post('/impersonation-token', mintImpersonationToken);
+
+/**
+ * POST /internal/b2c/payout — initiates a B2C payment (e.g. an agent
+ * commission payout) from the platform's own Daraja account. See
+ * src/controllers/internal/b2cController.js.
+ */
+router.post('/b2c/payout', initiateB2CPayout);
 
 export default router;

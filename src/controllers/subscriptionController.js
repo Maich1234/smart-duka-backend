@@ -47,6 +47,20 @@ async function getActivePlans() {
   return SubscriptionPlan.find({ active: true }).sort({ displayOrder: 1 }).lean();
 }
 
+/**
+ * The trial length a shop would actually get for `plan` — the plan's own
+ * default, unless the shop was agent-referred and the admin has set an
+ * override (see PlatformConfig.referral.agent.trialDays). Shared by getPlans
+ * (so the pricing screen shows what activateTrial will actually grant,
+ * before the owner commits) and activateTrial itself.
+ */
+async function resolveTrialDays(shop, plan) {
+  if (!plan) return 30;
+  if (shop?.referredByType !== 'agent') return plan.trialDays;
+  const platform = await PlatformConfig.get();
+  return platform.referral?.agent?.trialDays ?? plan.trialDays;
+}
+
 /** Resolves a redeemable promotion by code, or throws a client-friendly error. */
 async function resolvePromotion(code) {
   if (!code) return null;
@@ -92,7 +106,7 @@ export const getPlans = async (req, res) => {
       };
     });
 
-    const trialDays = recommended?.trialDays ?? 30;
+    const trialDays = await resolveTrialDays(req.user.shop, recommended);
 
     return res.json({
       success: true,
@@ -378,8 +392,14 @@ export const activateTrial = async (req, res) => {
       return res.status(404).json({ success: false, message: planSlug ? `Unknown plan: ${planSlug}` : 'No subscription plans are configured.' });
     }
 
+    // Agent-referred shops get an admin-configurable trial length instead of
+    // the plan's default — set to 0 to require immediate payment. Every
+    // other shop is unaffected. Same resolution getPlans already showed the
+    // owner on the pricing screen, so this never surprises them.
+    const trialDays = await resolveTrialDays(req.user.shop, plan);
+
     const now = new Date();
-    const trialEnd = new Date(now.getTime() + plan.trialDays * 24 * 60 * 60 * 1000);
+    const trialEnd = new Date(now.getTime() + trialDays * 24 * 60 * 60 * 1000);
 
     let subscription;
     try {
@@ -413,7 +433,7 @@ export const activateTrial = async (req, res) => {
       action: 'subscription.trial.activated',
       entityType: 'Subscription',
       entityId: subscription._id,
-      details: { planSlug: plan.slug, trialDays: plan.trialDays, staffCount },
+      details: { planSlug: plan.slug, trialDays, staffCount },
       req,
     }).catch(() => {});
 
@@ -421,7 +441,9 @@ export const activateTrial = async (req, res) => {
     return res.status(201).json({
       success: true,
       data: { subscription, alreadyActivated: false, trialEnd },
-      message: `Your free ${plan.trialDays}-day trial is active.`,
+      message: trialDays > 0
+        ? `Your free ${trialDays}-day trial is active.`
+        : 'Your trial period requires payment to activate — please subscribe to continue.',
     });
   } catch (err) {
     console.error('[Subscriptions] activateTrial error:', err);

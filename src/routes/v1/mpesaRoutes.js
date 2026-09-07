@@ -8,6 +8,8 @@ import {
   handleCallback,
   handleReversalResult,
   handleReversalTimeout,
+  handleB2CResult,
+  handleB2CTimeout,
   verifyByReceipt,
 } from '../../controllers/mpesaController.js';
 import {
@@ -26,6 +28,10 @@ router.post('/callback/:token', verifyMpesaCallbackToken, handleCallback);
 // Transaction Reversal (refund) result + queue-timeout callbacks — same secret gate.
 router.post('/reversal-result/:token', verifyMpesaCallbackToken, handleReversalResult);
 router.post('/reversal-result-timeout/:token', verifyMpesaCallbackToken, handleReversalTimeout);
+
+// B2C payout (e.g. agent commissions) result + queue-timeout callbacks — same secret gate.
+router.post('/b2c-result/:token', verifyMpesaCallbackToken, handleB2CResult);
+router.post('/b2c-result-timeout/:token', verifyMpesaCallbackToken, handleB2CTimeout);
 
 // Staff can initiate STK Push during checkout
 router.post('/initiate', protect, staffOrOwner, validate(initiateSTKPushSchema), initiatePayment);

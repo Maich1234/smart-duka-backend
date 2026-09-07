@@ -245,6 +245,94 @@ export async function initiateReversal({ config, transactionId, amount, remarks,
 }
 
 /**
+ * Sends a B2C payment — money moving OUT from the platform's own Daraja
+ * account to a phone number (e.g. an agent commission payout). Asynchronous,
+ * same shape as initiateReversal: Safaricom acks the request here and posts
+ * the final outcome to resultUrl later.
+ */
+export async function initiateB2CPayment({ config, phoneNumber, amount, remarks, occasion, resultUrl, queueTimeoutUrl }) {
+  const baseUrl = getBaseUrl(config.environment);
+  const accessToken = await getAccessToken(config);
+
+  let securityCredential;
+  try {
+    securityCredential = decrypt(config.securityCredential);
+  } catch (err) {
+    throw new Error('Failed to decrypt the M-Pesa Security Credential. Please re-save the B2C credentials in platform settings.');
+  }
+
+  const body = {
+    InitiatorName: config.initiatorName,
+    SecurityCredential: securityCredential,
+    CommandID: 'BusinessPayment',
+    Amount: Math.ceil(amount),
+    PartyA: config.shortcode,
+    PartyB: normalizeKenyanPhone(phoneNumber),
+    Remarks: (remarks || 'Commission payout').slice(0, 100),
+    QueueTimeOutURL: queueTimeoutUrl,
+    ResultURL: resultUrl,
+    Occasion: (occasion || 'Commission').slice(0, 100),
+  };
+
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/mpesa/b2c/v1/paymentrequest`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch (err) {
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      throw new Error('ETIMEDOUT: M-Pesa B2C request timed out after 20s');
+    }
+    throw new Error(`ECONNREFUSED: Could not connect to Safaricom API (${err.message})`);
+  }
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok || data.ResponseCode !== '0') {
+    const errMsg = data.errorMessage || data.ResponseDescription || data.ResultDesc || `HTTP ${response.status}`;
+    throw new Error(`{"errorMessage":"${errMsg}","responseCode":"${data.ResponseCode ?? response.status}"}`);
+  }
+
+  return {
+    originatorConversationId: data.OriginatorConversationID,
+    conversationId: data.ConversationID,
+    responseDescription: data.ResponseDescription,
+  };
+}
+
+/**
+ * Parses a Safaricom B2C Result callback into a normalised object.
+ * ResultCode 0 = money delivered; anything else is a failure.
+ */
+export function parseB2CResult(callbackBody) {
+  const result = callbackBody?.Result;
+  if (!result) throw new Error('Invalid B2C result structure');
+
+  const params = result.ResultParameters?.ResultParameter ?? [];
+  const getParam = (key) => {
+    const list = Array.isArray(params) ? params : [params];
+    return list.find((p) => p?.Key === key)?.Value;
+  };
+
+  return {
+    success: String(result.ResultCode) === '0',
+    resultCode: String(result.ResultCode),
+    resultDesc: result.ResultDesc,
+    originatorConversationId: result.OriginatorConversationID,
+    conversationId: result.ConversationID,
+    mpesaReceiptNumber: getParam('TransactionReceipt'),
+    transactionAmount: getParam('TransactionAmount'),
+    transactionCompletedAt: getParam('TransactionCompletedDateTime'),
+  };
+}
+
+/**
  * Parses a Safaricom reversal Result callback into a normalised object.
  * ResultCode 0 = money returned to the customer; anything else is a failure.
  */

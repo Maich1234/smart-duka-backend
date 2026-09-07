@@ -14,6 +14,14 @@ const platformMpesaSchema = new mongoose.Schema({
   consumerKey: { type: String },
   consumerSecret: { type: String },
   passkey: { type: String },
+  // B2C (paying agent commissions out) needs a Daraja "initiator" operator.
+  // initiatorName is plaintext (a name, not a secret); securityCredential is
+  // the initiator password RSA-encrypted with Safaricom's public certificate
+  // — generated externally via the Daraja portal tool and pasted in here,
+  // same convention as PaymentConfig's shop-level Reversal credentials — then
+  // AES-encrypted at rest like every other secret in this schema.
+  initiatorName: { type: String, trim: true },
+  securityCredential: { type: String },
   configuredAt: { type: Date },
 }, { _id: false });
 
@@ -62,6 +70,12 @@ const employeeReferralSchema = new mongoose.Schema({
 // Onboarding row (see agentReferralLinkService.js there).
 const agentReferralSchema = new mongoose.Schema({
   ...referralAudienceBaseFields,
+  // Trial length granted specifically to agent-referred shops, read by
+  // subscriptionController.activateTrial. Defaults to the same 30 days every
+  // shop already gets, so leaving this unset changes nothing; an admin sets
+  // it to 0 to require agent-referred shops to pay immediately instead of
+  // getting a free trial.
+  trialDays: { type: Number, default: 30, min: 0 },
 }, { _id: false });
 
 const platformConfigSchema = new mongoose.Schema({
