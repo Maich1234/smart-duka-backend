@@ -15,15 +15,36 @@ const userSchema = new mongoose.Schema({
     lowercase: true,
     trim: true,
   },
+  // Not required for a Google-only owner (see googleId below) — an account
+  // must have a password, a linked OAuth provider, or both, never neither.
   password: {
     type: String,
-    required: [true, 'Password is required'],
+    required: [function () { return !this.googleId; }, 'Password is required'],
     minlength: 6,
   },
   role: {
     type: String,
     enum: ['owner', 'staff'],
     default: 'staff',
+  },
+  // Google's stable subject id ("sub"). Sparse + unique so it's only ever
+  // set on accounts that have linked Google, and no two accounts can claim
+  // the same Google identity. Never trust anything else from the OAuth
+  // claims (name/email changes, role, etc.) — this id is the only thing
+  // that's actually stable.
+  googleId: {
+    type: String,
+    unique: true,
+    sparse: true,
+    index: true,
+  },
+  // Which credentials can authenticate this account. A password account
+  // that later links Google keeps 'password' and gains 'google'; a
+  // Google-only signup starts as just ['google'].
+  authProviders: {
+    type: [String],
+    enum: ['password', 'google'],
+    default: ['password'],
   },
   shop: {
     type: mongoose.Schema.Types.ObjectId,
@@ -114,6 +135,10 @@ userSchema.pre('save', function(next) {
 });
 
 userSchema.methods.comparePassword = async function (candidatePassword) {
+  // Google-only accounts have no password hash to compare against — treat
+  // that as "doesn't match" rather than letting bcrypt.compare throw on
+  // undefined, so password login on such an account fails the normal way.
+  if (!this.password) return false;
   return await bcrypt.compare(candidatePassword, this.password);
 };
 

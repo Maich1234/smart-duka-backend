@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 import 'express-async-errors';
 import connectDB from './config/db.js';
@@ -16,15 +18,16 @@ const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
 
-// Baseline security headers (API-only equivalent of helmet's defaults).
+// Explicit options rather than bare helmet() so this stays byte-for-byte
+// equivalent to the hand-rolled header block it replaces (DENY, not
+// helmet's SAMEORIGIN default; no-referrer, not helmet's current default).
+app.use(helmet({
+  frameguard: { action: 'deny' },
+  referrerPolicy: { policy: 'no-referrer' },
+  hsts: { maxAge: 15552000, includeSubDomains: true },
+}));
 app.use((req, res, next) => {
-  res.set({
-    'X-Content-Type-Options': 'nosniff',
-    'X-Frame-Options': 'DENY',
-    'Referrer-Policy': 'no-referrer',
-    'Strict-Transport-Security': 'max-age=15552000; includeSubDomains',
-    'Cache-Control': 'no-store',
-  });
+  res.set('Cache-Control', 'no-store');
   next();
 });
 
@@ -43,7 +46,30 @@ app.use(async (req, res, next) => {
   }
 });
 
-app.use(cors());
+// Explicit allowlist + credentials:true — required for cookie-based web
+// sessions (a browser discards Set-Cookie from, and never sends cookies
+// back to, a `*`-origin CORS response). Mobile and other non-browser
+// clients send no Origin header and are unaffected by CORS either way.
+// Falls back to allow-all when unset, same as before, so local dev isn't
+// blocked by default — CORS_ALLOWED_ORIGINS must be set with real origins
+// in production.
+const corsAllowlist = (process.env.CORS_ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || corsAllowlist.length === 0 || corsAllowlist.includes(origin)) {
+      return callback(null, true);
+    }
+    callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+}));
+
+app.use(cookieParser());
+
+// The Better Auth handler mounts here (app.all('/api/auth/*', ...)) once
+// added — it needs the raw request stream, so it must precede the body
+// parsers below.
+
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 // 1 MB cap — largest legitimate payload is a product with variants (~ a few
 // KB); anything bigger is abuse or a client bug.

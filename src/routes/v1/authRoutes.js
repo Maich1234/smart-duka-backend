@@ -21,8 +21,10 @@ import {
   cancelAccountDeletion,
   mintWebviewToken,
   endImpersonation,
+  redeemImpersonationToken,
 } from '../../controllers/auth/index.js';
 import { protect, ownerOnly } from '../../middlewares/auth.js';
+import { requireAllowedOrigin, verifyCsrf } from '../../middlewares/csrf.js';
 import validate from '../../middlewares/validate.js';
 import { createRateLimitStore } from '../../utils/rateLimitStore.js';
 import {
@@ -83,15 +85,19 @@ const refreshLimiter = rateLimit({
   message: { success: false, message: 'Too many session refresh attempts. Please sign in again.' },
 });
 
-router.post('/register', registerLimiter, validate(registerSchema), register);
-router.post('/login', loginLimiter, validate(loginSchema), login);
+router.post('/register', registerLimiter, requireAllowedOrigin, validate(registerSchema), register);
+router.post('/login', loginLimiter, requireAllowedOrigin, validate(loginSchema), login);
 router.post('/forgot-password', passwordResetLimiter, validate(forgotPasswordSchema), forgotPassword);
 router.post('/verify-otp', codeVerifyLimiter, validate(verifyOTPSchema), verifyOTP);
 router.post('/reset-password', passwordResetLimiter, validate(resetPasswordSchema), resetPassword);
 router.post('/verify-email', codeVerifyLimiter, validate(verifyEmailSchema), verifyEmail); // body { email, code }
 router.post('/resend-verification-email', passwordResetLimiter, validate(resendVerificationEmailSchema), resendVerificationEmailByEmail);
-router.post('/refresh', refreshLimiter, refresh);
-router.post('/logout', logout);
+router.post('/refresh', refreshLimiter, verifyCsrf, refresh);
+router.post('/logout', verifyCsrf, logout);
+// Web-cookie handoff for dukana-admin-web's "Login as" support flow — see
+// controllers/auth/impersonation.js. Unauthenticated by design, same trust
+// model as /logout: the signed, short-lived token is the authority.
+router.post('/impersonation/redeem', requireAllowedOrigin, redeemImpersonationToken);
 
 router.get('/profile', protect, getProfile);
 router.put('/profile', protect, updateProfile);

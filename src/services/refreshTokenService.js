@@ -3,8 +3,9 @@ import RefreshToken from '../models/RefreshToken.js';
 
 // 30-day sliding window: every rotation issues a fresh 30-day token, so an
 // actively-used shop device stays signed in indefinitely while an abandoned
-// one expires.
-const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+// one expires. Exported so the web cookie transport (sessionResponse.js) can
+// give the refresh_token cookie the same lifetime as the token it carries.
+export const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const hashToken = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
 

@@ -1,7 +1,7 @@
 import User from '../../models/User.js';
 import RefreshToken from '../../models/RefreshToken.js';
-import generateToken from '../../utils/generateToken.js';
-import { issueRefreshToken, revokeAllSessions } from '../../services/refreshTokenService.js';
+import { revokeAllSessions } from '../../services/refreshTokenService.js';
+import { issueSessionResponse } from '../../services/sessionResponse.js';
 import { logAudit } from '../../services/auditLogService.js';
 import { sendPushToUser } from '../../utils/push.js';
 
@@ -25,8 +25,6 @@ export const login = async (req, res) => {
   if (!isPasswordMatch) {
     return res.status(401).json({ success: false, message: 'Invalid email or password' });
   }
-
-  const token = generateToken(user._id);
 
   // Staff seats are one-device-at-a-time; owners may run several devices at
   // once (phone/tablet/office computer) by design. A same-device re-login
@@ -55,10 +53,6 @@ export const login = async (req, res) => {
     }
   }
 
-  // Long-lived rotating refresh token so short access tokens never log a
-  // cashier out mid-shift. Older clients that ignore this field keep working
-  // (they just get signed out when the access token expires).
-  const refreshToken = await issueRefreshToken(user._id, device);
   const userResponse = user.toObject();
   delete userResponse.password;
 
@@ -71,5 +65,11 @@ export const login = async (req, res) => {
     req,
   });
 
-  res.json({ success: true, data: { ...userResponse, token, refreshToken } });
+  // Long-lived rotating refresh token so short access tokens never log a
+  // cashier out mid-shift. Older clients that ignore this field keep working
+  // (they just get signed out when the access token expires). Web gets both
+  // tokens as HttpOnly cookies instead of in this JSON body — see
+  // sessionResponse.js.
+  const platform = device?.platform === 'web' ? 'web' : 'mobile';
+  await issueSessionResponse(res, { user, platform, device, extra: userResponse });
 };
