@@ -90,7 +90,7 @@ The server will run on `http://localhost:5000` by default.
 | SMTP_FROM | Sender address. Must contain a real address, and in a `.env` needs outer single quotes or the display name swallows the value — see note below | `'"DuQana" <noreply@dukana.com>'` |
 | RECEIPT_TOKEN_SECRET | HMAC/JWT signing secret for receipt QR-verification tokens | `a-long-random-string` |
 | CRON_SECRET | Shared secret Vercel Cron sends as `Authorization: Bearer <CRON_SECRET>` to the `/cron/*` endpoints | `another-long-random-string` |
-| PUBLIC_WEB_URL | Base URL of the deployed public web app; used to build the QR code link on receipts | `https://duqana.co.ke` |
+| PUBLIC_WEB_URL | Base URL of the deployed dashboard app (smart-duka-web, not the marketing site); used to build the QR code link on receipts | `https://app.duqana.co.ke` |
 | FIREBASE_PROJECT_ID | Firebase project ID (Admin SDK service account) | `smart-duka-64d5c` |
 | FIREBASE_CLIENT_EMAIL | Firebase Admin SDK service account email | `firebase-adminsdk-xxxxx@smart-duka-64d5c.iam.gserviceaccount.com` |
 | FIREBASE_PRIVATE_KEY | Firebase Admin SDK service account private key (keep the `\n` escape sequences, wrap in quotes) | `"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"` |

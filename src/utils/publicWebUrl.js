@@ -1,4 +1,4 @@
-const FALLBACK = 'https://duqana.co.ke';
+const FALLBACK = 'https://app.duqana.co.ke';
 
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]']);
 
@@ -12,12 +12,14 @@ const isLocalUrl = (value) => {
 };
 
 /**
- * Where the DuQana web app is deployed. QR codes, receipt links, the
- * subscription page, and referral share links are all built from this — so
- * if PUBLIC_WEB_URL is ever left unset, blank, or pointing at a developer's
- * local backend (easy to do by copying a local .env into the wrong place),
- * every one of those links would otherwise leak "localhost" into things
- * real customers see: receipts, referral shares, and billing emails.
+ * Where the DuQana dashboard app (smart-duka-web) is deployed — a separate
+ * host from the marketing site (smart-duka-marketing, duqana.co.ke). QR
+ * codes, receipt links, the subscription page, and referral share links are
+ * all app routes, built from this — so if PUBLIC_WEB_URL is ever left unset,
+ * blank, or pointing at a developer's local backend (easy to do by copying a
+ * local .env into the wrong place), every one of those links would otherwise
+ * leak "localhost" into things real customers see: receipts, referral
+ * shares, and billing emails.
  */
 export const PUBLIC_WEB_URL = (() => {
   const configured = process.env.PUBLIC_WEB_URL?.trim();
