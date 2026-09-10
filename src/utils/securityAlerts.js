@@ -1,10 +1,7 @@
 import { sendPushToUser } from './push.js';
 import { sendEmail } from './email.js';
 import { renderSecurityAlertEmail } from './emailTemplates.js';
-
-// System-generated staff addresses (see utils/staffEmailSlug.js) are never
-// real inboxes — sending an alert there would just fail or vanish silently.
-const isSystemGeneratedAddress = (email) => (email || '').toLowerCase().endsWith('.duqana.co.ke');
+import { isAnySystemGeneratedEmail } from './staffEmailSlug.js';
 
 const ipOf = (req) => req?.ip ?? req?.headers?.['x-forwarded-for']?.split(',')[0]?.trim();
 
@@ -102,7 +99,7 @@ export async function notifySecurityEvent(user, eventKey, { detail, req, email, 
   }
 
   const recipientEmail = email !== undefined ? email : user.email;
-  if (recipientEmail && !isSystemGeneratedAddress(recipientEmail)) {
+  if (recipientEmail && !isAnySystemGeneratedEmail(recipientEmail)) {
     try {
       const { html, text } = renderSecurityAlertEmail({
         name: user.name,

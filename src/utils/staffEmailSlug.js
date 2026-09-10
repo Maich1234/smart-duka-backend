@@ -33,3 +33,14 @@ export function isSystemGeneratedEmail(email, shopName) {
   const domain = buildSystemEmailDomain(shopName);
   return (email || '').toLowerCase().trim().endsWith(`@${domain}`);
 }
+
+/**
+ * Shop-agnostic version of `isSystemGeneratedEmail`, for call sites that only
+ * have the email and no shop context (e.g. forgot-password, which looks the
+ * user up *by* email). Every system-generated domain is a subdomain of
+ * SYSTEM_EMAIL_ROOT, so the suffix alone is enough to tell there's no real
+ * inbox behind it.
+ */
+export function isAnySystemGeneratedEmail(email) {
+  return (email || '').toLowerCase().trim().endsWith(`.${SYSTEM_EMAIL_ROOT}`);
+}
