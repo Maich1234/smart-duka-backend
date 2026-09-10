@@ -8,7 +8,14 @@ function requestOrigin(req) {
   try {
     return new URL(raw).origin;
   } catch {
-    return null;
+    // Present but unparseable — e.g. the literal string "null", which
+    // browsers send as a real Origin header for an opaque-origin request
+    // (a sandboxed iframe or a data: URL). That's still a browser request
+    // with an untrustworthy origin, not the absence of one, so it must not
+    // fall through to isOriginAllowed's no-Origin-header "native client"
+    // allowance — return the raw value so it gets rejected like any other
+    // origin that isn't on the allowlist.
+    return raw;
   }
 }
 

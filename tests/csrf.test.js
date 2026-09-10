@@ -44,6 +44,29 @@ test('requireAllowedOrigin: allows a request with no Origin/Referer at all (nati
   assert.ok(called, 'a native client that never sends Origin must not be blocked');
 });
 
+test('requireAllowedOrigin: rejects a literal "Origin: null" header (opaque-origin browser request, not a native client)', () => {
+  // Sandboxed iframes and data: URLs legitimately send the literal string
+  // "null" as their Origin header. It's truthy, so it must not fall through
+  // to the no-Origin-header "native client" allowance the way a genuinely
+  // absent header does — that would reopen login-CSRF for a zero-click
+  // fetch() fired from such an iframe.
+  const req = { headers: { origin: 'null' } };
+  const res = fakeRes();
+  let called = false;
+  requireAllowedOrigin(req, res, () => { called = true; });
+  assert.equal(called, false, 'an opaque-origin browser request must be rejected, not treated as a native client');
+  assert.equal(res.statusCode, 403);
+});
+
+test('requireAllowedOrigin: rejects an otherwise-unparseable Origin header the same way', () => {
+  const req = { headers: { origin: 'not a url' } };
+  const res = fakeRes();
+  let called = false;
+  requireAllowedOrigin(req, res, () => { called = true; });
+  assert.equal(called, false);
+  assert.equal(res.statusCode, 403);
+});
+
 test('requireAllowedOrigin: no-ops when CORS_ALLOWED_ORIGINS is unset (local dev)', () => {
   delete process.env.CORS_ALLOWED_ORIGINS;
   const req = { headers: { origin: 'https://anything.example.com' } };
@@ -168,6 +191,19 @@ test('verifyCsrf: a cross-site Origin is rejected even with a stolen-looking mat
     method: 'POST',
     cookies: { access_token: 'x', csrf_token: 'secret-123' },
     headers: { origin: 'https://evil.example.com', 'x-csrf-token': 'secret-123' },
+  };
+  const res = fakeRes();
+  let called = false;
+  verifyCsrf(req, res, () => { called = true; });
+  assert.equal(called, false);
+  assert.equal(res.statusCode, 403);
+});
+
+test('verifyCsrf: a literal "Origin: null" is rejected even with a matching token pair', () => {
+  const req = {
+    method: 'POST',
+    cookies: { access_token: 'x', csrf_token: 'secret-123' },
+    headers: { origin: 'null', 'x-csrf-token': 'secret-123' },
   };
   const res = fakeRes();
   let called = false;
