@@ -23,7 +23,7 @@ export async function publishToQStash(event) {
 
   event.publishAttempts += 1;
   try {
-    const client = getQStashClient();
+    const client = await getQStashClient();
     const result = await Promise.race([
       client.publishJSON({ url: callbackUrl, body: { eventId: String(event._id) }, retries: 3 }),
       new Promise((_, reject) => setTimeout(() => reject(new Error('QStash publish timed out')), PUBLISH_TIMEOUT_MS)),
