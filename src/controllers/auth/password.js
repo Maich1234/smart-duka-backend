@@ -5,6 +5,7 @@ import { sendOTPEmail } from '../../utils/email.js';
 import { revokeAllSessions } from '../../services/refreshTokenService.js';
 import { logAudit } from '../../services/auditLogService.js';
 import { notifySecurityEvent } from '../../utils/securityAlerts.js';
+import { isAnySystemGeneratedEmail } from '../../utils/staffEmailSlug.js';
 
 export const changePassword = async (req, res) => {
   const { currentPassword, newPassword } = req.body;
@@ -37,6 +38,17 @@ export const forgotPassword = async (req, res) => {
       success: false,
       message: 'No account found with that email',
       fieldErrors: [{ field: 'email', message: 'No account found with that email' }],
+    });
+  }
+
+  // System-generated staff addresses (see utils/staffEmailSlug.js) have no
+  // real inbox behind them — an OTP sent there can never be read. Fail fast
+  // with a real path forward instead of a send that silently goes nowhere.
+  if (isAnySystemGeneratedEmail(user.email)) {
+    return res.status(400).json({
+      success: false,
+      message: "This account doesn't have a real email on file. Ask your shop owner to reset your password for you.",
+      fieldErrors: [{ field: 'email', message: 'This account has no real email — ask your shop owner to reset your password' }],
     });
   }
 
