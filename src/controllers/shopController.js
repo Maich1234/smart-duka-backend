@@ -3,7 +3,6 @@ import Subscription from '../models/Subscription.js';
 import PlatformConfig from '../models/PlatformConfig.js';
 import User from '../models/User.js';
 import EmployeeReferralPayout from '../models/EmployeeReferralPayout.js';
-import cloudinary from '../config/cloudinary.js';
 import { resolvePaymentMethods } from '../constants/salePaymentMethods.js';
 import { generateShopReferralCode, generateStaffReferralCode } from '../utils/referralCode.js';
 import { PUBLIC_WEB_URL } from '../utils/publicWebUrl.js';
@@ -156,6 +155,11 @@ export const uploadShopLogo = async (req, res) => {
 
   const shop = await Shop.findById(req.user.shop._id);
   if (!shop) return res.status(404).json({ success: false, message: 'Shop not found' });
+
+  // Loaded here rather than at module scope: this controller sits on the route
+  // barrel, so a static import made every cold start — login included — pay
+  // ~44ms to evaluate the Cloudinary SDK for the one endpoint that uses it.
+  const { default: cloudinary } = await import('../config/cloudinary.js');
 
   const result = await new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(

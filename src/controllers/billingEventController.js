@@ -17,7 +17,8 @@ export const handleBillingEventDispatch = async (req, res) => {
 
   let valid = false;
   try {
-    valid = await getQStashReceiver().verify({
+    const qstashReceiver = await getQStashReceiver();
+    valid = await qstashReceiver.verify({
       signature: req.headers['upstash-signature'],
       body: req.rawBody?.toString('utf8') ?? '',
       url: process.env.BILLING_EVENTS_CALLBACK_URL,

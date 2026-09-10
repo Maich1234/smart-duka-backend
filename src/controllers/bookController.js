@@ -1,7 +1,4 @@
 import { availableBooks, bookByKey } from '../services/books/registry.js';
-import { renderCsv } from '../services/books/renderers/csv.js';
-import { renderXlsx } from '../services/books/renderers/xlsx.js';
-import { renderPdf } from '../services/books/renderers/pdf.js';
 
 /**
  * Business books — the shop's financial records, computed server-side.
@@ -15,14 +12,31 @@ import { renderPdf } from '../services/books/renderers/pdf.js';
  * archive is only needed for offline re-download, which is a mobile concern.
  */
 
+/**
+ * Renderers are loaded on demand, not imported at module scope.
+ *
+ * This file is reachable from the route barrel, so a static import would put
+ * exceljs (~133ms to evaluate) and pdfkit + qrcode (~141ms) into the cold
+ * start of *every* request — a login, a sale, a stock lookup — to serve a
+ * download that a shop asks for occasionally. Deferring the module defers its
+ * dependencies with it.
+ */
 const FORMATS = {
-  csv: { ext: 'csv', mime: 'text/csv; charset=utf-8', render: renderCsv },
+  csv: {
+    ext: 'csv',
+    mime: 'text/csv; charset=utf-8',
+    load: async () => (await import('../services/books/renderers/csv.js')).renderCsv,
+  },
   xlsx: {
     ext: 'xlsx',
     mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    render: renderXlsx,
+    load: async () => (await import('../services/books/renderers/xlsx.js')).renderXlsx,
   },
-  pdf: { ext: 'pdf', mime: 'application/pdf', render: renderPdf },
+  pdf: {
+    ext: 'pdf',
+    mime: 'application/pdf',
+    load: async () => (await import('../services/books/renderers/pdf.js')).renderPdf,
+  },
 };
 
 /** Widest period we'll aggregate in one request, to bound a serverless call. */
@@ -144,7 +158,8 @@ export const downloadBook = async (req, res) => {
     to: period.to,
   });
 
-  const body = await format.render(doc);
+  const render = await format.load();
+  const body = await render(doc);
   const filename = `${slug(shop?.name)}-${book.key.replace(/_/g, '-')}-${slug(doc.period.label)}.${format.ext}`;
 
   res.setHeader('Content-Type', format.mime);
