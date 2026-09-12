@@ -7,6 +7,7 @@ import MpesaTransaction from '../models/MpesaTransaction.js';
 import AuditLog from '../models/AuditLog.js';
 import DailySummary from '../models/DailySummary.js';
 import { generateDailyInsights } from './intelligence/insightEngine.js';
+import { inventoryValuationStages } from './inventoryValuationService.js';
 
 const SLOW_MOVER_WINDOW_DAYS = 7;
 const TRAILING_INSIGHT_DAYS = 7;
@@ -117,10 +118,10 @@ export const generateDailySummary = async (shopId, dateStr) => {
     Shift.find({ shop, status: 'closed', endedAt: { $gte: start, $lt: end } }).select('summary').lean(),
     Shift.countDocuments({ shop, status: 'active', startedAt: { $lt: end } }),
     Product.countDocuments({ shop, isActive: { $ne: false }, $expr: { $lte: ['$quantity', '$lowStockAlert'] } }),
-    Product.aggregate([
-      { $match: { shop } },
-      { $group: { _id: null, value: { $sum: { $multiply: [{ $ifNull: ['$quantity', 0] }, { $ifNull: ['$costPrice', 0] }] } } } },
-    ]),
+    // Shared with the Business Overview screen so the two can never disagree
+    // on what the shelves are worth — and, unlike the inline expression this
+    // replaces, it counts variant stock (see inventoryValuationService).
+    Product.aggregate([{ $match: { shop } }, ...inventoryValuationStages]),
     AuditLog.countDocuments({ shopId: shop, action: 'inventory.stock_adjusted', createdAt: { $gte: start, $lt: end } }),
     MpesaTransaction.aggregate([
       { $match: { shop, status: 'success', createdAt: { $gte: start, $lt: end } } },
@@ -199,7 +200,7 @@ export const generateDailySummary = async (shopId, dateStr) => {
     inventory: {
       lowStockCount,
       adjustments: adjustmentAgg,
-      stockValue: stockAgg[0]?.value ?? 0,
+      stockValue: stockAgg[0]?.stockAtCost ?? 0,
     },
     bestSellers,
     slowMovers: slowMoverDocs.map((p) => ({ productId: p._id, name: p.name, quantity: 0, stock: p.quantity })),

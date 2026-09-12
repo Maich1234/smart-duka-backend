@@ -11,16 +11,26 @@ const DEFAULT_WINDOW_DAYS = 30;
  * (single-day) can answer a "how's staff doing this month" question, and
  * this isn't extracted from dailySummaryService's staffAgg since that one
  * is embedded in a dense Promise.all of ten other day-scoped aggregates.
+ *
+ * Accepts either `{ startDate, endDate }` YYYY-MM-DD strings (the chat tool's
+ * arguments) or a pre-resolved `{ range: { start, end } }` of Dates (the
+ * Business Overview, whose windows come from resolveRange).
  */
-export const getStaffPerformance = async (shopId, { startDate, endDate } = {}) => {
+export const getStaffPerformance = async (shopId, { startDate, endDate, range } = {}) => {
   const shop = new mongoose.Types.ObjectId(String(shopId));
-  const end = endDate ? new Date(`${endDate}T23:59:59.999Z`) : new Date();
-  const start = startDate
+  const end = range?.end ?? (endDate ? new Date(`${endDate}T23:59:59.999Z`) : new Date());
+  const start = range?.start ?? (startDate
     ? new Date(`${startDate}T00:00:00.000Z`)
-    : new Date(end.getTime() - DEFAULT_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    : new Date(end.getTime() - DEFAULT_WINDOW_DAYS * 24 * 60 * 60 * 1000));
+  // `range` is half-open [start, end) — the convention every other financial
+  // window in the app uses (resolveRange, dailySummaryService). The string
+  // form stays inclusive-to-end-of-day because that is what the chat tool's
+  // "from 1st to 31st" arguments mean, and mixing the two would double-count
+  // whichever sales land exactly on a boundary.
+  const createdAt = range ? { $gte: start, $lt: end } : { $gte: start, $lte: end };
 
   const staffAgg = await Sale.aggregate([
-    { $match: { shop, status: { $in: REVENUE_STATUSES }, createdAt: { $gte: start, $lte: end } } },
+    { $match: { shop, status: { $in: REVENUE_STATUSES }, createdAt } },
     {
       $group: {
         _id: '$staff',

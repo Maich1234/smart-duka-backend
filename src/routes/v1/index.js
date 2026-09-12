@@ -26,6 +26,8 @@ import notificationRoutes from './notificationRoutes.js';
 import setupRoutes from './setupRoutes.js';
 import internalRoutes from './internalRoutes.js';
 import billingEventRoutes from './billingEventRoutes.js';
+import businessRoutes from './businessRoutes.js';
+import assetRoutes from './assetRoutes.js';
 
 const router = express.Router();
 
@@ -56,5 +58,7 @@ router.use('/notifications', notificationRoutes);
 router.use('/setup', setupRoutes);
 router.use('/internal', internalRoutes);
 router.use('/billing-events', billingEventRoutes);
+router.use('/business', businessRoutes);
+router.use('/assets', assetRoutes);
 
 export default router;
