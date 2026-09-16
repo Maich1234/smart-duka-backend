@@ -25,6 +25,14 @@ import {
   remindScheduledDeletions,
   autoApproveStaleDeletionRequests,
 } from './auth/deleteAccount.js';
+import Customer from '../models/Customer.js';
+import CreditTransaction from '../models/CreditTransaction.js';
+import { DEBT_TX_TYPES, daysOverdue, money } from '../constants/credit.js';
+import { recomputeCustomerCredit } from '../services/creditService.js';
+
+/** "12 Sep" — short enough for a push body, unambiguous for a due date. */
+const formatDueDate = (date) =>
+  new Date(date).toLocaleDateString('en-KE', { day: 'numeric', month: 'short' });
 
 const STOCKOUT_CRITICAL_DAYS = 3;
 
@@ -475,4 +483,142 @@ export const accountDeletions = async (req, res) => {
   ]);
 
   res.json({ success: true, purged, reminded, autoApproved });
+};
+
+/**
+ * Flags credit debts that have fallen due and tells the owner about them.
+ *
+ * Enforcement does NOT depend on this job. The BLOCK overdue policy is checked
+ * against `credit.oldestDueAt`, which every credit write maintains
+ * synchronously, so a debt that matures at midnight blocks new credit at
+ * 00:00:01 whether or not this has run. What this job owns is the *stored*
+ * overdue state used by list filters, and the notification.
+ *
+ * Idempotent twice over: a debt is only picked up while `overdueAt` is null
+ * (and stamping it is what takes it out of the next run's scope), and a
+ * NotificationLog row per transaction id means a restart or a manual re-trigger
+ * mid-run can never announce the same debt again.
+ *
+ * One push per shop per run, not one per debt. Five customers falling overdue
+ * on the same morning is five lines in one notification, not five notifications
+ * — spam is how an owner learns to swipe these away unread.
+ */
+export const creditOverdueSweep = async (req, res) => {
+  if (!verifyCronSecret(req)) {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
+  }
+
+  const now = new Date();
+  // Newly matured debts across every shop, oldest first. Scoped by the
+  // {status, dueAt} index rather than iterating shops: most shops have no
+  // credit at all, and scanning them all to find nothing is the expensive way
+  // to do this.
+  const matured = await CreditTransaction.find({
+    type: { $in: DEBT_TX_TYPES },
+    status: 'outstanding',
+    outstanding: { $gt: 0 },
+    dueAt: { $lte: now },
+    overdueAt: null,
+  })
+    .select('shop customer amount outstanding dueAt')
+    .sort({ dueAt: 1 })
+    // Bounded so one very large run can't exceed the function's time budget;
+    // whatever is left is picked up by the next run, still un-stamped.
+    .limit(2000)
+    .lean();
+
+  const byShop = new Map();
+  for (const debt of matured) {
+    const key = String(debt.shop);
+    if (!byShop.has(key)) byShop.set(key, []);
+    byShop.get(key).push(debt);
+  }
+
+  const notified = [];
+  const failed = [];
+
+  for (const [shopId, debts] of byShop) {
+    try {
+      const ids = debts.map((d) => d._id);
+      await CreditTransaction.updateMany(
+        { _id: { $in: ids }, overdueAt: null },
+        { $set: { overdueAt: now } },
+      );
+
+      // Rebuild each affected customer's rollup so overdueAmount and status
+      // match the ledger the owner is about to be shown.
+      const customerIds = [...new Set(debts.map((d) => String(d.customer)))];
+      for (const customerId of customerIds) {
+        await recomputeCustomerCredit(customerId, null, { now });
+      }
+
+      // Which of these debts has never been announced. Checked before the push
+      // so a partially-completed previous run doesn't re-announce its half.
+      const alreadyLogged = await NotificationLog.find({
+        shop: shopId,
+        type: 'credit_overdue',
+        key: { $in: ids.map(String) },
+      }).select('key').lean();
+      const loggedKeys = new Set(alreadyLogged.map((l) => l.key));
+      const fresh = debts.filter((d) => !loggedKeys.has(String(d._id)));
+      if (fresh.length === 0) continue;
+
+      const customers = await Customer.find({ _id: { $in: fresh.map((d) => d.customer) } })
+        .select('name')
+        .lean();
+      const nameById = new Map(customers.map((c) => [String(c._id), c.name]));
+
+      const shop = await Shop.findById(shopId).select('name currency').lean();
+      const currency = shop?.currency || 'KES';
+      const total = fresh.reduce((sum, d) => sum + d.outstanding, 0);
+
+      let title;
+      let body;
+      if (fresh.length === 1) {
+        const debt = fresh[0];
+        const name = nameById.get(String(debt.customer)) ?? 'A customer';
+        const late = daysOverdue(debt.dueAt, now);
+        title = `${name}'s credit is overdue`;
+        body = `${currency} ${money(debt.outstanding).toLocaleString('en-KE')} was due ${formatDueDate(debt.dueAt)}`
+          + `${late > 0 ? ` — ${late} day${late === 1 ? '' : 's'} ago` : ' today'}.`;
+      } else {
+        const names = [...new Set(fresh.map((d) => nameById.get(String(d.customer)) ?? 'A customer'))];
+        const listed = names.slice(0, 3).join(', ');
+        title = `${names.length} customers are overdue on credit`;
+        body = `${currency} ${money(total).toLocaleString('en-KE')} is now past due — ${listed}`
+          + `${names.length > 3 ? ` and ${names.length - 3} more` : ''}.`;
+      }
+
+      const owners = await User.find({ shop: shopId, role: 'owner' });
+      for (const owner of owners) {
+        await sendPushToUser(owner, {
+          title,
+          body,
+          data: { type: 'credit_overdue' },
+        }).catch((err) => console.error('[cron] credit overdue push failed:', err.message));
+      }
+
+      // Written after the push, one row per debt. insertMany with ordered:false
+      // so a row that raced in from a concurrent run (unique index on
+      // shop+type+key) doesn't abort the rest.
+      await NotificationLog.insertMany(
+        fresh.map((d) => ({ shop: shopId, type: 'credit_overdue', key: String(d._id) })),
+        { ordered: false },
+      ).catch(() => {});
+
+      notified.push({ shop: shopId, debts: fresh.length, total: money(total) });
+    } catch (err) {
+      console.error('[cron] credit overdue sweep failed for shop', shopId, err.message);
+      failed.push(shopId);
+    }
+  }
+
+  res.json({
+    success: true,
+    matured: matured.length,
+    shops: byShop.size,
+    notified: notified.length,
+    failed,
+    results: notified,
+  });
 };

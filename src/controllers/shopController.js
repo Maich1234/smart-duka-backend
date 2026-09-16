@@ -4,19 +4,30 @@ import PlatformConfig from '../models/PlatformConfig.js';
 import User from '../models/User.js';
 import EmployeeReferralPayout from '../models/EmployeeReferralPayout.js';
 import { resolvePaymentMethods } from '../constants/salePaymentMethods.js';
+import { resolveCreditSettings } from '../constants/credit.js';
 import { generateShopReferralCode, generateStaffReferralCode } from '../utils/referralCode.js';
 import { PUBLIC_WEB_URL } from '../utils/publicWebUrl.js';
+import { logAudit } from '../services/auditLogService.js';
+
+/** The shape every shop-config response hands back. */
+const shopConfigPayload = (shop) => ({
+  ...shop.toObject(),
+  // Shops predating owner-defined till buttons have no list stored; hand back
+  // the defaults so the client renders Cash + M-PESA instead of nothing.
+  paymentMethods: resolvePaymentMethods(shop),
+  // Same reasoning: a shop created before credit existed has no subdocument,
+  // and the till needs to know credit is off rather than read `undefined`.
+  creditSettings: resolveCreditSettings(shop),
+});
 
 export const getShopConfig = async (req, res) => {
   const shop = await Shop.findById(req.user.shop._id);
   if (!shop) return res.status(404).json({ success: false, message: 'Shop not found' });
-  // Shops predating owner-defined till buttons have no list stored; hand back
-  // the defaults so the client renders Cash + M-PESA instead of nothing.
-  res.json({ success: true, data: { ...shop.toObject(), paymentMethods: resolvePaymentMethods(shop) } });
+  res.json({ success: true, data: shopConfigPayload(shop) });
 };
 
 export const updateShopConfig = async (req, res) => {
-  const { name, address, phone, email, taxRate, country, currency, receiptThankYouNote, logoUrl, motto, shiftManagementEnabled, showStaffCommission, purchasingEnabled, purchaseCostAllocationMethod, aiEnabled, barcodeScanningEnabled, paymentMethods } = req.body;
+  const { name, address, phone, email, taxRate, country, currency, receiptThankYouNote, logoUrl, motto, shiftManagementEnabled, showStaffCommission, purchasingEnabled, purchaseCostAllocationMethod, aiEnabled, barcodeScanningEnabled, paymentMethods, creditSettings } = req.body;
   const shop = await Shop.findById(req.user.shop._id);
   if (!shop) return res.status(404).json({ success: false, message: 'Shop not found' });
 
@@ -40,9 +51,32 @@ export const updateShopConfig = async (req, res) => {
   if (paymentMethods !== undefined) {
     shop.paymentMethods = paymentMethods.map((m, i) => ({ ...m, order: i }));
   }
+  // Merged, not replaced: the Settings screen writes one switch at a time
+  // (useShopConfigToggle's pattern), so a PUT carrying only { enabled: true }
+  // must not reset the limit, the collection period or either policy.
+  //
+  // Switching `enabled` off is not a deletion: existing debts, their due
+  // dates, the ledger and every repayment stay exactly as they are, and the
+  // repayment endpoint keeps working. All it stops is new credit sales.
+  if (creditSettings !== undefined) {
+    shop.creditSettings = { ...resolveCreditSettings(shop), ...creditSettings };
+  }
 
   await shop.save();
-  res.json({ success: true, data: { ...shop.toObject(), paymentMethods: resolvePaymentMethods(shop) } });
+
+  if (creditSettings !== undefined) {
+    await logAudit({
+      shopId: shop._id,
+      userId: req.user._id,
+      action: 'credit.settings.updated',
+      entityType: 'Shop',
+      entityId: shop._id,
+      details: { changed: creditSettings, resulting: resolveCreditSettings(shop) },
+      req,
+    });
+  }
+
+  res.json({ success: true, data: shopConfigPayload(shop) });
 };
 
 const webUrl = () => PUBLIC_WEB_URL;

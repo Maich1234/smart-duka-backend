@@ -72,6 +72,9 @@ export const createProductSchema = Joi.object({
     .when('productType', { is: 'service', then: Joi.optional().default(false), otherwise: Joi.forbidden() }),
   // Allowed on every product type — commission is not a variant-only concept.
   commission: commissionSchema.optional(),
+  // Owner-only in the controller (stripped for staff, like commission) — this
+  // decides what the shop is willing to lend on.
+  creditEligible: Joi.boolean().optional(),
   bundleItems: Joi.array().items(bundleItemSchema).min(1)
     .when('productType', { is: 'bundle', then: Joi.required(), otherwise: Joi.forbidden() }),
   variants: Joi.array().items(variantSchema).min(1)
@@ -97,6 +100,7 @@ export const updateProductSchema = Joi.object({
   maxPrice: Joi.number().min(0),
   allowPriceOverride: Joi.boolean(),
   commission: commissionSchema,
+  creditEligible: Joi.boolean(),
   bundleItems: Joi.array().items(bundleItemSchema).min(1),
   variants: Joi.array().items(variantSchema).min(1),
   promotions: Joi.array().items(promotionSchema),

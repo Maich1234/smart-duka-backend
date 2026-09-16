@@ -100,6 +100,18 @@ const productSchema = new mongoose.Schema({
   // one selling standard products — could switch "show commission to staff" on
   // and still never generate a single shilling of it.
   commission: commissionConfig(),
+  // Whether this product may be taken on credit, under the shop's
+  // SELECTED_PRODUCTS policy. Ignored entirely under ALL_PRODUCTS.
+  //
+  // Defaults false so the restrictive policy fails closed: an owner who
+  // switches to SELECTED_PRODUCTS gets "nothing yet" and has to name what
+  // they'll lend on, rather than a policy that silently permits everything
+  // and only looks restrictive. The sale is rejected by product name, so the
+  // cashier is never left guessing which line blocked it.
+  creditEligible: {
+    type: Boolean,
+    default: false,
+  },
   bundleItems: [{
     product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
     quantity: { type: Number, min: 0.001 },

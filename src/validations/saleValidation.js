@@ -26,6 +26,16 @@ export const createSaleSchema = Joi.object({
   // confirmation SMS. validate() runs with stripUnknown, so this MUST be
   // declared here or it silently never reaches the controller.
   mpesaReceiptNumber: Joi.string().trim().uppercase().min(6).max(20).optional(),
+  // Who the sale is for. Required in the controller for a credit sale (a debt
+  // needs a debtor) and accepted on any sale so a shop can attach a regular
+  // customer to a cash purchase too.
+  //
+  // Note what is NOT here: creditLimit, outstandingBalance, availableCredit,
+  // dueDate. All four are computed server-side at commit — a client sending
+  // them would be ignored by stripUnknown anyway, but they are called out
+  // because the confirmation sheet displays all four and it must be obvious
+  // that displaying them is not the same as trusting them.
+  customerId: Joi.string().hex().length(24).optional(),
 }).unknown(false);
 
 export const saleQuerySchema = Joi.object({
@@ -34,6 +44,7 @@ export const saleQuerySchema = Joi.object({
   staffId: Joi.string(),
   status: Joi.string().valid('completed', 'voided', 'refund_pending', 'refunded'),
   paymentMethod: methodKey,
+  customerId: Joi.string().hex().length(24),
   // Free-text search across invoice number and cashier name
   search: Joi.string().trim().max(60).allow(''),
   page: Joi.number().min(1).default(1),
