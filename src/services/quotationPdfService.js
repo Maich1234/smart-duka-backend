@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { sanitize } from './books/renderers/pdf.js';
 
 /**
  * Renders a quotation into a PDF, using pdfkit directly rather than a
@@ -8,12 +9,37 @@ import PDFDocument from 'pdfkit';
  *
  * Pure function: no database, no Express. `quotationData` is the same shape
  * getPublicQuotation returns.
+ *
+ * Free-text fields (shop name, customer name, item name/description, notes)
+ * are run through the shared sanitize() before drawing. The standard
+ * Helvetica font only encodes WinAnsi/Latin-1: for a character outside that
+ * range, pdfkit's AFMFont.encodeText writes the raw codepoint's hex digits
+ * into the PDF content stream regardless of length (2 hex digits for Latin-1,
+ * 3+ for anything past U+00FF), which desyncs the byte-pair boundaries of
+ * every hex string operand that follows it — corrupting not just that
+ * character but the rest of the line. sanitize() strips those characters
+ * before they ever reach pdfkit, so this never happens.
  */
 
 const formatMoney = (n, currency = 'KES') =>
   `${currency} ${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const formatDate = (d) => new Date(d).toLocaleDateString('en-KE', { year: 'numeric', month: 'short', day: 'numeric' });
+
+/** Sanitizes only the free-text fields a template draws as user-supplied text. */
+function sanitizeQuotationData(data) {
+  return {
+    ...data,
+    shopName: sanitize(data.shopName),
+    notes: sanitize(data.notes),
+    customerSnapshot: { ...data.customerSnapshot, name: sanitize(data.customerSnapshot.name) },
+    items: data.items.map((item) => ({
+      ...item,
+      name: sanitize(item.name),
+      description: sanitize(item.description),
+    })),
+  };
+}
 
 function bufferFromDoc(doc) {
   return new Promise((resolve, reject) => {
@@ -128,6 +154,6 @@ export const renderQuotationPdf = async (data, template) => {
     throw new Error(`Unknown quotation template: ${template}`);
   }
   const doc = new PDFDocument({ size: 'A4', margin: 0 });
-  render(doc, data);
+  render(doc, sanitizeQuotationData(data));
   return bufferFromDoc(doc);
 };
