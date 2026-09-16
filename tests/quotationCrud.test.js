@@ -1,8 +1,11 @@
 import { test, mock, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import mongoose from 'mongoose';
 import Quotation from '../src/models/Quotation.js';
 import Customer from '../src/models/Customer.js';
 import Product from '../src/models/Product.js';
+import Sale from '../src/models/Sale.js';
+import CreditTransaction from '../src/models/CreditTransaction.js';
 import {
   createQuotation,
   getQuotations,
@@ -10,6 +13,7 @@ import {
   updateQuotation,
   declineQuotation,
   deleteQuotation,
+  convertQuotation,
 } from '../src/controllers/quotationController.js';
 import { createQuotationSchema } from '../src/validations/quotationValidation.js';
 
@@ -42,7 +46,7 @@ function makeRes() {
   };
 }
 
-function makeReq({ role = 'staff', permissions = [], query = {}, body = {}, params = {}, shop = {} } = {}) {
+function makeReq({ role = 'staff', permissions = [], query = {}, body = {}, params = {}, shop = {}, headers = {} } = {}) {
   return {
     user: {
       _id: CALLER_ID,
@@ -54,6 +58,7 @@ function makeReq({ role = 'staff', permissions = [], query = {}, body = {}, para
     query,
     body,
     params,
+    headers,
   };
 }
 
@@ -420,4 +425,212 @@ test('deleteQuotation: deletes a draft quotation', async () => {
 
   assert.equal(res.statusCode, 200);
   assert.equal(doc.deleted, true);
+});
+
+// ── convertQuotation ─────────────────────────────────────────────────────────
+//
+// convertQuotation calls the real createSaleTransaction (Task 6) rather than
+// a mock of it, the same way createSale.test.js exercises it end to end — so
+// these tests stub mongoose.startSession / Product / Sale / Customer /
+// CreditTransaction, not createSaleTransaction itself.
+
+/** A draft quotation with one custom/service line, so createSaleTransaction's
+ * product lookup never needs anything but an empty Product.find result. */
+function draftQuotation(overrides = {}) {
+  return {
+    _id: 'q1',
+    status: 'draft',
+    customer: CUSTOMER_ID,
+    items: [{ name: 'Haircut', quantity: 1, unitPrice: 500 }],
+    ...overrides,
+  };
+}
+
+/** `mongoose.startSession()` — a trivial passthrough, same as saleCreation.test.js.
+ * `sink`, if given, collects each session object so a test can assert that a
+ * later call (e.g. beforeCommit's Quotation.findOneAndUpdate) used the very
+ * same session the transaction opened, not a separate one. */
+function stubSession(sink) {
+  mock.method(mongoose, 'startSession', async () => {
+    const session = { withTransaction: async (fn) => fn(), endSession() {} };
+    sink?.push(session);
+    return session;
+  });
+}
+
+/** `Product.find(...).session(session)` — the chain createSaleTransaction calls,
+ * distinct from stubProductFind's `.lean()` chain used by resolveQuotationItems. */
+function stubProductFindForSale(rows = []) {
+  mock.method(Product, 'find', () => ({ session: async () => rows }));
+}
+
+/** `Customer.findOne(...).select(...).lean()` — createSaleTransaction attaches
+ * the quotation's customer to the sale on every conversion, credit or not. */
+function stubSaleCustomer(doc) {
+  mock.method(Customer, 'findOne', () => ({ select: () => ({ lean: async () => doc }) }));
+}
+
+test('convertQuotation: rejects a staff member without convert_quotation_to_sale, before any lookup', async () => {
+  const filters = [];
+  stubQuotationFindOne(null, filters);
+  const res = makeRes();
+  await convertQuotation(makeReq({ permissions: ['create_quotation'], params: { id: 'q1' }, body: { paymentMethod: 'cash' } }), res);
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(filters.length, 0, 'the database must not be touched before the permission check');
+});
+
+test('convertQuotation: a nonexistent or another shop\'s quotation is simply not found', async () => {
+  const filters = [];
+  stubQuotationFindOne(null, filters);
+  const res = makeRes();
+  await convertQuotation(makeReq({ role: 'owner', params: { id: 'q1' }, body: { paymentMethod: 'cash' } }), res);
+
+  assert.equal(res.statusCode, 404);
+  assert.equal(String(filters[0].shop), SHOP_ID);
+});
+
+test('convertQuotation: rejects converting an already-converted or declined quotation', async () => {
+  stubQuotationFindOne(draftQuotation({ status: 'declined' }));
+  const res = makeRes();
+  await convertQuotation(makeReq({ role: 'owner', params: { id: 'q1' }, body: { paymentMethod: 'cash' } }), res);
+
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body.message, /already declined/);
+});
+
+test('convertQuotation: still requires make_credit_sale to convert to a credit sale', async () => {
+  stubQuotationFindOne(draftQuotation());
+  mock.method(Sale, 'create', async () => { throw new Error('Sale.create must not be called before the credit-permission gate'); });
+  const res = makeRes();
+  await convertQuotation(makeReq({ permissions: ['convert_quotation_to_sale'], params: { id: 'q1' }, body: { paymentMethod: 'credit' } }), res);
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.code, 'CREDIT_PERMISSION_DENIED');
+});
+
+test('convertQuotation: marks the quotation converted and links the new sale', async () => {
+  const q = draftQuotation();
+  stubQuotationFindOne(q);
+  stubSession();
+  stubProductFindForSale();
+  stubSaleCustomer({ _id: CUSTOMER_ID, name: 'Jane' });
+  let created;
+  mock.method(Sale, 'create', async (docs) => {
+    created = docs[0];
+    return [{ ...created, _id: 'sale1', toObject: () => ({ ...created, _id: 'sale1' }) }];
+  });
+  let updateFilter;
+  let updateDoc;
+  mock.method(Quotation, 'findOneAndUpdate', async (filter, update) => {
+    updateFilter = filter;
+    updateDoc = update;
+    return { ...q, status: 'converted', convertedSale: 'sale1' };
+  });
+
+  const res = makeRes();
+  await convertQuotation(makeReq({ role: 'owner', params: { id: 'q1' }, body: { paymentMethod: 'cash' } }), res);
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(created.paymentMethod, 'cash');
+  assert.equal(created.totalAmount, 500);
+  assert.equal(res.body.data._id, 'sale1');
+  assert.equal(String(res.body.data.quotationId), 'q1');
+  assert.equal(res.body.message, 'Quotation converted to a sale.');
+  assert.equal(String(updateFilter._id), 'q1');
+  assert.equal(updateFilter.status, 'draft');
+  assert.equal(updateDoc.$set.status, 'converted');
+  assert.equal(String(updateDoc.$set.convertedSale), 'sale1');
+});
+
+test('convertQuotation: converts to a credit sale when make_credit_sale is also granted', async () => {
+  const q = draftQuotation();
+  stubQuotationFindOne(q);
+  stubSession();
+  stubProductFindForSale();
+  mock.method(Sale, 'create', async (docs) => [{ ...docs[0], _id: 'sale1', toObject: () => ({ ...docs[0], _id: 'sale1' }) }]);
+  mock.method(Quotation, 'findOneAndUpdate', async () => ({ ...q, status: 'converted', convertedSale: 'sale1' }));
+  mock.method(Customer, 'findOne', () => ({ select: () => ({ lean: async () => ({ _id: CUSTOMER_ID, name: 'Jane', isActive: true }) }) }));
+  mock.method(Customer, 'findOneAndUpdate', async () => ({ _id: CUSTOMER_ID, name: 'Jane', credit: { outstanding: 500, limit: null } }));
+  mock.method(CreditTransaction, 'create', async (docs) => [{ ...docs[0], _id: 'tx1' }]);
+  mock.method(CreditTransaction, 'find', () => ({
+    select() { return this; }, sort() { return this; }, session() { return this; }, lean: async () => [],
+  }));
+  mock.method(CreditTransaction, 'exists', () => ({ session: async () => null }));
+
+  const req = makeReq({
+    permissions: ['convert_quotation_to_sale', 'make_credit_sale'],
+    shop: { creditSettings: { enabled: true, defaultCreditLimit: 3000, defaultCollectionPeriodDays: 7, productPolicy: 'ALL_PRODUCTS', overduePolicy: 'BLOCK' } },
+    params: { id: 'q1' },
+    body: { paymentMethod: 'credit' },
+  });
+  const res = makeRes();
+  await convertQuotation(req, res);
+
+  assert.equal(res.statusCode, 201);
+  assert.ok(res.body.data.credit, 'response must carry the credit summary, same as a till credit sale');
+  assert.equal(res.body.message, "Sale recorded on Jane's account.");
+});
+
+test('convertQuotation: beforeCommit\'s atomic guard rejects a race the initial draft check missed, without a second Sale.create', async () => {
+  // Quotation.findOne always answers 'draft' here — modelling a request that
+  // read the quotation before a concurrent convert committed. The initial
+  // status check alone would let this through; only the status-filtered
+  // findOneAndUpdate inside beforeCommit — running on the transaction's own
+  // session — stops a second Sale from being created.
+  mock.method(Quotation, 'findOne', async () => draftQuotation());
+  const sessions = [];
+  stubSession(sessions);
+  stubProductFindForSale();
+  stubSaleCustomer({ _id: CUSTOMER_ID, name: 'Jane' });
+  let saleCreateCalls = 0;
+  mock.method(Sale, 'create', async (docs) => {
+    saleCreateCalls += 1;
+    return [{ ...docs[0], _id: 'sale-x', toObject: () => ({ ...docs[0], _id: 'sale-x' }) }];
+  });
+  let updateOptions;
+  mock.method(Quotation, 'findOneAndUpdate', async (filter, update, options) => {
+    updateOptions = options;
+    return null; // another convert already won — the DB no longer matches status: 'draft'
+  });
+
+  const res = makeRes();
+  await convertQuotation(makeReq({ role: 'owner', params: { id: 'q1' }, body: { paymentMethod: 'cash' } }), res);
+
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body.message, /already converted/);
+  assert.equal(saleCreateCalls, 1, 'the sale attempt happens inside the transaction, before beforeCommit aborts it');
+  assert.equal(updateOptions.session, sessions[0], "beforeCommit's update must run on the transaction's own session, not a separate one");
+});
+
+test('convertQuotation: is idempotent — two sequential converts of the same quotation produce exactly one Sale', async () => {
+  const q = draftQuotation({ _id: 'q2' });
+  // Each call re-reads the current (mutated-in-place) status, the way a real
+  // findOne would re-read the document — not a snapshot frozen at test setup.
+  mock.method(Quotation, 'findOne', async () => ({ ...q }));
+  stubSession();
+  stubProductFindForSale();
+  stubSaleCustomer({ _id: CUSTOMER_ID, name: 'Jane' });
+  let saleCreateCalls = 0;
+  mock.method(Sale, 'create', async (docs) => {
+    saleCreateCalls += 1;
+    return [{ ...docs[0], _id: `sale-${saleCreateCalls}`, toObject: () => ({ ...docs[0], _id: `sale-${saleCreateCalls}` }) }];
+  });
+  mock.method(Quotation, 'findOneAndUpdate', async (filter, update) => {
+    if (q.status !== 'draft') return null; // the atomic guard: already converted
+    q.status = 'converted';
+    q.convertedSale = update.$set.convertedSale;
+    return { ...q };
+  });
+
+  const makeConvertReq = () => makeReq({ role: 'owner', params: { id: 'q2' }, body: { paymentMethod: 'cash' } });
+  const first = makeRes();
+  await convertQuotation(makeConvertReq(), first);
+  const second = makeRes();
+  await convertQuotation(makeConvertReq(), second);
+
+  assert.equal(first.statusCode, 201);
+  assert.equal(second.statusCode, 400);
+  assert.match(second.body.message, /already converted/);
+  assert.equal(saleCreateCalls, 1, 'the duplicate request must not create a second Sale');
 });

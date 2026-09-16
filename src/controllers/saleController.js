@@ -23,8 +23,11 @@ import { CreditRejection, reverseDebt } from '../services/creditService.js';
  * entered as purchased — but the owner needs to know so they can true up
  * inventory. Best-effort per owner, mirrors notifyOwnersShiftClosed in
  * shiftController.js.
+ *
+ * Exported for reuse by quotationController.js's convertQuotation, which
+ * runs the same createSaleTransaction and needs the same alert.
  */
-const notifyOwnersNegativeStock = async (shop, staffName, items) => {
+export const notifyOwnersNegativeStock = async (shop, staffName, items) => {
   const title = items.length === 1
     ? `⚠️ ${items[0].productName} is now below zero stock`
     : `⚠️ ${items.length} items went below zero stock`;

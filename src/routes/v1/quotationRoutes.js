@@ -1,6 +1,7 @@
 import express from 'express';
 import { protect, staffOrOwner } from '../../middlewares/auth.js';
 import validate from '../../middlewares/validate.js';
+import idempotency from '../../middlewares/idempotency.js';
 import {
   createQuotation,
   getQuotations,
@@ -8,6 +9,7 @@ import {
   updateQuotation,
   declineQuotation,
   deleteQuotation,
+  convertQuotation,
 } from '../../controllers/quotationController.js';
 import { createQuotationSchema, updateQuotationSchema } from '../../validations/quotationValidation.js';
 
@@ -22,5 +24,6 @@ router.get('/:id', getQuotationById);
 router.patch('/:id', validate(updateQuotationSchema), updateQuotation);
 router.patch('/:id/decline', declineQuotation);
 router.delete('/:id', deleteQuotation);
+router.post('/:id/convert', idempotency, convertQuotation);
 
 export default router;

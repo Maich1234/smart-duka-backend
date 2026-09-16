@@ -4,6 +4,10 @@ import Product from '../models/Product.js';
 import { parsePagination, paginatedResult } from '../utils/pagination.js';
 import { escapeRegex } from '../utils/escapeRegex.js';
 import { signQuotationToken } from '../utils/quotationToken.js';
+import { createSaleTransaction, SaleRejection } from '../services/saleCreationService.js';
+import { CreditRejection, canMakeCreditSale } from '../services/creditService.js';
+import { CREDIT_METHOD_KEY } from '../constants/credit.js';
+import { notifyOwnersNegativeStock } from './saleController.js';
 
 /**
  * Drafting and managing quotations.
@@ -21,6 +25,9 @@ const canManageQuotations = (user) =>
 
 const canViewQuotations = (user) =>
   canManageQuotations(user) || !!user.permissions?.includes('convert_quotation_to_sale');
+
+const canConvertQuotation = (user) =>
+  user.role === 'owner' || !!user.permissions?.includes('convert_quotation_to_sale');
 
 /** Resolves the client's item list into priced lines + a subtotal, without trusting any client-sent price for a catalog line. */
 async function resolveQuotationItems(shop, items) {
@@ -220,4 +227,104 @@ export const deleteQuotation = async (req, res) => {
   }
   await quotation.deleteOne();
   res.json({ success: true, message: 'Quotation deleted' });
+};
+
+/**
+ * POST /quotations/:id/convert — turns a draft quotation into a real Sale via
+ * the shared createSaleTransaction (see saleCreationService.js), then flips
+ * the quotation to 'converted' inside that same Mongo transaction.
+ *
+ * convert_quotation_to_sale is deliberately never a backdoor around the
+ * shop's credit policy: converting to a credit sale independently requires
+ * make_credit_sale, exactly like a till credit sale would.
+ */
+export const convertQuotation = async (req, res) => {
+  if (!canConvertQuotation(req.user)) {
+    return res.status(403).json({ success: false, message: 'Permission denied' });
+  }
+
+  const shop = req.user.shop._id;
+  const { paymentMethod, mpesaTransactionId, mpesaReceiptNumber } = req.body;
+  const idempotencyKey = req.headers['x-idempotency-key'] ?? req.headers['idempotency-key'] ?? null;
+
+  const quotation = await Quotation.findOne({ _id: req.params.id, shop });
+  if (!quotation) {
+    return res.status(404).json({ success: false, message: 'Quotation not found' });
+  }
+  if (quotation.status !== 'draft') {
+    return res.status(400).json({ success: false, message: `This quotation is already ${quotation.status} and cannot be converted.` });
+  }
+
+  // Converting to a credit sale must pass through the exact same permission
+  // gate a till credit sale does — convert_quotation_to_sale alone is never
+  // enough. createSaleTransaction itself also calls canMakeCreditSale
+  // internally, but checking it here too gives a clean 403 with a message
+  // specific to conversion rather than a generic SaleRejection.
+  if (paymentMethod === CREDIT_METHOD_KEY && !canMakeCreditSale(req.user)) {
+    return res.status(403).json({
+      success: false,
+      code: 'CREDIT_PERMISSION_DENIED',
+      message: "You don't have permission to sell on credit.",
+    });
+  }
+
+  const items = quotation.items.map((i) => ({
+    productId: i.productId || undefined,
+    name: i.name,
+    quantity: i.quantity,
+    unitPrice: i.unitPrice,
+  }));
+
+  try {
+    const { saleObj, creditResult, negativeStockAlerts, creditCustomerName } = await createSaleTransaction({
+      user: req.user,
+      items,
+      paymentMethod,
+      mpesaTransactionId,
+      mpesaReceiptNumber,
+      customerId: String(quotation.customer),
+      idempotencyKey,
+      // Runs inside the same Mongo transaction as the Sale write. The
+      // status: 'draft' filter is the idempotency guard: a retried request
+      // (offline queue replay, double-tap) finds the quotation already
+      // 'converted' and this update matches nothing, aborting the whole
+      // transaction — including the Sale that was about to be created —
+      // before a second Sale can ever be committed.
+      beforeCommit: async (session, sale) => {
+        const updated = await Quotation.findOneAndUpdate(
+          { _id: quotation._id, status: 'draft' },
+          { $set: { status: 'converted', convertedSale: sale._id } },
+          { session },
+        );
+        if (!updated) {
+          throw new SaleRejection(400, 'This quotation was already converted.');
+        }
+      },
+    });
+
+    if (negativeStockAlerts.length > 0) {
+      await notifyOwnersNegativeStock(shop, req.user.name, negativeStockAlerts);
+    }
+
+    res.status(201).json({
+      success: true,
+      data: { ...saleObj, quotationId: quotation._id },
+      message: creditResult
+        ? `Sale recorded on ${creditCustomerName}'s account.`
+        : 'Quotation converted to a sale.',
+    });
+  } catch (error) {
+    if (error instanceof SaleRejection) {
+      return res.status(error.status).json({ success: false, message: error.message });
+    }
+    if (error instanceof CreditRejection) {
+      return res.status(error.status).json({
+        success: false,
+        code: error.code,
+        message: error.message,
+        ...(error.details ? { details: error.details } : {}),
+      });
+    }
+    throw error;
+  }
 };
