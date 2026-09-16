@@ -31,6 +31,7 @@ function sanitizeQuotationData(data) {
   return {
     ...data,
     shopName: sanitize(data.shopName),
+    shopAddress: sanitize(data.shopAddress),
     notes: sanitize(data.notes),
     customerSnapshot: { ...data.customerSnapshot, name: sanitize(data.customerSnapshot.name) },
     items: data.items.map((item) => ({

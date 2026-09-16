@@ -106,9 +106,11 @@ test('renderQuotationPdf sanitizes non-Latin-1 script in every free-text field b
   const cjkItemName = '修理 Repair job'; // item.name
   const cjkDescription = 'Includes 零件 parts'; // item.description
   const emojiNotes = 'Thanks for your business 😀'; // notes
+  const greekAddress = 'Nairobi Ω Road'; // shopAddress with Greek script mixed in
 
   const data = {
     ...sample,
+    shopAddress: greekAddress,
     customerSnapshot: { ...sample.customerSnapshot, name: arabicName },
     items: [{ name: cjkItemName, description: cjkDescription, quantity: 1, unitPrice: 2500, subtotal: 2500 }],
     notes: emojiNotes,
@@ -132,5 +134,6 @@ test('renderQuotationPdf sanitizes non-Latin-1 script in every free-text field b
     assert.match(drawnText, /Repair job/, `${template}: item name`);
     assert.match(drawnText, /Includes\s*parts/, `${template}: item description`);
     assert.match(drawnText, /Thanks for your business/, `${template}: notes`);
+    assert.match(drawnText, /Nairobi\s*Road/, `${template}: shop address`);
   }
 });
