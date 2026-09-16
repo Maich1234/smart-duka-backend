@@ -135,6 +135,20 @@ const shopSchema = new mongoose.Schema({
     trim: true,
     maxlength: 200,
   },
+  // Monotonic quote-number counter for this shop, bumped atomically by
+  // Quotation's pre-save hook via $inc. Same per-shop pattern as invoiceSeq
+  // below — see quoteNumberService.js for why.
+  quoteNumberSeq: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  // Which layout a quotation is rendered/printed with, owner-chosen.
+  quotationTemplate: {
+    type: String,
+    enum: ['classic', 'modern', 'minimal'],
+    default: 'classic',
+  },
   isActive: {
     type: Boolean,
     default: true,
