@@ -28,10 +28,15 @@ import {
  *
  * Wider than the credit permissions alone: a cashier picking a regular customer
  * for an ordinary cash sale needs the list, and they already hold record_sale.
- * Balances are only included for someone who may see credit (see below).
+ * A staff member drafting a quotation needs it too, since a quotation requires
+ * a real customer reference and create_quotation carries no financial effect
+ * of its own. Balances are only included for someone who may see credit (see
+ * below).
  */
 const canListCustomers = (user) =>
-  canViewCustomerAccount(user) || !!user.permissions?.includes('record_sale');
+  canViewCustomerAccount(user)
+  || !!user.permissions?.includes('record_sale')
+  || !!user.permissions?.includes('create_quotation');
 
 /** Strips the credit block for a caller who may transact but not see the book. */
 const shapeForViewer = (customer, settings, user, now) => {

@@ -607,6 +607,36 @@ test('getCustomers: a viewer who may not see credit gets no balances and no cred
   assert.equal(res.body.data[0].account, undefined);
 });
 
+test('getCustomers: a staff member with only create_quotation may list customers, without credit', async () => {
+  const filters = [];
+  stubFind(Customer, [{ _id: CUSTOMER_ID, name: 'John', credit: { outstanding: 900 } }], filters);
+  stubCount(Customer, 1);
+
+  const res = makeRes();
+  await getCustomers(
+    makeReq({ permissions: ['create_quotation'], query: { filter: 'overdue', sort: 'name', page: 1, limit: 20 } }),
+    res,
+  );
+
+  // Drafting a quotation requires picking a real customer, and create_quotation
+  // has no financial effect of its own — so the picker must not 403, but the
+  // credit filter and balances stay hidden just as for a plain record_sale grant.
+  assert.equal(res.statusCode, 200);
+  assert.equal(filters[0]['credit.status'], undefined);
+  assert.equal(res.body.data[0].credit, undefined);
+  assert.equal(res.body.data[0].account, undefined);
+});
+
+test('getCustomers: a staff member with none of the relevant permissions is refused', async () => {
+  stubFind(Customer, []);
+  stubCount(Customer);
+
+  const res = makeRes();
+  await getCustomers(makeReq({ permissions: ['view_products'], query: {} }), res);
+
+  assert.equal(res.statusCode, 403);
+});
+
 test('getCustomers: a credit viewer gets the filter, the balances and a shop-scoped query', async () => {
   const filters = [];
   stubFind(Customer, [{ _id: CUSTOMER_ID, name: 'John', isActive: true, credit: { outstanding: 900, limit: null, status: 'overdue' } }], filters);
