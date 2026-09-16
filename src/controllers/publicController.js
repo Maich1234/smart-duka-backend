@@ -3,7 +3,9 @@ import Sale from '../models/Sale.js';
 import Rating from '../models/Rating.js';
 import Shop from '../models/Shop.js';
 import SubscriptionPlan from '../models/SubscriptionPlan.js';
+import Quotation from '../models/Quotation.js';
 import { verifyReceiptToken } from '../utils/receiptToken.js';
+import { verifyQuotationToken } from '../utils/quotationToken.js';
 import { sendEmail } from '../utils/email.js';
 
 const SUPPORT_INBOX = process.env.SUPPORT_EMAIL || 'info@duqana.co.ke';
@@ -76,6 +78,45 @@ export const getPublicReceipt = async (req, res) => {
       createdAt: sale.createdAt,
       alreadyRated: !!rating,
       rating: rating ? { stars: rating.stars, comment: rating.comment } : null,
+    },
+  });
+};
+
+export const getPublicQuotation = async (req, res) => {
+  const quotationId = verifyQuotationToken(req.params.token);
+  if (!quotationId) {
+    return res.status(400).json({ success: false, message: 'Invalid or unrecognized quotation code' });
+  }
+
+  const quotation = await Quotation.findById(quotationId).populate('shop', 'name phone logoUrl currency');
+  if (!quotation) {
+    return res.status(404).json({ success: false, message: 'Quotation not found' });
+  }
+
+  res.json({
+    success: true,
+    data: {
+      quoteNumber: quotation.quoteNumber,
+      shopName: quotation.shop?.name,
+      shopPhone: quotation.shop?.phone,
+      shopLogoUrl: quotation.shop?.logoUrl,
+      currency: quotation.shop?.currency,
+      customerSnapshot: quotation.customerSnapshot,
+      items: quotation.items.map((i) => ({
+        name: i.name,
+        description: i.description,
+        quantity: i.quantity,
+        unitPrice: i.unitPrice,
+        subtotal: i.subtotal,
+      })),
+      subtotal: quotation.subtotal,
+      taxRate: quotation.taxRate,
+      taxAmount: quotation.taxAmount,
+      total: quotation.total,
+      notes: quotation.notes,
+      validUntil: quotation.validUntil,
+      status: quotation.status,
+      createdAt: quotation.createdAt,
     },
   });
 };
