@@ -19,6 +19,10 @@ export const getDepletionAnalytics = async (shopId, { windowDays = DEFAULT_WINDO
   const salesAgg = await Sale.aggregate([
     { $match: { shop: shopObjectId, status: { $nin: ['voided', 'refunded'] }, createdAt: { $gte: since } } },
     { $unwind: '$items' },
+    // A custom/service line has no catalogue product to track depletion for —
+    // without this, its `null` productId reaches `s._id.toString()` below and
+    // throws (there is no product to correlate it with anyway).
+    { $match: { 'items.productId': { $ne: null } } },
     { $group: { _id: '$items.productId', unitsSold: { $sum: '$items.quantity' } } },
   ]);
   const unitsSoldMap = new Map(salesAgg.map((s) => [s._id.toString(), s.unitsSold]));

@@ -203,7 +203,7 @@ test('products: revenue comes from the sale line, never the current price', asyn
   await getProductPerformance('64b7f1f77bcf86cd79943901', { ...range, page: 1, limit: 20 });
 
   const union = seen.pipeline.find((s) => s.$unionWith);
-  const lineProjection = union.$unionWith.pipeline[2].$project;
+  const lineProjection = union.$unionWith.pipeline[3].$project;
   // A January sale must stay at January's price — reading $sellingPrice here
   // would rewrite last year's revenue every time the shop reprices.
   assert.equal(lineProjection.revenue, '$items.subtotal');

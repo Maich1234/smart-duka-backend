@@ -347,6 +347,11 @@ export async function getProductPerformance(shopId, { start, end, sort = 'most_s
         pipeline: [
           { $match: { shop, status: { $in: REVENUE_STATUSES }, createdAt: { $gte: start, $lt: end } } },
           { $unwind: '$items' },
+          // A custom/service line (no catalogue product) has no productId to
+          // report performance against — without this, every such line across
+          // every sale in the period collapses into one misleading `_id: null`
+          // "product" row in the $group below.
+          { $match: { 'items.productId': { $ne: null } } },
           {
             $project: {
               _id: 0,

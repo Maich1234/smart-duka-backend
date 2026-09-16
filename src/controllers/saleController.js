@@ -229,11 +229,29 @@ export const createSale = async (req, res) => {
       // One round trip for the whole basket instead of one per line. A 20-item
       // cart used to be 20 sequential queries holding the transaction (and its
       // locks) open the entire time, which itself provoked write conflicts.
-      const productIds = [...new Set(items.map((i) => String(i.productId)))];
+      const productIds = [...new Set(items.filter((i) => i.productId).map((i) => String(i.productId)))];
       const products = await Product.find({ _id: { $in: productIds }, shop }).session(session);
       for (const product of products) productCache.set(product._id.toString(), product);
 
       for (const item of items) {
+        if (!item.productId) {
+          const quantity = Number(item.quantity);
+          const unitPrice = Number(item.unitPrice);
+          const subtotalLine = Math.round(quantity * unitPrice * 100) / 100;
+          totalAmount += subtotalLine;
+          saleItems.push({
+            productName: item.name,
+            quantity,
+            unitPrice,
+            unitCost: null,
+            costTotal: null,
+            subtotal: subtotalLine,
+            discountAmount: 0,
+            commissionAmount: 0,
+            productType: 'service',
+          });
+          continue;
+        }
         const product = productCache.get(String(item.productId));
         if (!product) {
           throw new SaleRejection(400, `Product with ID ${item.productId} not found in this shop`);

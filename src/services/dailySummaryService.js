@@ -60,6 +60,10 @@ export const generateDailySummary = async (shopId, dateStr) => {
     Sale.aggregate([
       { $match: { ...dayMatch, status: { $in: REVENUE_STATUSES } } },
       { $unwind: '$items' },
+      // A custom/service line has no catalogue product to report against —
+      // without this, every such line in the day collapses into one
+      // misleading `_id: null` row that would surface as a "best seller".
+      { $match: { 'items.productId': { $ne: null } } },
       {
         $group: {
           _id: '$items.productId',
@@ -132,6 +136,9 @@ export const generateDailySummary = async (shopId, dateStr) => {
     Sale.aggregate([
       { $match: { shop, createdAt: { $gte: new Date(end.getTime() - SLOW_MOVER_WINDOW_DAYS * 86400000), $lt: end }, status: { $in: REVENUE_STATUSES } } },
       { $unwind: '$items' },
+      // A custom/service line's `null` productId would otherwise become the
+      // string "null" below and crash the ObjectId cast a few lines down.
+      { $match: { 'items.productId': { $ne: null } } },
       { $group: { _id: '$items.productId' } },
     ]),
     // Most-recent-first, excluding today — feeds the trailing-average
