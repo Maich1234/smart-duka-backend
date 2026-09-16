@@ -8,6 +8,7 @@ import { createSaleTransaction, SaleRejection } from '../services/saleCreationSe
 import { CreditRejection, canMakeCreditSale } from '../services/creditService.js';
 import { CREDIT_METHOD_KEY } from '../constants/credit.js';
 import { notifyOwnersNegativeStock } from './saleController.js';
+import { renderQuotationPdf } from '../services/quotationPdfService.js';
 
 /**
  * Drafting and managing quotations.
@@ -76,6 +77,23 @@ function present(quotation) {
   const obj = quotation.toObject ? quotation.toObject() : quotation;
   return { ...obj, publicToken: signQuotationToken(obj._id) };
 }
+
+/** Shapes a quotation + its shop into renderQuotationPdf's input — shared with publicController.js's getPublicQuotationPdf. */
+export const toPdfData = (quotation, shop) => ({
+  quoteNumber: quotation.quoteNumber,
+  shopName: shop.name,
+  shopPhone: shop.phone,
+  currency: shop.currency,
+  customerSnapshot: quotation.customerSnapshot,
+  items: quotation.items,
+  subtotal: quotation.subtotal,
+  taxRate: quotation.taxRate,
+  taxAmount: quotation.taxAmount,
+  total: quotation.total,
+  notes: quotation.notes,
+  validUntil: quotation.validUntil,
+  createdAt: quotation.createdAt,
+});
 
 export const createQuotation = async (req, res) => {
   if (!canManageQuotations(req.user)) {
@@ -155,6 +173,28 @@ export const getQuotationById = async (req, res) => {
   const quotation = await Quotation.findOne({ _id: req.params.id, shop });
   if (!quotation) return res.status(404).json({ success: false, message: 'Quotation not found' });
   res.json({ success: true, data: present(quotation) });
+};
+
+/**
+ * GET /quotations/:id/pdf — the same data getQuotationById returns, rendered
+ * as a downloadable PDF instead of JSON. Gated by canViewQuotations like
+ * getQuotationById, since it exposes the identical quotation.
+ */
+export const getQuotationPdf = async (req, res) => {
+  if (!canViewQuotations(req.user)) {
+    return res.status(403).json({ success: false, message: 'Permission denied' });
+  }
+
+  const quotation = await Quotation.findOne({ _id: req.params.id, shop: req.user.shop._id });
+  if (!quotation) return res.status(404).json({ success: false, message: 'Quotation not found' });
+
+  const buffer = await renderQuotationPdf(
+    toPdfData(quotation, req.user.shop),
+    req.user.shop.quotationTemplate || 'classic',
+  );
+  res.set('Content-Type', 'application/pdf');
+  res.set('Content-Disposition', `inline; filename="${quotation.quoteNumber}.pdf"`);
+  res.send(buffer);
 };
 
 export const updateQuotation = async (req, res) => {

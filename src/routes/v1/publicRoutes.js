@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import {
   getPublicReceipt,
   getPublicQuotation,
+  getPublicQuotationPdf,
   submitPublicRating,
   verifyBookDocument,
   submitContactMessage,
@@ -56,6 +57,7 @@ router.use(publicLimiter);
 router.get('/receipt/:token', getPublicReceipt);
 router.post('/receipt/:token/rating', submitPublicRating);
 router.get('/quotation/:token', getPublicQuotation);
+router.get('/quotation/:token/pdf', getPublicQuotationPdf);
 // Reached by scanning the QR on a downloaded financial record.
 router.get('/books/verify/:token', verifyBookDocument);
 // The marketing site's contact form.

@@ -10,6 +10,7 @@ import {
   createQuotation,
   getQuotations,
   getQuotationById,
+  getQuotationPdf,
   updateQuotation,
   declineQuotation,
   deleteQuotation,
@@ -44,8 +45,11 @@ function makeRes() {
   return {
     statusCode: 200,
     body: undefined,
+    headers: {},
     status(code) { this.statusCode = code; return this; },
     json(body) { this.body = body; return this; },
+    set(key, value) { this.headers[key] = value; return this; },
+    send(body) { this.body = body; return this; },
   };
 }
 
@@ -296,6 +300,75 @@ test('getQuotationById: returns the quotation with a signed publicToken', async 
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.data.total, 750);
   assert.equal(typeof res.body.data.publicToken, 'string');
+});
+
+// ── getQuotationPdf ──────────────────────────────────────────────────────────
+
+/** A quotation doc carrying every field renderQuotationPdf's input shape needs. */
+function pdfQuotation(overrides = {}) {
+  return quotationDoc({
+    _id: 'q1',
+    quoteNumber: 'QUO-2609-00001',
+    customerSnapshot: { name: 'Jane Doe', phone: '0700000000', email: '' },
+    items: [{ name: 'Haircut', description: '', quantity: 1, unitPrice: 500, subtotal: 500 }],
+    subtotal: 500,
+    taxRate: 0,
+    taxAmount: 0,
+    total: 500,
+    notes: '',
+    validUntil: new Date('2026-12-01'),
+    createdAt: new Date('2026-09-16'),
+    ...overrides,
+  });
+}
+
+test('getQuotationPdf: rejected without create_quotation or convert_quotation_to_sale, before any lookup', async () => {
+  const filters = [];
+  stubQuotationFindOne(null, filters);
+  const res = makeRes();
+  await getQuotationPdf(makeReq({ permissions: [] }), res);
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(filters.length, 0, 'the database must not be touched before the permission check');
+});
+
+test('getQuotationPdf: another shop\'s quotation, or a nonexistent one, is simply not found', async () => {
+  const filters = [];
+  stubQuotationFindOne(null, filters);
+  const res = makeRes();
+  await getQuotationPdf(makeReq({ role: 'owner', params: { id: 'q1' } }), res);
+
+  assert.equal(res.statusCode, 404);
+  assert.equal(String(filters[0].shop), SHOP_ID);
+});
+
+test('getQuotationPdf: streams a real PDF buffer with the correct headers', async () => {
+  stubQuotationFindOne(pdfQuotation());
+  const res = makeRes();
+  await getQuotationPdf(makeReq({
+    role: 'owner',
+    params: { id: 'q1' },
+    shop: { name: "Jane's Salon", phone: '0700000000', currency: 'KES', quotationTemplate: 'modern' },
+  }), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers['Content-Type'], 'application/pdf');
+  assert.match(res.headers['Content-Disposition'], /QUO-2609-00001\.pdf/);
+  assert.equal(Buffer.isBuffer(res.body), true);
+  assert.equal(res.body.subarray(0, 5).toString(), '%PDF-');
+});
+
+test('getQuotationPdf: defaults to the classic template when the shop predates quotationTemplate', async () => {
+  stubQuotationFindOne(pdfQuotation());
+  const res = makeRes();
+  await getQuotationPdf(makeReq({
+    role: 'owner',
+    params: { id: 'q1' },
+    shop: { name: "Jane's Salon", phone: '0700000000', currency: 'KES' }, // no quotationTemplate
+  }), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.subarray(0, 5).toString(), '%PDF-');
 });
 
 // ── updateQuotation ──────────────────────────────────────────────────────────

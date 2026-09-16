@@ -7,6 +7,7 @@ import {
   createQuotation,
   getQuotations,
   getQuotationById,
+  getQuotationPdf,
   updateQuotation,
   declineQuotation,
   deleteQuotation,
@@ -22,6 +23,7 @@ router.use(staffOrOwner);
 router.post('/', validate(createQuotationSchema), createQuotation);
 router.get('/', getQuotations);
 router.get('/:id', getQuotationById);
+router.get('/:id/pdf', getQuotationPdf);
 router.patch('/:id', validate(updateQuotationSchema), updateQuotation);
 router.patch('/:id/decline', declineQuotation);
 router.delete('/:id', deleteQuotation);

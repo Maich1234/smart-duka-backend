@@ -1,7 +1,7 @@
 import { test, mock, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import Quotation from '../src/models/Quotation.js';
-import { getPublicQuotation } from '../src/controllers/publicController.js';
+import { getPublicQuotation, getPublicQuotationPdf } from '../src/controllers/publicController.js';
 import { signQuotationToken } from '../src/utils/quotationToken.js';
 
 // signQuotationToken/verifyQuotationToken sign a JWT for every call, so any
@@ -23,8 +23,11 @@ function makeRes() {
   return {
     statusCode: 200,
     body: undefined,
+    headers: {},
     status(code) { this.statusCode = code; return this; },
     json(body) { this.body = body; return this; },
+    set(key, value) { this.headers[key] = value; return this; },
+    send(body) { this.body = body; return this; },
   };
 }
 
@@ -116,4 +119,66 @@ test('getPublicQuotation: returns 404 when the token is valid but the quotation 
   await getPublicQuotation(makeReq(token), res);
 
   assert.equal(res.statusCode, 404);
+});
+
+// ── getPublicQuotationPdf ────────────────────────────────────────────────────
+
+/** A quotation-with-populated-shop shape carrying every field renderQuotationPdf's input needs. */
+function pdfQuotation(shopOverrides = {}) {
+  return {
+    _id: QUOTATION_ID,
+    quoteNumber: 'QUO-2609-00001',
+    shop: { name: 'Jane\'s Salon', phone: '0700000000', currency: 'KES', quotationTemplate: 'minimal', ...shopOverrides },
+    customerSnapshot: { name: 'Amina', phone: '0711111111', email: '' },
+    items: [{ name: 'Haircut', description: '', quantity: 1, unitPrice: 500, subtotal: 500 }],
+    subtotal: 500,
+    taxRate: 0,
+    taxAmount: 0,
+    total: 500,
+    notes: '',
+    validUntil: new Date('2026-12-01'),
+    createdAt: new Date('2026-09-01'),
+  };
+}
+
+test('getPublicQuotationPdf: returns 400 for a garbage token, without touching the database', async () => {
+  const filters = [];
+  stubQuotationFindById(null, filters);
+  const res = makeRes();
+  await getPublicQuotationPdf(makeReq('not-a-real-token'), res);
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(filters.length, 0, 'a token that fails verification must never reach the database');
+});
+
+test('getPublicQuotationPdf: returns 404 when the token is valid but the quotation is gone', async () => {
+  stubQuotationFindById(null);
+  const token = signQuotationToken(QUOTATION_ID);
+  const res = makeRes();
+  await getPublicQuotationPdf(makeReq(token), res);
+
+  assert.equal(res.statusCode, 404);
+});
+
+test('getPublicQuotationPdf: streams a real PDF buffer with no auth', async () => {
+  stubQuotationFindById(pdfQuotation());
+  const token = signQuotationToken(QUOTATION_ID);
+  const res = makeRes();
+  await getPublicQuotationPdf(makeReq(token), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers['Content-Type'], 'application/pdf');
+  assert.match(res.headers['Content-Disposition'], /QUO-2609-00001\.pdf/);
+  assert.equal(Buffer.isBuffer(res.body), true);
+  assert.equal(res.body.subarray(0, 5).toString(), '%PDF-');
+});
+
+test('getPublicQuotationPdf: defaults to the classic template when the shop predates quotationTemplate', async () => {
+  stubQuotationFindById(pdfQuotation({ quotationTemplate: undefined }));
+  const token = signQuotationToken(QUOTATION_ID);
+  const res = makeRes();
+  await getPublicQuotationPdf(makeReq(token), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.subarray(0, 5).toString(), '%PDF-');
 });
