@@ -102,6 +102,7 @@ function classicTemplate(doc, data) {
   doc.fontSize(20).fillColor('#1a1a1a').font('Helvetica-Bold').text(data.shopName, 50, 50);
   doc.fontSize(9).font('Helvetica').fillColor('#666');
   if (data.shopPhone) doc.text(data.shopPhone, 50, 74);
+  if (data.shopAddress) doc.text(data.shopAddress, 50, 88);
   doc.fontSize(16).fillColor('#1a1a1a').font('Helvetica-Bold').text('QUOTATION', 400, 50, { width: 145, align: 'right' });
   doc.fontSize(9).font('Helvetica').fillColor('#666')
     .text(data.quoteNumber, 400, 70, { width: 145, align: 'right' })
@@ -123,6 +124,7 @@ function modernTemplate(doc, data) {
   doc.fontSize(20).fillColor('#ffffff').font('Helvetica-Bold').text(data.shopName, 50, 30);
   doc.fontSize(9).fillColor('#9ca3af').font('Helvetica');
   if (data.shopPhone) doc.text(data.shopPhone, 50, 56);
+  if (data.shopAddress) doc.text(data.shopAddress, 50, 70);
   doc.fontSize(14).fillColor('#ffffff').font('Helvetica-Bold').text('QUOTATION', 400, 30, { width: 145, align: 'right' });
   doc.fontSize(9).fillColor('#9ca3af').font('Helvetica').text(data.quoteNumber, 400, 50, { width: 145, align: 'right' });
 
@@ -137,12 +139,20 @@ function modernTemplate(doc, data) {
 function minimalTemplate(doc, data) {
   doc.fontSize(11).fillColor('#1a1a1a').font('Helvetica').text(data.shopName, 50, 50);
   doc.fontSize(9).fillColor('#999').text(`Quotation ${data.quoteNumber} · ${formatDate(data.createdAt)}`, 50, 66);
-  doc.moveTo(50, 90).lineTo(545, 90).strokeColor('#eeeeee').stroke();
+  // Unlike classic/modern, this template had no existing shopPhone line to
+  // anchor shopAddress after, so it's drawn as its own line here and the
+  // elements below shift down to make room for it, only when present.
+  let offset = 0;
+  if (data.shopAddress) {
+    doc.fontSize(9).fillColor('#999').text(data.shopAddress, 50, 80);
+    offset = 14;
+  }
+  doc.moveTo(50, 90 + offset).lineTo(545, 90 + offset).strokeColor('#eeeeee').stroke();
 
-  doc.fontSize(9).fillColor('#999').text('Bill to', 50, 105);
-  doc.fontSize(11).fillColor('#1a1a1a').text(data.customerSnapshot.name, 50, 118);
+  doc.fontSize(9).fillColor('#999').text('Bill to', 50, 105 + offset);
+  doc.fontSize(11).fillColor('#1a1a1a').text(data.customerSnapshot.name, 50, 118 + offset);
 
-  const afterTable = drawItemsTable(doc, data, { headerColor: '#374151', top: 160 });
+  const afterTable = drawItemsTable(doc, data, { headerColor: '#374151', top: 160 + offset });
   drawFooter(doc, data, afterTable);
 }
 

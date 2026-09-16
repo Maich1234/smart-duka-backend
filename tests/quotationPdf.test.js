@@ -61,6 +61,7 @@ const sample = {
   quoteNumber: 'QUO-2609-00001',
   shopName: 'Test Plumbing Co',
   shopPhone: '0712345678',
+  shopAddress: '123 Moi Avenue, Nairobi',
   currency: 'KES',
   customerSnapshot: { name: 'Jane Doe', phone: '0700000000', email: '' },
   items: [{ name: 'Pipe repair', description: '', quantity: 1, unitPrice: 2500, subtotal: 2500 }],
@@ -84,6 +85,21 @@ for (const template of ['classic', 'modern', 'minimal']) {
 test('renderQuotationPdf rejects an unknown template name', async () => {
   await assert.rejects(() => renderQuotationPdf(sample, 'nonexistent'));
 });
+
+for (const template of ['classic', 'modern', 'minimal']) {
+  test(`renderQuotationPdf draws shopAddress in the ${template} template when present`, async () => {
+    const buffer = await renderQuotationPdf(sample, template);
+    const { drawnText } = decodePdfTextStreams(buffer);
+    assert.match(drawnText, /123 Moi Avenue, Nairobi/);
+  });
+
+  test(`renderQuotationPdf omits shopAddress in the ${template} template when absent`, async () => {
+    const { shopAddress, ...withoutAddress } = sample;
+    const buffer = await renderQuotationPdf(withoutAddress, template);
+    const { drawnText } = decodePdfTextStreams(buffer);
+    assert.doesNotMatch(drawnText, /Moi Avenue/);
+  });
+}
 
 test('renderQuotationPdf sanitizes non-Latin-1 script in every free-text field before drawing', async () => {
   const arabicName = 'Ahmed مصطفى Traders'; // customer name with Arabic script mixed in

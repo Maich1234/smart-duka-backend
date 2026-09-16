@@ -52,7 +52,7 @@ test('getPublicQuotation: never exposes productId or cost fields, even when the 
   stubQuotationFindById({
     _id: QUOTATION_ID,
     quoteNumber: 'QUO-2609-00001',
-    shop: { name: 'Jane\'s Salon', phone: '0700000000', logoUrl: 'https://x/logo.png', currency: 'KES' },
+    shop: { name: 'Jane\'s Salon', phone: '0700000000', address: '5th Ave, Nairobi', logoUrl: 'https://x/logo.png', currency: 'KES' },
     customerSnapshot: { name: 'Amina', phone: '0711111111', email: '' },
     items: [
       {
@@ -89,6 +89,7 @@ test('getPublicQuotation: never exposes productId or cost fields, even when the 
   assert.equal(res.body.data.quoteNumber, 'QUO-2609-00001');
   assert.equal(res.body.data.shopName, 'Jane\'s Salon');
   assert.equal(res.body.data.shopPhone, '0700000000');
+  assert.equal(res.body.data.shopAddress, '5th Ave, Nairobi');
   assert.equal(res.body.data.shopLogoUrl, 'https://x/logo.png');
   assert.deepEqual(res.body.data.customerSnapshot, { name: 'Amina', phone: '0711111111', email: '' });
   assert.deepEqual(res.body.data.items[0], {
@@ -128,7 +129,7 @@ function pdfQuotation(shopOverrides = {}) {
   return {
     _id: QUOTATION_ID,
     quoteNumber: 'QUO-2609-00001',
-    shop: { name: 'Jane\'s Salon', phone: '0700000000', currency: 'KES', quotationTemplate: 'minimal', ...shopOverrides },
+    shop: { name: 'Jane\'s Salon', phone: '0700000000', address: '5th Ave, Nairobi', currency: 'KES', quotationTemplate: 'minimal', ...shopOverrides },
     customerSnapshot: { name: 'Amina', phone: '0711111111', email: '' },
     items: [{ name: 'Haircut', description: '', quantity: 1, unitPrice: 500, subtotal: 500 }],
     subtotal: 500,

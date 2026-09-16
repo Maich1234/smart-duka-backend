@@ -85,6 +85,7 @@ export const toPdfData = (quotation, shop) => ({
   quoteNumber: quotation.quoteNumber,
   shopName: shop.name,
   shopPhone: shop.phone,
+  shopAddress: shop.address,
   currency: shop.currency,
   customerSnapshot: quotation.customerSnapshot,
   items: quotation.items,

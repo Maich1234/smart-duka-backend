@@ -90,7 +90,7 @@ export const getPublicQuotation = async (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid or unrecognized quotation code' });
   }
 
-  const quotation = await Quotation.findById(quotationId).populate('shop', 'name phone logoUrl currency');
+  const quotation = await Quotation.findById(quotationId).populate('shop', 'name phone address logoUrl currency');
   if (!quotation) {
     return res.status(404).json({ success: false, message: 'Quotation not found' });
   }
@@ -101,6 +101,7 @@ export const getPublicQuotation = async (req, res) => {
       quoteNumber: quotation.quoteNumber,
       shopName: quotation.shop?.name,
       shopPhone: quotation.shop?.phone,
+      shopAddress: quotation.shop?.address,
       shopLogoUrl: quotation.shop?.logoUrl,
       currency: quotation.shop?.currency,
       customerSnapshot: quotation.customerSnapshot,
@@ -134,7 +135,7 @@ export const getPublicQuotationPdf = async (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid or unrecognized quotation code' });
   }
 
-  const quotation = await Quotation.findById(quotationId).populate('shop', 'name phone quotationTemplate currency');
+  const quotation = await Quotation.findById(quotationId).populate('shop', 'name phone address quotationTemplate currency');
   if (!quotation) {
     return res.status(404).json({ success: false, message: 'Quotation not found' });
   }

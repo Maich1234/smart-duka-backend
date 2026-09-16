@@ -12,6 +12,7 @@ import {
   getQuotations,
   getQuotationById,
   getQuotationPdf,
+  toPdfData,
   sendQuotationEmail,
   updateQuotation,
   declineQuotation,
@@ -350,7 +351,7 @@ test('getQuotationPdf: streams a real PDF buffer with the correct headers', asyn
   await getQuotationPdf(makeReq({
     role: 'owner',
     params: { id: 'q1' },
-    shop: { name: "Jane's Salon", phone: '0700000000', currency: 'KES', quotationTemplate: 'modern' },
+    shop: { name: "Jane's Salon", phone: '0700000000', address: '5th Ave, Nairobi', currency: 'KES', quotationTemplate: 'modern' },
   }), res);
 
   assert.equal(res.statusCode, 200);
@@ -358,6 +359,14 @@ test('getQuotationPdf: streams a real PDF buffer with the correct headers', asyn
   assert.match(res.headers['Content-Disposition'], /QUO-2609-00001\.pdf/);
   assert.equal(Buffer.isBuffer(res.body), true);
   assert.equal(res.body.subarray(0, 5).toString(), '%PDF-');
+});
+
+test('toPdfData: includes shopAddress next to shopPhone', () => {
+  const quotation = pdfQuotation();
+  const data = toPdfData(quotation, { name: "Jane's Salon", phone: '0700000000', address: '5th Ave, Nairobi', currency: 'KES' });
+
+  assert.equal(data.shopPhone, '0700000000');
+  assert.equal(data.shopAddress, '5th Ave, Nairobi');
 });
 
 test('getQuotationPdf: defaults to the classic template when the shop predates quotationTemplate', async () => {
