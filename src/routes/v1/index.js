@@ -28,6 +28,8 @@ import internalRoutes from './internalRoutes.js';
 import billingEventRoutes from './billingEventRoutes.js';
 import businessRoutes from './businessRoutes.js';
 import assetRoutes from './assetRoutes.js';
+import customerRoutes from './customerRoutes.js';
+import creditRoutes from './creditRoutes.js';
 
 const router = express.Router();
 
@@ -60,5 +62,7 @@ router.use('/internal', internalRoutes);
 router.use('/billing-events', billingEventRoutes);
 router.use('/business', businessRoutes);
 router.use('/assets', assetRoutes);
+router.use('/customers', customerRoutes);
+router.use('/credit', creditRoutes);
 
 export default router;

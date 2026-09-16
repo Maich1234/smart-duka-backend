@@ -1,6 +1,7 @@
 import Joi from 'joi';
 import { VALID_COUNTRY_CODES, VALID_CURRENCY_CODES } from '../constants/presets.js';
 import { METHOD_ICONS, METHOD_KEY_PATTERN } from '../constants/salePaymentMethods.js';
+import { creditSettingsSchema } from './creditValidation.js';
 
 // The till's buttons, sent as a complete ordered list (the manager UI edits
 // the whole set at once, so a partial merge would make removal impossible).
@@ -48,4 +49,8 @@ export const updateShopConfigSchema = Joi.object({
   aiEnabled: Joi.boolean().optional(),
   barcodeScanningEnabled: Joi.boolean().optional(),
   paymentMethods: paymentMethodsSchema.optional(),
+  // Partial by design — the Settings screen writes one field at a time. The
+  // controller merges rather than replaces, so sending { enabled: true } never
+  // resets the limit or the collection period.
+  creditSettings: creditSettingsSchema.optional(),
 }).unknown(false);

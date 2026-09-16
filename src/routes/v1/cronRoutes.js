@@ -8,6 +8,7 @@ import {
   subscriptionPaymentReconcile,
   billingEventsSweep,
   accountDeletions,
+  creditOverdueSweep,
 } from '../../controllers/cronController.js';
 
 const router = express.Router();
@@ -22,5 +23,8 @@ router.get('/push-campaign-dispatch', pushCampaignDispatch);
 router.get('/subscription-payment-reconcile', subscriptionPaymentReconcile);
 router.get('/billing-events-sweep', billingEventsSweep);
 router.get('/account-deletions', accountDeletions);
+// Flags matured credit debts and tells the owner. Enforcement of the overdue
+// credit block does not depend on this — see the handler.
+router.get('/credit-overdue', creditOverdueSweep);
 
 export default router;

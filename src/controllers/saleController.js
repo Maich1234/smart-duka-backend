@@ -19,6 +19,17 @@ import {
   enabledMethodKeys,
   methodLabel,
 } from '../constants/salePaymentMethods.js';
+import Customer from '../models/Customer.js';
+import CreditTransaction from '../models/CreditTransaction.js';
+import { CREDIT_METHOD_KEY, DEBT_TX_TYPES, resolveCreditSettings } from '../constants/credit.js';
+import {
+  CreditRejection,
+  assertProductsCreditEligible,
+  bookDebt,
+  canMakeCreditSale,
+  reverseDebt,
+  summariseAccount,
+} from '../services/creditService.js';
 
 /**
  * A client-facing rejection (out of stock, unknown product) raised from inside
@@ -64,13 +75,22 @@ export const createSale = async (req, res) => {
     return res.status(403).json({ success: false, message: 'Permission denied' });
   }
 
-  const { items, paymentMethod, mpesaTransactionId, mpesaReceiptNumber } = req.body;
+  const { items, paymentMethod, mpesaTransactionId, mpesaReceiptNumber, customerId } = req.body;
   const shop = req.user.shop._id;
+
+  // Credit is behaviour, not a label: once the owner switches the module on,
+  // the till may take credit whether or not they ever added the button to
+  // their own list. (Before the module existed, `credit` was merely one of the
+  // suggested buttons in salePaymentMethods.js, recording a sale and nothing
+  // else — shops that used it that way keep working exactly as before while
+  // the module is off. See creditSale below.)
+  const creditSettings = resolveCreditSettings(req.user.shop);
+  const isCreditSale = paymentMethod === CREDIT_METHOD_KEY && creditSettings.enabled;
 
   // The shop's own button list is the authority on what's a valid method —
   // Joi only checked the key's shape, since it can't see the shop.
   const allowedMethods = enabledMethodKeys(req.user.shop);
-  if (!allowedMethods.includes(paymentMethod)) {
+  if (!allowedMethods.includes(paymentMethod) && !isCreditSale) {
     // Coded so clients can react (refetch the shop's till buttons, drop the
     // stale selection) rather than just surfacing the message — this fires
     // whenever an owner removes/disables a method after it was already
@@ -81,6 +101,46 @@ export const createSale = async (req, res) => {
       code: 'PAYMENT_METHOD_UNAVAILABLE',
       message: `'${paymentMethod}' is not one of this shop's payment methods.`,
     });
+  }
+
+  // ── Credit preconditions ────────────────────────────────────────────────
+  // Everything cheap and shop-independent is settled here, before a
+  // transaction is opened: permission, a named customer, and that the customer
+  // belongs to this shop. The limit itself is checked inside the transaction,
+  // where it can be checked atomically.
+  let creditCustomer = null;
+  if (paymentMethod === CREDIT_METHOD_KEY && creditSettings.enabled) {
+    if (!canMakeCreditSale(req.user)) {
+      return res.status(403).json({
+        success: false,
+        code: 'CREDIT_PERMISSION_DENIED',
+        message: 'You don\'t have permission to sell on credit.',
+      });
+    }
+    if (!customerId) {
+      return res.status(400).json({
+        success: false,
+        code: 'CUSTOMER_REQUIRED',
+        message: 'Choose a customer before selling on credit.',
+      });
+    }
+    // Scoped to the shop from the session, never from the request — a customer
+    // id from another shop simply isn't found here.
+    creditCustomer = await Customer.findOne({ _id: customerId, shop }).select('_id name isActive').lean();
+    if (!creditCustomer) {
+      return res.status(404).json({ success: false, code: 'CUSTOMER_NOT_FOUND', message: 'Customer not found' });
+    }
+  }
+
+  // A customer on an ordinary (non-credit) sale: optional, and equally
+  // shop-scoped. Lets a shop attach a regular to a cash purchase without that
+  // sale becoming a debt.
+  let saleCustomer = creditCustomer;
+  if (!saleCustomer && customerId) {
+    saleCustomer = await Customer.findOne({ _id: customerId, shop }).select('_id name').lean();
+    if (!saleCustomer) {
+      return res.status(404).json({ success: false, code: 'CUSTOMER_NOT_FOUND', message: 'Customer not found' });
+    }
   }
 
   // With shift management on, staff must be clocked in before selling so
@@ -121,12 +181,19 @@ export const createSale = async (req, res) => {
       }
     }
   }
+  // The same key the idempotency middleware keyed this request on. Stamped
+  // onto the ledger row under a unique index, so a retry can never book a
+  // second debt even after the IdempotencyRecord has aged out of its 72h
+  // window — a debt outliving its dedupe record is exactly the case that must
+  // not double-charge a customer.
+  const idempotencyKey = req.headers['x-idempotency-key'] ?? req.headers['idempotency-key'] ?? null;
   const session = await mongoose.startSession();
 
   try {
     let sale;
     let saleItems;
     let negativeStockAlerts;
+    let creditResult;
 
     // withTransaction (not a bare startTransaction/commitTransaction pair)
     // because MongoDB raises a WriteConflict whenever two transactions touch
@@ -152,6 +219,7 @@ export const createSale = async (req, res) => {
       let totalCommission = 0;
       saleItems = [];
       negativeStockAlerts = [];
+      creditResult = null;
       // Keeps every product/bundle-component doc touched during this sale in
       // memory so it's mutated and saved exactly once, even when referenced
       // by more than one cart line (e.g. shared bundle components). Rebuilt
@@ -209,14 +277,28 @@ export const createSale = async (req, res) => {
         await doc.save({ session });
       }
 
+      // Product credit eligibility, checked against the products this
+      // transaction actually loaded rather than anything the client asserted.
+      // Under SELECTED_PRODUCTS an unflagged product fails closed and the
+      // rejection names it, so the cashier isn't left hunting the cart.
+      if (isCreditSale) {
+        assertProductsCreditEligible([...productCache.values()], creditSettings);
+      }
+
       [sale] = await Sale.create([{
         shop,
         items: saleItems,
         totalAmount,
         totalCommission,
         paymentMethod,
-        paymentMethodLabel: methodLabel(req.user.shop, paymentMethod),
+        paymentMethodLabel: isCreditSale && !allowedMethods.includes(paymentMethod)
+          // The shop never added a Credit button, so there is no label of
+          // theirs to snapshot. Name it plainly rather than leaving the
+          // receipt blank.
+          ? 'Credit'
+          : methodLabel(req.user.shop, paymentMethod),
         staff: req.user._id,
+        ...(saleCustomer ? { customer: saleCustomer._id, customerName: saleCustomer.name } : {}),
         ...(activeShift ? { shift: activeShift._id } : {}),
         ...(mpesaTx ? {
           mpesaTransactionId: mpesaTx._id,
@@ -248,19 +330,68 @@ export const createSale = async (req, res) => {
           throw new SaleRejection(400, 'This M-Pesa transaction has already been linked to a sale.');
         }
       }
+
+      // The debt itself — booked last, with the server's own totalAmount and a
+      // server-computed due date. Nothing the client sent about limits,
+      // balances or dates is consulted anywhere in this path.
+      //
+      // Inside the same transaction as the stock movement and the sale row, so
+      // the three commit together or not at all: a shop can never end up with
+      // stock gone and no debt recorded, or a debt recorded against a sale that
+      // rolled back. bookDebt's own guard is what serializes two tills selling
+      // to the same customer at once — see creditService.
+      if (isCreditSale) {
+        creditResult = await bookDebt({
+          shop: req.user.shop,
+          customerId: creditCustomer._id,
+          amount: totalAmount,
+          settings: creditSettings,
+          user: req.user,
+          session,
+          saleId: sale._id,
+          shiftId: activeShift?._id ?? null,
+          clientRef: typeof idempotencyKey === 'string' ? idempotencyKey : null,
+        });
+      }
     });
 
     const saleObj = sale.toObject();
     saleObj.receiptToken = signReceiptToken(sale._id);
+    if (creditResult) {
+      // What the receipt and the confirmation need: when it's due, and where
+      // the customer now stands. Server-computed, so the client displays it
+      // rather than deriving it.
+      saleObj.credit = {
+        transactionId: creditResult.transaction._id,
+        dueAt: creditResult.transaction.dueAt,
+        account: summariseAccount(creditResult.customer, creditSettings),
+      };
+    }
     if (negativeStockAlerts.length > 0) {
       // Awaited (not fire-and-forget): this backend runs on Vercel, which
       // kills async work started after the response goes out.
       await notifyOwnersNegativeStock(shop, req.user.name, negativeStockAlerts);
     }
-    res.status(201).json({ success: true, data: saleObj, message: 'Sale recorded successfully' });
+    res.status(201).json({
+      success: true,
+      data: saleObj,
+      message: creditResult
+        ? `Sale recorded on ${creditCustomer.name}'s account.`
+        : 'Sale recorded successfully',
+    });
   } catch (error) {
     if (error instanceof SaleRejection) {
       return res.status(error.status).json({ success: false, message: error.message });
+    }
+    // A credit refusal (over limit, blocked, overdue, ineligible product)
+    // carries the code and the figures the till needs to explain itself.
+    if (error instanceof CreditRejection) {
+      return res.status(error.status).json({
+        success: false,
+        code: error.code,
+        message: error.message,
+        ...(error.details ? { details: error.details } : {}),
+      });
     }
     throw error;
   } finally {
@@ -303,6 +434,52 @@ export const voidSale = async (req, res) => {
       return res.status(400).json({ success: false, message: why });
     }
 
+    // A voided credit sale must take its debt with it, in the same transaction
+    // that restores the stock — otherwise the shop has the goods back and the
+    // customer still owes for them.
+    //
+    // Refused once any repayment has landed against it: unwinding a debt the
+    // customer has already partly settled is a refund decision, not a void,
+    // and quietly cancelling it would discard the record of money that
+    // genuinely changed hands. reverseDebt says so and points at the reversal
+    // flow, which is owner-only and demands a reason.
+    let creditReversal = null;
+    if (sale.customer) {
+      const debt = await CreditTransaction.findOne({
+        sale: sale._id,
+        shop,
+        type: { $in: DEBT_TX_TYPES },
+        status: 'outstanding',
+      }).session(session);
+
+      if (debt) {
+        try {
+          creditReversal = await reverseDebt({
+            shop: req.user.shop,
+            transaction: debt,
+            user: req.user,
+            session,
+            reason: req.body?.reason
+              ? `Sale voided: ${String(req.body.reason).slice(0, 260)}`
+              : 'Sale voided',
+          });
+        } catch (error) {
+          if (error instanceof CreditRejection) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(error.status).json({
+              success: false,
+              code: error.code,
+              message: error.code === 'DEBT_PARTLY_REPAID'
+                ? 'This credit sale has already been partly repaid, so it can\'t be voided. Reverse the repayment first, or refund the customer.'
+                : error.message,
+            });
+          }
+          throw error;
+        }
+      }
+    }
+
     await restoreSaleStock(sale, session);
 
     sale.status = 'voided';
@@ -313,7 +490,13 @@ export const voidSale = async (req, res) => {
 
     await session.commitTransaction();
 
-    res.json({ success: true, data: sale.toObject(), message: 'Sale voided and stock restored.' });
+    res.json({
+      success: true,
+      data: sale.toObject(),
+      message: creditReversal
+        ? 'Sale voided, stock restored, and the debt cancelled.'
+        : 'Sale voided and stock restored.',
+    });
   } catch (error) {
     await session.abortTransaction();
     throw error;
@@ -392,6 +575,30 @@ export const refundSale = async (req, res) => {
       return res.status(400).json({ success: false, message: 'A refund for this sale is already being processed by M-Pesa. Please wait for it to complete.' });
     }
     // Result callback never arrived — fall through and let the user retry.
+  }
+
+  // A credit sale where the customer hasn't paid yet has no money to give
+  // back. Refunding it would hand cash over the counter for a purchase that
+  // was never paid for, and leave the debt standing. Voiding is the correct
+  // action — it cancels the debt and restores the stock — so say so rather
+  // than silently doing the wrong one.
+  if (sale.customer) {
+    const debt = await CreditTransaction.findOne({
+      sale: sale._id,
+      shop,
+      type: { $in: DEBT_TX_TYPES },
+      status: 'outstanding',
+    }).lean();
+    if (debt && debt.outstanding > 0) {
+      const partlyRepaid = debt.outstanding < debt.amount;
+      return res.status(400).json({
+        success: false,
+        code: 'CREDIT_SALE_UNPAID',
+        message: partlyRepaid
+          ? 'This credit sale is only partly repaid. Reverse the repayment first, then void the sale to cancel what is still owed.'
+          : 'This sale was taken on credit and hasn\'t been paid for. Void it instead — that cancels the debt and returns the stock.',
+      });
+    }
   }
 
   const reason = req.body?.reason ? String(req.body.reason).slice(0, 300) : undefined;

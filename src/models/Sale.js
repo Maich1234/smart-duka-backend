@@ -149,6 +149,21 @@ const saleSchema = new mongoose.Schema({
     ref: 'User',
     required: true,
   },
+  // Who the sale was made to. Required in practice only for credit sales — a
+  // debt with no debtor is not a debt — and optional everywhere else, because
+  // the overwhelming majority of duka sales are to someone who pays and
+  // leaves. Absent on every sale recorded before customers existed.
+  customer: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Customer',
+  },
+  // The customer's name at the time of sale. Snapshotted for the same reason
+  // paymentMethodLabel is: a receipt must keep saying what it said, even after
+  // the customer record is renamed or archived.
+  customerName: {
+    type: String,
+    trim: true,
+  },
   // The work session this sale happened in (set when the seller had an
   // active shift). Optional so shops with shift management off — and all
   // pre-feature sales — keep working unchanged.
@@ -200,6 +215,8 @@ saleSchema.index({ shop: 1, createdAt: -1 });
 saleSchema.index({ shop: 1, staff: 1, createdAt: -1 });
 // Shift reconciliation aggregates every sale in a shift at close time.
 saleSchema.index({ shift: 1 }, { sparse: true });
+// A customer's purchase history on their account screen.
+saleSchema.index({ shop: 1, customer: 1, createdAt: -1 }, { sparse: true });
 // Reversal result callbacks look the sale up by Safaricom's correlation id.
 saleSchema.index({ 'refund.originatorConversationId': 1 }, { sparse: true });
 // Invoice numbers are unique *within a shop*. This replaces a collection-wide

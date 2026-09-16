@@ -1,5 +1,52 @@
 import mongoose from 'mongoose';
 import { DEFAULT_PAYMENT_METHODS, METHOD_KEY_PATTERN } from '../constants/salePaymentMethods.js';
+import {
+  CREDIT_OVERDUE_POLICIES,
+  CREDIT_PRODUCT_POLICIES,
+  DEFAULT_CREDIT_SETTINGS,
+  MAX_COLLECTION_PERIOD_DAYS,
+  MAX_CREDIT_LIMIT,
+} from '../constants/credit.js';
+
+// Customer credit ("deni"), owner-controlled. Read it through
+// resolveCreditSettings(), never straight off the document — lean() reads skip
+// schema defaults, and every shop predating this feature has no subdocument.
+const creditSettingsSchema = new mongoose.Schema({
+  // Off by default: extending credit is a business decision, not something a
+  // shop should discover it has been doing. Switching it off later blocks new
+  // credit sales and nothing else — existing debts, their due dates and their
+  // repayment history stay exactly as they are, and repayments keep working,
+  // because a shop that stops selling on credit still has to collect.
+  enabled: { type: Boolean, default: DEFAULT_CREDIT_SETTINGS.enabled },
+  // What a customer may owe when they have no limit of their own. 0 means
+  // every customer needs an explicit limit before they can take credit.
+  defaultCreditLimit: {
+    type: Number,
+    default: DEFAULT_CREDIT_SETTINGS.defaultCreditLimit,
+    min: 0,
+    max: MAX_CREDIT_LIMIT,
+  },
+  // Days until a new credit sale falls due. 0 = same day. Snapshotted onto
+  // every debt as an actual dueAt, so changing this never moves an existing one.
+  defaultCollectionPeriodDays: {
+    type: Number,
+    default: DEFAULT_CREDIT_SETTINGS.defaultCollectionPeriodDays,
+    min: 0,
+    max: MAX_COLLECTION_PERIOD_DAYS,
+  },
+  // SELECTED_PRODUCTS restricts credit to products flagged creditEligible.
+  productPolicy: {
+    type: String,
+    enum: CREDIT_PRODUCT_POLICIES,
+    default: DEFAULT_CREDIT_SETTINGS.productPolicy,
+  },
+  // What happens when the customer already has a debt past its due date.
+  overduePolicy: {
+    type: String,
+    enum: CREDIT_OVERDUE_POLICIES,
+    default: DEFAULT_CREDIT_SETTINGS.overduePolicy,
+  },
+}, { _id: false });
 
 // One button on the till. `key` is what lands on Sale.paymentMethod; `label`
 // is what the cashier and the receipt see, and the owner may rename it freely
@@ -223,6 +270,11 @@ const shopSchema = new mongoose.Schema({
     type: Number,
     default: 0,
     min: 0,
+  },
+  // Customer credit configuration. See creditSettingsSchema above.
+  creditSettings: {
+    type: creditSettingsSchema,
+    default: () => ({ ...DEFAULT_CREDIT_SETTINGS }),
   },
 }, { timestamps: true });
 

@@ -123,6 +123,11 @@ export const createProduct = async (req, res) => {
   // rather than overwriting one they were never shown.
   if (req.user.role !== 'owner') {
     delete req.body.commission;
+    // Whether the shop will lend on a product is the owner's exposure, not a
+    // catalogue detail — the same reasoning as commission above. Without this
+    // a staff member with create_product could mark anything credit-eligible
+    // under a SELECTED_PRODUCTS policy and sell it on the shop's money.
+    delete req.body.creditEligible;
     if (Array.isArray(req.body.variants)) {
       req.body.variants = req.body.variants.map(({ commission, ...rest }) => rest);
     }
@@ -176,6 +181,10 @@ export const updateProduct = async (req, res) => {
   if (req.user.role !== 'owner') {
     delete req.body.costPrice;
     delete req.body.commission;
+    // Owner-only, same as commission — see createProduct. Dropped rather than
+    // rejected because this is a partial update from a form that may carry the
+    // field unchanged; the stored value simply stands.
+    delete req.body.creditEligible;
     req.body.variants = mergeVariantsForStaff(req.body.variants, product.toObject().variants);
     if (req.body.variants === undefined) delete req.body.variants;
   }

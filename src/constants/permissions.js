@@ -21,6 +21,17 @@ export const ALL_PERMISSIONS = [
   { value: 'update_inventory_on_purchase', label: 'Update Inventory', category: 'Purchasing' },
   { value: 'require_purchase_approval', label: 'Require Owner Approval Before Inventory Updates', category: 'Purchasing' },
   { value: 'view_reconciliation', label: 'View Reconciliation', category: 'Reconciliation' },
+  // Customer credit. Split four ways on purpose: selling on credit, seeing
+  // what you yourself lent out, seeing the whole shop's book, and taking
+  // repayments are four different levels of trust, and a duka routinely wants
+  // to grant the first and the last without the third. None of them confers
+  // the right to change a credit limit, block a customer, edit shop credit
+  // settings, import an opening balance or reverse a posted entry — those stay
+  // owner-only, so "can collect money" never becomes "can raise the ceiling".
+  { value: 'make_credit_sale', label: 'Sell on Credit', category: 'Credit' },
+  { value: 'view_own_credit', label: 'View Credit I Gave', category: 'Credit' },
+  { value: 'view_all_credit', label: 'View All Customer Credit', category: 'Credit' },
+  { value: 'record_credit_payment', label: 'Record Credit Repayments', category: 'Credit' },
 ];
 
 export const DEFAULT_STAFF_PERMISSIONS = ['view_products', 'record_sale', 'view_sales'];
@@ -33,6 +44,11 @@ export const PERMISSION_DEPENDENCIES = {
   refund_all_sales: ['view_all_sales'],
   edit_purchases: ['view_purchases'],
   delete_purchases: ['view_purchases'],
+  // Seeing the whole shop's credit book necessarily includes your own entries.
+  // Granted explicitly so an own-scope check never has to special-case the
+  // wider grant, and so unticking "all" leaves the narrower view behind rather
+  // than silently removing both.
+  view_all_credit: ['view_own_credit'],
 };
 
 /** Expands a permission list with every dependency it implies (deduplicated). */
