@@ -110,9 +110,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * @param {string} html - HTML content
  * @param {string} text - Plain text fallback (optional)
  * @param {Record<string,string>} [headers] - Extra SMTP headers (e.g. List-Unsubscribe)
+ * @param {Array<{filename: string, content: Buffer}>} [attachments] - nodemailer-shaped attachments
  * @throws {MailDeliveryError}
  */
-export const sendEmail = async (to, subject, html, text = null, headers = undefined) => {
+export const sendEmail = async (to, subject, html, text = null, headers = undefined, attachments = undefined) => {
   const mailOptions = {
     from: fromAddress(),
     to,
@@ -120,6 +121,7 @@ export const sendEmail = async (to, subject, html, text = null, headers = undefi
     html,
     text: text || html.replace(/<[^>]*>/g, ''), // simple plain text fallback
     ...(headers ? { headers } : {}),
+    ...(attachments ? { attachments } : {}),
   };
 
   const deadline = Date.now() + SEND_BUDGET_MS;

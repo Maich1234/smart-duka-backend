@@ -1,6 +1,7 @@
 import { test, mock, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import mongoose from 'mongoose';
+import nodemailer from 'nodemailer';
 import Quotation from '../src/models/Quotation.js';
 import Customer from '../src/models/Customer.js';
 import Product from '../src/models/Product.js';
@@ -11,6 +12,7 @@ import {
   getQuotations,
   getQuotationById,
   getQuotationPdf,
+  sendQuotationEmail,
   updateQuotation,
   declineQuotation,
   deleteQuotation,
@@ -369,6 +371,108 @@ test('getQuotationPdf: defaults to the classic template when the shop predates q
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.subarray(0, 5).toString(), '%PDF-');
+});
+
+// ── sendQuotationEmail ───────────────────────────────────────────────────────
+//
+// nodemailer.createTransport is mocked (not sendEmail itself): sendEmail is a
+// named ESM export, and Node's module namespace objects are non-configurable,
+// so mock.method can't monkey-patch it directly — the exact reason
+// mpesaProvider/bankProvider are shaped as mockable objects elsewhere in this
+// suite. Mocking one level down at the SMTP client lets the real sendEmail
+// and the real renderQuotationPdf run, the same way convertQuotation's tests
+// exercise the real createSaleTransaction instead of mocking it.
+
+test('sendQuotationEmail: rejects a staff member without create_quotation, before any lookup', async () => {
+  const filters = [];
+  stubQuotationFindOne(null, filters);
+  const res = makeRes();
+  await sendQuotationEmail(makeReq({ permissions: [] }), res);
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(filters.length, 0, 'the database must not be touched before the permission check');
+});
+
+test('sendQuotationEmail: another shop\'s quotation, or a nonexistent one, is simply not found', async () => {
+  const filters = [];
+  stubQuotationFindOne(null, filters);
+  const res = makeRes();
+  await sendQuotationEmail(makeReq({ role: 'owner', params: { id: 'q1' } }), res);
+
+  assert.equal(res.statusCode, 404);
+  assert.equal(String(filters[0].shop), SHOP_ID);
+});
+
+test('sendQuotationEmail: 400s when the customer has no email on file', async () => {
+  stubQuotationFindOne(pdfQuotation({ customerSnapshot: { name: 'Jane Doe', phone: '0700000000', email: '' } }));
+  const sendMail = mock.fn(async () => { throw new Error('must not be called — no email on file'); });
+  mock.method(nodemailer, 'createTransport', () => ({ sendMail, close() {} }));
+
+  const res = makeRes();
+  await sendQuotationEmail(makeReq({ role: 'owner', params: { id: 'q1' } }), res);
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(sendMail.mock.callCount(), 0, 'must never attempt to send when there is no address to send to');
+});
+
+test('sendQuotationEmail: sends the PDF-attached email to the customer', async () => {
+  stubQuotationFindOne(pdfQuotation({ customerSnapshot: { name: 'Jane Doe', phone: '0700000000', email: 'jane@example.com' } }));
+  const sendMail = mock.fn(async () => ({ messageId: '1' }));
+  mock.method(nodemailer, 'createTransport', () => ({ sendMail, close() {} }));
+
+  const res = makeRes();
+  await sendQuotationEmail(makeReq({
+    role: 'owner',
+    params: { id: 'q1' },
+    shop: { name: "Jane's Salon", phone: '0700000000', currency: 'KES', quotationTemplate: 'modern' },
+  }), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(sendMail.mock.callCount(), 1);
+  const mailOptions = sendMail.mock.calls[0].arguments[0];
+  assert.equal(mailOptions.to, 'jane@example.com');
+  assert.match(mailOptions.subject, /QUO-2609-00001/);
+  assert.equal(mailOptions.attachments[0].filename, 'QUO-2609-00001.pdf');
+  assert.ok(Buffer.isBuffer(mailOptions.attachments[0].content));
+  assert.equal(mailOptions.attachments[0].content.subarray(0, 5).toString(), '%PDF-');
+  assert.match(res.body.message, /jane@example\.com/);
+});
+
+test('sendQuotationEmail: escapes a free-text customer/shop name before it reaches the HTML email body', async () => {
+  stubQuotationFindOne(pdfQuotation({ customerSnapshot: { name: '<script>alert(1)</script>', phone: '0700000000', email: 'jane@example.com' } }));
+  const sendMail = mock.fn(async () => ({ messageId: '1' }));
+  mock.method(nodemailer, 'createTransport', () => ({ sendMail, close() {} }));
+
+  const res = makeRes();
+  await sendQuotationEmail(makeReq({
+    role: 'owner',
+    params: { id: 'q1' },
+    shop: { name: 'Jo & Sons <Salon>', phone: '0700000000', currency: 'KES' },
+  }), res);
+
+  assert.equal(res.statusCode, 200);
+  const { html } = sendMail.mock.calls[0].arguments[0];
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /&lt;script&gt;/);
+  assert.match(html, /Jo &amp; Sons &lt;Salon&gt;/);
+});
+
+test('sendQuotationEmail: a mail-server failure is reported as a retryable 502, not a 500', async () => {
+  stubQuotationFindOne(pdfQuotation({ customerSnapshot: { name: 'Jane Doe', phone: '0700000000', email: 'jane@example.com' } }));
+  mock.method(nodemailer, 'createTransport', () => ({
+    sendMail: async () => { const err = new Error('mailbox rejected'); err.responseCode = 550; throw err; },
+    close() {},
+  }));
+
+  const res = makeRes();
+  await sendQuotationEmail(makeReq({
+    role: 'owner',
+    params: { id: 'q1' },
+    shop: { name: "Jane's Salon", phone: '0700000000', currency: 'KES' },
+  }), res);
+
+  assert.equal(res.statusCode, 502);
+  assert.equal(res.body.success, false);
 });
 
 // ── updateQuotation ──────────────────────────────────────────────────────────

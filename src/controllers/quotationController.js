@@ -9,14 +9,16 @@ import { CreditRejection, canMakeCreditSale } from '../services/creditService.js
 import { CREDIT_METHOD_KEY } from '../constants/credit.js';
 import { notifyOwnersNegativeStock } from './saleController.js';
 import { renderQuotationPdf } from '../services/quotationPdfService.js';
+import { sendEmail } from '../utils/email.js';
+import { PUBLIC_WEB_URL } from '../utils/publicWebUrl.js';
 
 /**
  * Drafting and managing quotations.
  *
- * `create_quotation` gates drafting/editing/declining/deleting — it has no
- * financial effect. `convert_quotation_to_sale` (checked by a later task's
- * convert endpoint, not here) is what actually moves stock/money, so it also
- * counts as "may see the list" here even though it can't create one.
+ * `create_quotation` gates drafting/editing/declining/deleting/emailing — it
+ * has no financial effect. `convert_quotation_to_sale` (checked by a later
+ * task's convert endpoint, not here) is what actually moves stock/money, so
+ * it also counts as "may see the list" here even though it can't create one.
  */
 
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -195,6 +197,68 @@ export const getQuotationPdf = async (req, res) => {
   res.set('Content-Type', 'application/pdf');
   res.set('Content-Disposition', `inline; filename="${quotation.quoteNumber}.pdf"`);
   res.send(buffer);
+};
+
+// customerSnapshot.name and shop.name are free text set by a customer or shop
+// owner, not developer-controlled copy — escaped before landing in an HTML
+// email body. Mirrors publicController.js's own escapeHtml for the same reason.
+const escapeHtml = (value) =>
+  String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const buildQuotationEmail = (quotation, shop, publicLink) => {
+  const subject = `Quotation ${quotation.quoteNumber} from ${shop.name}`;
+  const validUntil = new Date(quotation.validUntil).toLocaleDateString('en-KE', { year: 'numeric', month: 'long', day: 'numeric' });
+  const total = `${shop.currency || 'KES'} ${quotation.total.toLocaleString()}`;
+  const html = `
+    <p>Hi ${escapeHtml(quotation.customerSnapshot.name)},</p>
+    <p>${escapeHtml(shop.name)} has sent you a quotation for <strong>${total}</strong>.
+    The itemized breakdown is attached as a PDF, and you can also view it online:
+    <a href="${publicLink}">${publicLink}</a></p>
+    <p>This quotation is valid until ${validUntil}.</p>
+    <p>Thank you for considering ${escapeHtml(shop.name)}.</p>
+  `;
+  return { subject, html };
+};
+
+/**
+ * POST /quotations/:id/send-email — emails the customer the same PDF
+ * getQuotationPdf streams, plus a link to the public view. Gated by
+ * canManageQuotations like every other quotation write: sending has no
+ * financial effect, same reasoning as create/edit/decline/delete.
+ */
+export const sendQuotationEmail = async (req, res) => {
+  if (!canManageQuotations(req.user)) {
+    return res.status(403).json({ success: false, message: 'Permission denied' });
+  }
+
+  const quotation = await Quotation.findOne({ _id: req.params.id, shop: req.user.shop._id });
+  if (!quotation) return res.status(404).json({ success: false, message: 'Quotation not found' });
+  if (!quotation.customerSnapshot.email) {
+    return res.status(400).json({ success: false, message: 'This customer has no email on file. Add one before sending.' });
+  }
+
+  const shop = req.user.shop;
+  const publicLink = `${PUBLIC_WEB_URL}/q/${signQuotationToken(quotation._id)}`;
+  const { subject, html } = buildQuotationEmail(quotation, shop, publicLink);
+  const pdfBuffer = await renderQuotationPdf(toPdfData(quotation, shop), shop.quotationTemplate || 'classic');
+
+  // Mirrors subscriptionController.js's resendRenewalLink: a mail-server hiccup
+  // is reported to the caller as a retryable failure, not a 500.
+  try {
+    await sendEmail(
+      quotation.customerSnapshot.email,
+      subject,
+      html,
+      null,
+      undefined,
+      [{ filename: `${quotation.quoteNumber}.pdf`, content: pdfBuffer }],
+    );
+  } catch (err) {
+    console.error('[Quotations] sendQuotationEmail failed for', quotation.customerSnapshot.email, '-', err.message);
+    return res.status(502).json({ success: false, message: 'Could not send the quotation right now — please try again shortly.' });
+  }
+
+  res.json({ success: true, message: `Emailed to ${quotation.customerSnapshot.email}` });
 };
 
 export const updateQuotation = async (req, res) => {
