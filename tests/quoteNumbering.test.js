@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import mongoose from 'mongoose';
 import { nextQuoteNumber, formatQuoteNumber } from '../src/services/quoteNumberService.js';
+import Quotation from '../src/models/Quotation.js';
 
 // A stand-in for the Shop model that models findByIdAndUpdate's atomicity:
 // the increment and the read of the new value happen together, so interleaved
@@ -128,4 +130,24 @@ test('throws a named error when the shop does not exist', async () => {
     nextQuoteNumber('missing', { ShopModel: Shop, now: SEP_2026 }),
     /shop missing not found/,
   );
+});
+
+test('quoteNumber is not required at validation time, so the pre-save hook can assign it', async () => {
+  // Mongoose runs schema validation before pre('save') middleware runs. A
+  // required quoteNumber would reject every new quotation before the hook
+  // that assigns it ever executes — the exact bug this test guards against.
+  // Mirrors Sale.invoiceNumber, which is not required for the same reason.
+  const doc = new Quotation({
+    shop: new mongoose.Types.ObjectId(),
+    customer: new mongoose.Types.ObjectId(),
+    customerSnapshot: { name: 'Jane' },
+    items: [{ name: 'Haircut', quantity: 1, unitPrice: 300, subtotal: 300 }],
+    subtotal: 300,
+    total: 300,
+    validUntil: new Date(),
+    createdBy: new mongoose.Types.ObjectId(),
+    createdByName: 'Owner',
+  });
+
+  await assert.doesNotReject(doc.validate());
 });

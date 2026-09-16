@@ -57,9 +57,11 @@ const quotationSchema = new mongoose.Schema({
     phone: { type: String, default: '' },
     email: { type: String, default: '' },
   },
+  // Not required: the pre-save hook below assigns it, and Mongoose runs
+  // schema validation before pre('save') middleware — same reasoning as
+  // Sale.invoiceNumber.
   quoteNumber: {
     type: String,
-    required: true,
   },
   items: {
     type: [quotationItemSchema],
