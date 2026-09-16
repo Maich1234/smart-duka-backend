@@ -16,6 +16,9 @@ import {
   convertQuotation,
 } from '../src/controllers/quotationController.js';
 import { createQuotationSchema } from '../src/validations/quotationValidation.js';
+import quotationRouter from '../src/routes/v1/quotationRoutes.js';
+import { requirePaidShop } from '../src/middlewares/requirePaidShop.js';
+import idempotency from '../src/middlewares/idempotency.js';
 
 // present() signs a JWT for every response, so any handler that reaches it
 // needs a secret. Module scope, before any test — same reasoning as
@@ -469,6 +472,35 @@ function stubProductFindForSale(rows = []) {
 function stubSaleCustomer(doc) {
   mock.method(Customer, 'findOne', () => ({ select: () => ({ lean: async () => doc }) }));
 }
+
+// requirePaidShop's own rejection behaviour (locked shop → 403 SUBSCRIPTION_LOCKED,
+// staff grace window, lookup-failure fail-open) is exhaustively covered by
+// subscriptionGating.test.js — re-testing it here would just duplicate that
+// file. What's actually new is that *this route* — unlike every other
+// quotation route, which is a no-financial-effect draft/CRUD operation —
+// moves stock and money via the same createSaleTransaction the till uses, so
+// it must be the one route in this router gated behind it, the same way
+// saleRoutes.js gates POST /. Since this codebase has no supertest/HTTP layer
+// to dispatch a real request through, the router's own middleware stack is
+// inspected directly (Express exposes it on the Layer/Route it builds) —
+// this is a wiring check, not a re-test of requirePaidShop's logic.
+test('quotationRoutes: POST /:id/convert is gated by requirePaidShop, ahead of idempotency and the handler', () => {
+  const convertLayer = quotationRouter.stack.find(
+    (layer) => layer.route?.path === '/:id/convert' && layer.route.methods.post,
+  );
+  assert.ok(convertLayer, 'no POST /:id/convert route found on the quotation router');
+
+  // Compared by function reference, not by name, so this can't be fooled by
+  // an unrelated middleware that happens to share the name.
+  const handles = convertLayer.route.stack.map((l) => l.handle);
+  const requirePaidShopIndex = handles.indexOf(requirePaidShop);
+  assert.notEqual(requirePaidShopIndex, -1, 'requirePaidShop is not mounted on the convert route');
+
+  const idempotencyIndex = handles.indexOf(idempotency);
+  const handlerIndex = handles.indexOf(convertQuotation);
+  assert.ok(requirePaidShopIndex < idempotencyIndex, 'requirePaidShop must run before idempotency, same ordering as saleRoutes.js');
+  assert.ok(requirePaidShopIndex < handlerIndex, 'requirePaidShop must run before the handler ever executes');
+});
 
 test('convertQuotation: rejects a staff member without convert_quotation_to_sale, before any lookup', async () => {
   const filters = [];

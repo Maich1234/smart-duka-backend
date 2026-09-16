@@ -1,5 +1,6 @@
 import express from 'express';
 import { protect, staffOrOwner } from '../../middlewares/auth.js';
+import { requirePaidShop } from '../../middlewares/requirePaidShop.js';
 import validate from '../../middlewares/validate.js';
 import idempotency from '../../middlewares/idempotency.js';
 import {
@@ -24,6 +25,9 @@ router.get('/:id', getQuotationById);
 router.patch('/:id', validate(updateQuotationSchema), updateQuotation);
 router.patch('/:id/decline', declineQuotation);
 router.delete('/:id', deleteQuotation);
-router.post('/:id/convert', idempotency, convertQuotation);
+// Unlike the rest of this router, convert moves stock/money (via
+// createSaleTransaction, same as the till) — the one quotation route
+// requirePaidShop needs to gate, same as saleRoutes.js's POST /.
+router.post('/:id/convert', requirePaidShop, idempotency, convertQuotation);
 
 export default router;
