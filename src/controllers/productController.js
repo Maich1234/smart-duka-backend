@@ -51,7 +51,7 @@ export const getProductCategories = async (req, res) => {
 };
 
 export const getProducts = async (req, res) => {
-  const { search, category, excludeTypes } = req.query;
+  const { search, category, excludeTypes, includeTypes } = req.query;
   const { page, limit, skip } = parsePagination(req.query);
   const query = { shop: req.user.shop._id };
 
@@ -75,6 +75,9 @@ export const getProducts = async (req, res) => {
   // purchased directly (bundle/service — see purchaseStockService.js).
   if (excludeTypes) {
     query.productType = { $nin: String(excludeTypes).split(',').map((t) => t.trim()).filter(Boolean) };
+  }
+  if (includeTypes) {
+    query.productType = { $in: String(includeTypes).split(',').map((t) => t.trim()).filter(Boolean) };
   }
 
   const [products, total] = await Promise.all([
