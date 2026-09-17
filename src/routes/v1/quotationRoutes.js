@@ -25,7 +25,10 @@ router.post('/', validate(createQuotationSchema), createQuotation);
 router.get('/', getQuotations);
 router.get('/:id', getQuotationById);
 router.get('/:id/pdf', getQuotationPdf);
-router.post('/:id/send-email', sendQuotationEmail);
+// A locked shop must not be able to keep sending platform email indefinitely
+// — no financial effect of its own, but it still spends the platform's mail
+// quota, so it's gated the same as convert even though it moves no money.
+router.post('/:id/send-email', requirePaidShop, sendQuotationEmail);
 router.patch('/:id', validate(updateQuotationSchema), updateQuotation);
 router.patch('/:id/decline', declineQuotation);
 router.delete('/:id', deleteQuotation);

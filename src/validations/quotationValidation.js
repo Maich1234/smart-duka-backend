@@ -9,7 +9,9 @@ const quotationItemSchema = Joi.object({
   productId: Joi.string().hex().length(24).optional(),
   name: Joi.string().trim().max(120).optional(),
   description: Joi.string().trim().max(300).allow('').optional(),
-  quantity: Joi.number().positive().required(),
+  // min(0.001), not positive() — matches the model's own floor exactly, so a
+  // sub-floor quantity 400s cleanly here instead of reaching Mongoose and 500ing.
+  quantity: Joi.number().min(0.001).required(),
   // Required only for a custom line (no productId) — a catalog line has no
   // price to require here, since the controller resolves it from the
   // Product. Joi's sibling-reference form of .when(), not the schema-shaped
