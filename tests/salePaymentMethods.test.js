@@ -132,3 +132,16 @@ test('a valid button list survives validation with defaults filled in', () => {
   assert.equal(error, undefined);
   assert.equal(value.paymentMethods[1].enabled, true);
 });
+
+test('quotationTemplate accepts any of the three known layouts', () => {
+  for (const template of ['classic', 'modern', 'minimal']) {
+    const { error, value } = updateShopConfigSchema.validate({ quotationTemplate: template });
+    assert.equal(error, undefined);
+    assert.equal(value.quotationTemplate, template);
+  }
+});
+
+test('quotationTemplate rejects an unknown layout', () => {
+  const { error } = updateShopConfigSchema.validate({ quotationTemplate: 'fancy' });
+  assert.ok(error);
+});
