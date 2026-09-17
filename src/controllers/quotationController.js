@@ -179,9 +179,12 @@ export const createQuotation = async (req, res) => {
     throw err;
   }
 
-  const taxRate = req.user.shop.taxRate || 0;
-  const taxAmount = round2(subtotal * (taxRate / 100));
-  const total = round2(subtotal + taxAmount);
+  // Quotations show a subtotal only, no tax line — consistent with the till,
+  // which has never applied tax to a Sale, and with the "this is a
+  // quotation, not a tax invoice" footer already on every PDF template.
+  // taxRate/taxAmount stay on the model (read elsewhere, e.g. the public
+  // quotation view) but are always written as 0.
+  const total = subtotal;
 
   const quotation = await Quotation.create({
     shop,
@@ -189,8 +192,8 @@ export const createQuotation = async (req, res) => {
     customerSnapshot: { name: customer.name, phone: customer.phone || '', email: customer.email || '' },
     items: resolved,
     subtotal,
-    taxRate,
-    taxAmount,
+    taxRate: 0,
+    taxAmount: 0,
     total,
     notes: notes || '',
     validUntil,
@@ -346,17 +349,15 @@ export const updateQuotation = async (req, res) => {
     throw err;
   }
 
-  const taxRate = req.user.shop.taxRate || 0;
-  const taxAmount = round2(subtotal * (taxRate / 100));
-
+  // See createQuotation's comment: quotations never carry tax.
   quotation.set({
     customer: customer._id,
     customerSnapshot: { name: customer.name, phone: customer.phone || '', email: customer.email || '' },
     items: resolved,
     subtotal,
-    taxRate,
-    taxAmount,
-    total: round2(subtotal + taxAmount),
+    taxRate: 0,
+    taxAmount: 0,
+    total: subtotal,
     notes: notes || '',
     validUntil,
   });

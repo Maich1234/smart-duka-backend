@@ -518,7 +518,7 @@ test('updateQuotation: a customer outside this shop is not found', async () => {
   assert.equal(String(filters[0].shop), SHOP_ID);
 });
 
-test('updateQuotation: recomputes subtotal/tax/total from the new items', async () => {
+test('updateQuotation: recomputes subtotal/total from the new items, ignoring the shop\'s tax rate entirely', async () => {
   stubQuotationFindOne(quotationDoc({ _id: 'q1', status: 'draft' }));
   stubCustomerFindOne({ _id: CUSTOMER_ID, name: 'Jane' });
   stubProductFind([{ _id: PRODUCT_ID, name: 'Haircut', sellingPrice: 300 }]);
@@ -538,8 +538,11 @@ test('updateQuotation: recomputes subtotal/tax/total from the new items', async 
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.data.subtotal, 300);
-  assert.equal(res.body.data.taxAmount, 30);
-  assert.equal(res.body.data.total, 330);
+  // Quotations show a subtotal only — no tax line, even when the shop has a
+  // configured taxRate — consistent with the till, which never applies tax
+  // to a Sale either.
+  assert.equal(res.body.data.taxAmount, 0);
+  assert.equal(res.body.data.total, 300);
 });
 
 // ── declineQuotation ─────────────────────────────────────────────────────────
@@ -759,6 +762,59 @@ test('convertQuotation: marks the quotation converted and links the new sale', a
   assert.equal(updateFilter.status, 'draft');
   assert.equal(updateDoc.$set.status, 'converted');
   assert.equal(String(updateDoc.$set.convertedSale), 'sale1');
+});
+
+test('convertQuotation: a converted Sale\'s totalAmount always equals the quotation\'s own total, even when the shop has a tax rate configured', async () => {
+  // Reproduces the original bug's exact setup: createQuotation used to add
+  // shop.taxRate on top of the subtotal, while convertQuotation (via
+  // createSaleTransaction) only ever sums plain item subtotals with no tax
+  // — so a tax-inclusive quotation total never matched what conversion
+  // actually charged. Drafting for real (rather than hand-building the
+  // quotation doc) is what makes this catch a reintroduced tax computation:
+  // a hardcoded `total` here would pass regardless of what createQuotation does.
+  stubCustomerFindOne({ _id: CUSTOMER_ID, name: 'Jane' });
+  let created;
+  mock.method(Quotation, 'create', async (doc) => {
+    created = doc;
+    return { ...doc, _id: 'q1', quoteNumber: 'QUO-2609-00001', toObject() { return { ...doc, _id: 'q1' }; } };
+  });
+  const createRes = makeRes();
+  await createQuotation(makeReq({
+    role: 'owner',
+    shop: { taxRate: 16 },
+    body: {
+      customerId: CUSTOMER_ID,
+      items: [
+        { name: 'Labour', quantity: 1, unitPrice: 500 },
+        { name: 'Materials', quantity: 1, unitPrice: 250 },
+      ],
+      validUntil: '2026-12-01',
+    },
+  }), createRes);
+  assert.equal(createRes.statusCode, 201);
+  assert.equal(created.taxAmount, 0, 'sanity check: the drafted quotation must carry no tax');
+
+  const draft = { _id: 'q1', status: 'draft', customer: CUSTOMER_ID, items: created.items, total: created.total };
+  stubQuotationFindOne(draft);
+  stubSession();
+  stubProductFindForSale();
+  stubSaleCustomer({ _id: CUSTOMER_ID, name: 'Jane' });
+  let saleDoc;
+  mock.method(Sale, 'create', async (docs) => {
+    saleDoc = docs[0];
+    return [{ ...saleDoc, _id: 'sale1', toObject: () => ({ ...saleDoc, _id: 'sale1' }) }];
+  });
+  mock.method(Quotation, 'findOneAndUpdate', async () => ({ ...draft, status: 'converted', convertedSale: 'sale1' }));
+
+  const convertRes = makeRes();
+  await convertQuotation(makeReq({ role: 'owner', params: { id: 'q1' }, body: { paymentMethod: 'cash' } }), convertRes);
+
+  assert.equal(convertRes.statusCode, 201);
+  assert.equal(
+    saleDoc.totalAmount,
+    draft.total,
+    "the converted Sale's totalAmount must equal the quotation's own total — a tax-inclusive quotation total would silently mismatch here, since conversion only ever sums plain item subtotals",
+  );
 });
 
 test('convertQuotation: converts to a credit sale when make_credit_sale is also granted', async () => {

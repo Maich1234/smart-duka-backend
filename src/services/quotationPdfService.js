@@ -87,11 +87,8 @@ function drawItemsTable(doc, data, { headerColor, top }) {
   doc.text('Subtotal', 370, y, { width: 80, align: 'right' });
   doc.text(formatMoney(data.subtotal, currency), 455, y, { width: 80, align: 'right' });
   y += 16;
-  if (data.taxAmount > 0) {
-    doc.text(`Tax (${data.taxRate}%)`, 370, y, { width: 80, align: 'right' });
-    doc.text(formatMoney(data.taxAmount, currency), 455, y, { width: 80, align: 'right' });
-    y += 16;
-  }
+  // Quotations never carry tax (see quotationController.js) — data.taxAmount
+  // is always 0, so there is no tax row left to draw here.
   doc.fontSize(12).fillColor(headerColor).text('Total', 370, y, { width: 80, align: 'right' });
   doc.text(formatMoney(data.total, currency), 455, y, { width: 80, align: 'right' });
   return y + 30;
