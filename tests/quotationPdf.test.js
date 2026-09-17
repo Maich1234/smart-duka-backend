@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import zlib from 'node:zlib';
+import mongoose from 'mongoose';
 import { renderQuotationPdf } from '../src/services/quotationPdfService.js';
+import Quotation from '../src/models/Quotation.js';
 
 /**
  * renderQuotationPdf renders a quotation into one of three visually distinct
@@ -100,6 +102,39 @@ for (const template of ['classic', 'modern', 'minimal']) {
     assert.doesNotMatch(drawnText, /Moi Avenue/);
   });
 }
+
+test('renderQuotationPdf reads quantity/unitPrice/subtotal off a real Mongoose subdocument, not just a plain item object', async () => {
+  // Every sample above is a plain item object, which sanitizeQuotationData's
+  // `{...item, name: ..., description: ...}` spread happens to handle fine.
+  // A live Mongoose subdocument (what getQuotationPdf/getPublicQuotationPdf
+  // actually pass in production, via toPdfData's `items: quotation.items`)
+  // spreads to its internal bookkeeping props (`_doc`, `$__`, `__parentArray`)
+  // instead of its schema fields — name/description survive only because
+  // they're re-assigned explicitly after the spread; quantity/unitPrice/
+  // subtotal relied solely on the spread and silently drew as
+  // undefined/NaN. Constructing (not saving) a real Quotation document
+  // reproduces that shape without needing a database connection.
+  const quotation = new Quotation({
+    shop: new mongoose.Types.ObjectId(),
+    customer: new mongoose.Types.ObjectId(),
+    customerSnapshot: { name: 'Jane Doe' },
+    items: [{ name: 'Pipe repair', quantity: 3, unitPrice: 2500, subtotal: 7500 }],
+    subtotal: 7500,
+    total: 7500,
+    validUntil: new Date('2026-12-01'),
+  });
+
+  const data = { ...sample, items: quotation.items, subtotal: 7500, total: 7500 };
+
+  for (const template of ['classic', 'modern', 'minimal']) {
+    const buffer = await renderQuotationPdf(data, template);
+    const { drawnText } = decodePdfTextStreams(buffer);
+    assert.doesNotMatch(drawnText, /undefined/, `${template}: quantity must not draw as "undefined"`);
+    assert.doesNotMatch(drawnText, /NaN/, `${template}: unit price/total must not draw as "NaN"`);
+    assert.match(drawnText, /KES\s*2,500\.00/, `${template}: unit price`);
+    assert.match(drawnText, /KES\s*7,500\.00/, `${template}: line subtotal`);
+  }
+});
 
 test('renderQuotationPdf sanitizes non-Latin-1 script in every free-text field before drawing', async () => {
   const arabicName = 'Ahmed مصطفى Traders'; // customer name with Arabic script mixed in

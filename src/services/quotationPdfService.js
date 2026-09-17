@@ -34,8 +34,16 @@ function sanitizeQuotationData(data) {
     shopAddress: sanitize(data.shopAddress),
     notes: sanitize(data.notes),
     customerSnapshot: { ...data.customerSnapshot, name: sanitize(data.customerSnapshot.name) },
+    // toPdfData passes quotation.items straight from the Mongoose document in
+    // production — a live subdocument, not a plain object. `{...item}` on one
+    // of those spreads its internal bookkeeping props (_doc, $__,
+    // __parentArray) rather than its schema fields, so quantity/unitPrice/
+    // subtotal silently came through as undefined/NaN below (name/description
+    // only survived because they're re-assigned explicitly, after the
+    // spread). .toObject() normalizes a real subdocument to a plain object
+    // first; plain-object items (as the tests use) pass through unchanged.
     items: data.items.map((item) => ({
-      ...item,
+      ...(item.toObject ? item.toObject() : item),
       name: sanitize(item.name),
       description: sanitize(item.description),
     })),
