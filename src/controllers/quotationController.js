@@ -32,7 +32,66 @@ const canViewQuotations = (user) =>
 const canConvertQuotation = (user) =>
   user.role === 'owner' || !!user.permissions?.includes('convert_quotation_to_sale');
 
-/** Resolves the client's item list into priced lines + a subtotal, without trusting any client-sent price for a catalog line. */
+/**
+ * Resolves a catalog line's unit price exactly the way resolveSaleLine
+ * (pricingEngine.js) will resolve it at conversion time, so a quotation can
+ * never be drafted in a price state that resolves differently — or fails
+ * outright — once it's converted to a sale.
+ *
+ *  - `variable`: honours a client-sent price, bounded by minPrice/maxPrice,
+ *    same as resolveSaleLine's `variable` case.
+ *  - `service`: honours a client-sent price only when the product has
+ *    allowPriceOverride enabled, same as resolveSaleLine's `service` case.
+ *  - every other type (`standard`, `weighted`, `refillable`, `bundle`,
+ *    `configurable`): always the catalog `sellingPrice` — resolveSaleLine
+ *    ignores a requested price for these too, so a client-sent one here is
+ *    silently ignored rather than trusted.
+ */
+function resolveCatalogUnitPrice(product, item) {
+  const productType = product.productType || 'standard';
+
+  if (productType === 'variable') {
+    const unitPrice = item.unitPrice ?? product.sellingPrice;
+    if (!(unitPrice > 0)) {
+      const err = new Error(`Price for ${product.name} must be greater than 0`);
+      err.status = 400;
+      throw err;
+    }
+    if (product.minPrice != null && unitPrice < product.minPrice) {
+      const err = new Error(`Price for ${product.name} cannot be below ${product.minPrice}`);
+      err.status = 400;
+      throw err;
+    }
+    if (product.maxPrice != null && unitPrice > product.maxPrice) {
+      const err = new Error(`Price for ${product.name} cannot exceed ${product.maxPrice}`);
+      err.status = 400;
+      throw err;
+    }
+    return unitPrice;
+  }
+
+  if (productType === 'service') {
+    const unitPrice = (product.allowPriceOverride && item.unitPrice != null) ? item.unitPrice : product.sellingPrice;
+    if (!(unitPrice > 0)) {
+      const err = new Error(`Price for ${product.name} must be greater than 0`);
+      err.status = 400;
+      throw err;
+    }
+    return unitPrice;
+  }
+
+  return product.sellingPrice;
+}
+
+/**
+ * Resolves the client's item list into priced lines + a subtotal.
+ *
+ * For a catalog line (has productId), the unit price comes from
+ * resolveCatalogUnitPrice, never straight from the client — see its doc
+ * comment for exactly how each product type is handled. A custom line (no
+ * productId) has no catalog price to fall back on, so its client-sent
+ * unitPrice is used as-is.
+ */
 async function resolveQuotationItems(shop, items) {
   const productIds = [...new Set(items.filter((i) => i.productId).map((i) => String(i.productId)))];
   const products = productIds.length
@@ -49,7 +108,7 @@ async function resolveQuotationItems(shop, items) {
         err.status = 400;
         throw err;
       }
-      const unitPrice = item.unitPrice ?? product.sellingPrice;
+      const unitPrice = resolveCatalogUnitPrice(product, item);
       const subtotalLine = round2(unitPrice * item.quantity);
       subtotal += subtotalLine;
       return {
