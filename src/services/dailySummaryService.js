@@ -45,6 +45,7 @@ export const generateDailySummary = async (shopId, dateStr) => {
     mpesaAgg,
     soldRecently,
     trailingSummaries,
+    customLineAgg,
   ] = await Promise.all([
     // Revenue + transaction counts per payment method
     Sale.aggregate([
@@ -60,6 +61,10 @@ export const generateDailySummary = async (shopId, dateStr) => {
     Sale.aggregate([
       { $match: { ...dayMatch, status: { $in: REVENUE_STATUSES } } },
       { $unwind: '$items' },
+      // A custom/service line has no catalogue product to report against —
+      // without this, every such line in the day collapses into one
+      // misleading `_id: null` row that would surface as a "best seller".
+      { $match: { 'items.productId': { $ne: null } } },
       {
         $group: {
           _id: '$items.productId',
@@ -132,6 +137,9 @@ export const generateDailySummary = async (shopId, dateStr) => {
     Sale.aggregate([
       { $match: { shop, createdAt: { $gte: new Date(end.getTime() - SLOW_MOVER_WINDOW_DAYS * 86400000), $lt: end }, status: { $in: REVENUE_STATUSES } } },
       { $unwind: '$items' },
+      // A custom/service line's `null` productId would otherwise become the
+      // string "null" below and crash the ObjectId cast a few lines down.
+      { $match: { 'items.productId': { $ne: null } } },
       { $group: { _id: '$items.productId' } },
     ]),
     // Most-recent-first, excluding today — feeds the trailing-average
@@ -140,6 +148,19 @@ export const generateDailySummary = async (shopId, dateStr) => {
       .sort({ date: -1 })
       .limit(TRAILING_INSIGHT_DAYS)
       .lean(),
+    // itemAgg above deliberately excludes custom/service lines (no
+    // productId) so they can't collapse into a misleading "best seller" —
+    // but that also excludes their revenue from grossProfit below, while
+    // `revenue` (from methodAgg, a whole-sale total) still includes it. A
+    // custom line has no known cost, so its entire subtotal is profit — same
+    // treatment as books/profitLossService.js, which never excludes these
+    // lines from its own revenue/cogs sums in the first place.
+    Sale.aggregate([
+      { $match: { ...dayMatch, status: { $in: REVENUE_STATUSES } } },
+      { $unwind: '$items' },
+      { $match: { 'items.productId': null } },
+      { $group: { _id: null, total: { $sum: '$items.subtotal' } } },
+    ]),
   ]);
 
   const byMethod = { cash: { count: 0, total: 0 }, mpesa: { count: 0, total: 0 }, card: { count: 0, total: 0 } };
@@ -152,7 +173,10 @@ export const generateDailySummary = async (shopId, dateStr) => {
   }
 
   const discounts = itemAgg.reduce((sum, i) => sum + (i.discounts || 0), 0);
-  const grossProfit = itemAgg.reduce((sum, i) => sum + (i.revenue - i.estCost), 0);
+  const customLineRevenue = customLineAgg[0]?.total ?? 0;
+  // Custom lines contribute their full revenue (0 known cost), on top of
+  // itemAgg's per-product figure which excludes them entirely.
+  const grossProfit = itemAgg.reduce((sum, i) => sum + (i.revenue - i.estCost), 0) + customLineRevenue;
 
   const bestSellers = itemAgg.slice(0, 5).map((i) => ({
     productId: i._id,

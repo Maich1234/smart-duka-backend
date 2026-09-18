@@ -30,6 +30,7 @@ import businessRoutes from './businessRoutes.js';
 import assetRoutes from './assetRoutes.js';
 import customerRoutes from './customerRoutes.js';
 import creditRoutes from './creditRoutes.js';
+import quotationRoutes from './quotationRoutes.js';
 
 const router = express.Router();
 
@@ -64,5 +65,6 @@ router.use('/business', businessRoutes);
 router.use('/assets', assetRoutes);
 router.use('/customers', customerRoutes);
 router.use('/credit', creditRoutes);
+router.use('/quotations', quotationRoutes);
 
 export default router;

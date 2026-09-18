@@ -191,6 +191,28 @@ export async function getCapitalPosition(shopId) {
   };
 }
 
+/**
+ * Revenue from custom/free-text sale lines (no catalogue product) in a
+ * period. getProductPerformance deliberately excludes these lines from its
+ * per-product rows and totals (see the `items.productId: { $ne: null }`
+ * guard there) so they can't collapse into a misleading "product" row — but
+ * that means its `totals.grossProfit` alone understates the period's real
+ * gross profit whenever it's paired with a whole-sale revenue figure that
+ * does include them (see getBusinessOverview). A custom line has no known
+ * cost, so its entire subtotal is profit — same treatment
+ * books/profitLossService.js gives this exact case.
+ */
+export async function getCustomLineRevenue(shopId, { start, end }) {
+  const shop = new mongoose.Types.ObjectId(String(shopId));
+  const [row] = await Sale.aggregate([
+    { $match: { shop, status: { $in: REVENUE_STATUSES }, createdAt: { $gte: start, $lt: end } } },
+    { $unwind: '$items' },
+    { $match: { 'items.productId': null } },
+    { $group: { _id: null, total: { $sum: '$items.subtotal' } } },
+  ]);
+  return round2(row?.total);
+}
+
 // ── Sales ───────────────────────────────────────────────────────────────────
 
 /**
@@ -347,6 +369,11 @@ export async function getProductPerformance(shopId, { start, end, sort = 'most_s
         pipeline: [
           { $match: { shop, status: { $in: REVENUE_STATUSES }, createdAt: { $gte: start, $lt: end } } },
           { $unwind: '$items' },
+          // A custom/service line (no catalogue product) has no productId to
+          // report performance against — without this, every such line across
+          // every sale in the period collapses into one misleading `_id: null`
+          // "product" row in the $group below.
+          { $match: { 'items.productId': { $ne: null } } },
           {
             $project: {
               _id: 0,

@@ -4,6 +4,7 @@ import {
   getCapitalPosition,
   getSalesSummary,
   getProductPerformance,
+  getCustomLineRevenue,
   PRODUCT_SORT_KEYS,
 } from '../services/businessOverviewService.js';
 import { getStaffPerformance } from '../services/intelligence/staffPerformanceService.js';
@@ -44,7 +45,7 @@ export const getBusinessOverview = async (req, res) => {
   const today = resolveOverviewRange({ period: 'today' });
   const month = resolveOverviewRange({ period: 'month' });
 
-  const [capital, todaySales, monthSales, monthProducts, lowStockCount] = await Promise.all([
+  const [capital, todaySales, monthSales, monthProducts, lowStockCount, monthCustomLineRevenue] = await Promise.all([
     getCapitalPosition(shopId),
     getSalesSummary(shopId, { ...today, includeSeries: false }),
     getSalesSummary(shopId, month),
@@ -52,6 +53,11 @@ export const getBusinessOverview = async (req, res) => {
     // full ranked list belongs to the Products tab and is fetched there.
     getProductPerformance(shopId, { ...month, sort: 'most_sold', page: 1, limit: 1 }),
     Product.countDocuments({ shop: shopId, $expr: { $lte: ['$quantity', '$lowStockAlert'] } }),
+    // monthProducts.totals.grossProfit excludes custom-line revenue (see
+    // getCustomLineRevenue's doc comment); monthSales.total does not — so
+    // this is added back in below, or the month's headline grossProfit would
+    // silently understate against its own revenue figure.
+    getCustomLineRevenue(shopId, month),
   ]);
 
   res.json({
@@ -65,7 +71,7 @@ export const getBusinessOverview = async (req, res) => {
         total: monthSales.total,
         transactions: monthSales.transactions,
         averageSale: monthSales.averageSale,
-        grossProfit: monthProducts.totals.grossProfit,
+        grossProfit: round2(monthProducts.totals.grossProfit + monthCustomLineRevenue),
         costEstimated: monthProducts.totals.costEstimated,
         series: monthSales.series,
         highlights: monthProducts.highlights,

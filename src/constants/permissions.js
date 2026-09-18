@@ -32,6 +32,14 @@ export const ALL_PERMISSIONS = [
   { value: 'view_own_credit', label: 'View Credit I Gave', category: 'Credit' },
   { value: 'view_all_credit', label: 'View All Customer Credit', category: 'Credit' },
   { value: 'record_credit_payment', label: 'Record Credit Repayments', category: 'Credit' },
+  // Quotations. Split the same way Credit is: drafting a price proposal has
+  // no financial effect, while turning one into a real Sale does — an owner
+  // may want a junior staff member to draft quotes without letting them
+  // finalize the sale (stock movement, payment) themselves. Converting to a
+  // *credit* sale still separately requires make_credit_sale; neither
+  // permission implies the other on purpose.
+  { value: 'create_quotation', label: 'Create Quotations', category: 'Quotations' },
+  { value: 'convert_quotation_to_sale', label: 'Convert Quotation to Sale', category: 'Quotations' },
 ];
 
 export const DEFAULT_STAFF_PERMISSIONS = ['view_products', 'record_sale', 'view_sales'];

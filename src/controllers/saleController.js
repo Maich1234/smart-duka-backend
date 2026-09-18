@@ -1,49 +1,21 @@
 import mongoose from 'mongoose';
-import Product from '../models/Product.js';
 import Sale from '../models/Sale.js';
 import User from '../models/User.js';
 import MpesaTransaction from '../models/MpesaTransaction.js';
 import PaymentConfig from '../models/PaymentConfig.js';
 import { signReceiptToken } from '../utils/receiptToken.js';
-import { resolveSaleLine, SaleLineError } from '../services/pricingEngine.js';
 import { getCommissionSummary } from '../services/commissionService.js';
 import { restoreSaleStock } from '../services/saleStockService.js';
 import { initiateReversal, withMpesaCallbackSecret } from '../services/mpesaService.js';
 import { logAudit } from '../services/auditLogService.js';
-import { getActiveShift } from '../services/shiftService.js';
+import { createSaleTransaction, SaleRejection } from '../services/saleCreationService.js';
 import { parsePagination, paginatedResult } from '../utils/pagination.js';
 import { escapeRegex } from '../utils/escapeRegex.js';
 import { sendPushToUser } from '../utils/push.js';
-import {
-  MPESA_METHOD_KEY,
-  enabledMethodKeys,
-  methodLabel,
-} from '../constants/salePaymentMethods.js';
-import Customer from '../models/Customer.js';
+import { methodLabel } from '../constants/salePaymentMethods.js';
 import CreditTransaction from '../models/CreditTransaction.js';
-import { CREDIT_METHOD_KEY, DEBT_TX_TYPES, resolveCreditSettings } from '../constants/credit.js';
-import {
-  CreditRejection,
-  assertProductsCreditEligible,
-  bookDebt,
-  canMakeCreditSale,
-  reverseDebt,
-  summariseAccount,
-} from '../services/creditService.js';
-
-/**
- * A client-facing rejection (out of stock, unknown product) raised from inside
- * a transaction body so the transaction aborts cleanly. Carries no transient-
- * error label, so withTransaction propagates it instead of retrying — unlike a
- * WriteConflict, retrying "out of stock" would never succeed.
- */
-class SaleRejection extends Error {
-  constructor(status, message) {
-    super(message);
-    this.name = 'SaleRejection';
-    this.status = status;
-  }
-}
+import { DEBT_TX_TYPES } from '../constants/credit.js';
+import { CreditRejection, reverseDebt } from '../services/creditService.js';
 
 /**
  * Alerts every owner of the shop that a sale just took one or more items
@@ -51,8 +23,11 @@ class SaleRejection extends Error {
  * entered as purchased — but the owner needs to know so they can true up
  * inventory. Best-effort per owner, mirrors notifyOwnersShiftClosed in
  * shiftController.js.
+ *
+ * Exported for reuse by quotationController.js's convertQuotation, which
+ * runs the same createSaleTransaction and needs the same alert.
  */
-const notifyOwnersNegativeStock = async (shop, staffName, items) => {
+export const notifyOwnersNegativeStock = async (shop, staffName, items) => {
   const title = items.length === 1
     ? `⚠️ ${items[0].productName} is now below zero stock`
     : `⚠️ ${items.length} items went below zero stock`;
@@ -76,312 +51,44 @@ export const createSale = async (req, res) => {
   }
 
   const { items, paymentMethod, mpesaTransactionId, mpesaReceiptNumber, customerId } = req.body;
-  const shop = req.user.shop._id;
-
-  // Credit is behaviour, not a label: once the owner switches the module on,
-  // the till may take credit whether or not they ever added the button to
-  // their own list. (Before the module existed, `credit` was merely one of the
-  // suggested buttons in salePaymentMethods.js, recording a sale and nothing
-  // else — shops that used it that way keep working exactly as before while
-  // the module is off. See creditSale below.)
-  const creditSettings = resolveCreditSettings(req.user.shop);
-  const isCreditSale = paymentMethod === CREDIT_METHOD_KEY && creditSettings.enabled;
-
-  // The shop's own button list is the authority on what's a valid method —
-  // Joi only checked the key's shape, since it can't see the shop.
-  const allowedMethods = enabledMethodKeys(req.user.shop);
-  if (!allowedMethods.includes(paymentMethod) && !isCreditSale) {
-    // Coded so clients can react (refetch the shop's till buttons, drop the
-    // stale selection) rather than just surfacing the message — this fires
-    // whenever an owner removes/disables a method after it was already
-    // selected on someone else's till but before their poll/focus refetch
-    // caught up.
-    return res.status(400).json({
-      success: false,
-      code: 'PAYMENT_METHOD_UNAVAILABLE',
-      message: `'${paymentMethod}' is not one of this shop's payment methods.`,
-    });
-  }
-
-  // ── Credit preconditions ────────────────────────────────────────────────
-  // Everything cheap and shop-independent is settled here, before a
-  // transaction is opened: permission, a named customer, and that the customer
-  // belongs to this shop. The limit itself is checked inside the transaction,
-  // where it can be checked atomically.
-  let creditCustomer = null;
-  if (paymentMethod === CREDIT_METHOD_KEY && creditSettings.enabled) {
-    if (!canMakeCreditSale(req.user)) {
-      return res.status(403).json({
-        success: false,
-        code: 'CREDIT_PERMISSION_DENIED',
-        message: 'You don\'t have permission to sell on credit.',
-      });
-    }
-    if (!customerId) {
-      return res.status(400).json({
-        success: false,
-        code: 'CUSTOMER_REQUIRED',
-        message: 'Choose a customer before selling on credit.',
-      });
-    }
-    // Scoped to the shop from the session, never from the request — a customer
-    // id from another shop simply isn't found here.
-    creditCustomer = await Customer.findOne({ _id: customerId, shop }).select('_id name isActive').lean();
-    if (!creditCustomer) {
-      return res.status(404).json({ success: false, code: 'CUSTOMER_NOT_FOUND', message: 'Customer not found' });
-    }
-  }
-
-  // A customer on an ordinary (non-credit) sale: optional, and equally
-  // shop-scoped. Lets a shop attach a regular to a cash purchase without that
-  // sale becoming a debt.
-  let saleCustomer = creditCustomer;
-  if (!saleCustomer && customerId) {
-    saleCustomer = await Customer.findOne({ _id: customerId, shop }).select('_id name').lean();
-    if (!saleCustomer) {
-      return res.status(404).json({ success: false, code: 'CUSTOMER_NOT_FOUND', message: 'Customer not found' });
-    }
-  }
-
-  // With shift management on, staff must be clocked in before selling so
-  // every transaction reconciles to a drawer. Owners are exempt from the
-  // gate but their sales still link to a shift when they've opened one.
-  let activeShift = null;
-  if (req.user.shop?.shiftManagementEnabled) {
-    activeShift = await getActiveShift(req.user._id);
-    if (!activeShift && req.user.role !== 'owner') {
-      return res.status(403).json({
-        success: false,
-        code: 'SHIFT_REQUIRED',
-        message: 'Start your shift before recording sales.',
-      });
-    }
-  }
-
-  // For M-Pesa sales, verify or record the payment reference — when there is
-  // one. A shop that takes M-Pesa on a Pochi or a personal number has no STK
-  // Push and no way to produce a transaction id; that sale records like cash.
-  let mpesaTx = null;
-  if (paymentMethod === MPESA_METHOD_KEY) {
-    if (mpesaTransactionId) {
-      // Normal STK push flow — confirm the transaction succeeded
-      mpesaTx = await MpesaTransaction.findOne({ _id: mpesaTransactionId, shop, status: 'success' });
-      if (!mpesaTx) {
-        return res.status(400).json({ success: false, message: 'M-Pesa payment not confirmed. Please wait for payment confirmation before recording the sale.' });
-      }
-      if (mpesaTx.saleId) {
-        return res.status(400).json({ success: false, message: 'This M-Pesa transaction has already been linked to a sale.' });
-      }
-    } else if (mpesaReceiptNumber) {
-      // Offline manual entry — staff entered the code from the customer's confirmation SMS.
-      // Try to link to an existing Safaricom transaction if the callback has already arrived.
-      mpesaTx = await MpesaTransaction.findOne({ mpesaReceiptNumber, shop }).catch(() => null);
-      if (mpesaTx?.saleId) {
-        return res.status(400).json({ success: false, message: 'This M-Pesa receipt has already been linked to a sale.' });
-      }
-    }
-  }
   // The same key the idempotency middleware keyed this request on. Stamped
   // onto the ledger row under a unique index, so a retry can never book a
   // second debt even after the IdempotencyRecord has aged out of its 72h
   // window — a debt outliving its dedupe record is exactly the case that must
   // not double-charge a customer.
   const idempotencyKey = req.headers['x-idempotency-key'] ?? req.headers['idempotency-key'] ?? null;
-  const session = await mongoose.startSession();
 
   try {
-    let sale;
-    let saleItems;
-    let negativeStockAlerts;
-    let creditResult;
-
-    // withTransaction (not a bare startTransaction/commitTransaction pair)
-    // because MongoDB raises a WriteConflict whenever two transactions touch
-    // the same product document concurrently — two tills ringing up the same
-    // fast-moving SKU at the same moment. Manual commits surface that as a
-    // 500 at the counter; withTransaction retries transient errors for us.
-    // The body must therefore be idempotent and re-runnable: every mutation
-    // below is derived fresh from `items` on each attempt.
-    // Commission is per-seller: shops routinely put only part of the floor on
-    // commission, so staff are opted in individually.
-    //
-    // Owners never accrue it, even on lines they ring up themselves.
-    // Commission is booked as a "Staff commission" operating expense in the
-    // P&L (services/books/profitLossService.js), and an owner pays themselves
-    // no such wage — recording it would deduct a payout that never happens and
-    // understate their own profit.
-    //
-    // Resolved once outside the retry body because it can't change mid-transaction.
-    const earnsCommission = req.user.role === 'staff' && req.user.commissionEligible === true;
-
-    await session.withTransaction(async () => {
-      let totalAmount = 0;
-      let totalCommission = 0;
-      saleItems = [];
-      negativeStockAlerts = [];
-      creditResult = null;
-      // Keeps every product/bundle-component doc touched during this sale in
-      // memory so it's mutated and saved exactly once, even when referenced
-      // by more than one cart line (e.g. shared bundle components). Rebuilt
-      // per attempt — reusing docs across retries would replay stale versions.
-      const productCache = new Map();
-
-      // One round trip for the whole basket instead of one per line. A 20-item
-      // cart used to be 20 sequential queries holding the transaction (and its
-      // locks) open the entire time, which itself provoked write conflicts.
-      const productIds = [...new Set(items.map((i) => String(i.productId)))];
-      const products = await Product.find({ _id: { $in: productIds }, shop }).session(session);
-      for (const product of products) productCache.set(product._id.toString(), product);
-
-      for (const item of items) {
-        const product = productCache.get(String(item.productId));
-        if (!product) {
-          throw new SaleRejection(400, `Product with ID ${item.productId} not found in this shop`);
-        }
-
-        let resolved;
-        try {
-          resolved = await resolveSaleLine(product, item, { shop, session, productCache, negativeStockAlerts });
-        } catch (err) {
-          if (err instanceof SaleLineError) throw new SaleRejection(err.status, err.message);
-          throw err;
-        }
-
-        totalAmount += resolved.subtotal;
-        const lineCommission = earnsCommission ? (resolved.commissionAmount || 0) : 0;
-        totalCommission += lineCommission;
-        // Cost is charged on the full quantity, not the discounted/payable one:
-        // goods given away under a promotion still cost the shop money.
-        const unitCost = resolved.unitCost ?? null;
-        saleItems.push({
-          productId: product._id,
-          productName: product.name,
-          quantity: resolved.quantity,
-          unitPrice: resolved.unitPrice,
-          unitCost,
-          costTotal: unitCost === null
-            ? null
-            : Math.round(unitCost * resolved.quantity * 100) / 100,
-          subtotal: resolved.subtotal,
-          discountAmount: resolved.discountAmount || 0,
-          appliedPromotionLabel: resolved.appliedPromotionLabel,
-          commissionAmount: lineCommission,
-          variantId: resolved.variantId,
-          variantName: resolved.variantName,
-          unitOfMeasure: resolved.unitOfMeasure,
-          productType: resolved.productType,
-        });
-      }
-
-      for (const doc of productCache.values()) {
-        await doc.save({ session });
-      }
-
-      // Product credit eligibility, checked against the products this
-      // transaction actually loaded rather than anything the client asserted.
-      // Under SELECTED_PRODUCTS an unflagged product fails closed and the
-      // rejection names it, so the cashier isn't left hunting the cart.
-      if (isCreditSale) {
-        assertProductsCreditEligible([...productCache.values()], creditSettings);
-      }
-
-      [sale] = await Sale.create([{
-        shop,
-        items: saleItems,
-        totalAmount,
-        totalCommission,
-        paymentMethod,
-        paymentMethodLabel: isCreditSale && !allowedMethods.includes(paymentMethod)
-          // The shop never added a Credit button, so there is no label of
-          // theirs to snapshot. Name it plainly rather than leaving the
-          // receipt blank.
-          ? 'Credit'
-          : methodLabel(req.user.shop, paymentMethod),
-        staff: req.user._id,
-        ...(saleCustomer ? { customer: saleCustomer._id, customerName: saleCustomer.name } : {}),
-        ...(activeShift ? { shift: activeShift._id } : {}),
-        ...(mpesaTx ? {
-          mpesaTransactionId: mpesaTx._id,
-          mpesaReceiptNumber: mpesaTx.mpesaReceiptNumber,
-        } : mpesaReceiptNumber ? {
-          // Offline manual entry — receipt number recorded as-is; no linked transaction yet
-          mpesaReceiptNumber,
-        } : {}),
-      }], { session });
-
-      // Claim the M-Pesa transaction atomically, inside the same transaction
-      // as the sale it pays for. The `mpesaTx.saleId` check above ran before
-      // this transaction started, so it can't see a concurrent createSale
-      // request for the same transactionId (e.g. two client-side retries
-      // carrying different idempotency keys) — both could read `saleId: null`
-      // and both reach here. This conditional update is the actual guard:
-      // MongoDB serializes concurrent writes to the same document, so at most
-      // one of two racing transactions matches `saleId: null` and commits: the
-      // other gets a WriteConflict, withTransaction retries it, and the retry
-      // sees `saleId` already set and lands in the throw below — a clean 400,
-      // not a second sale for the same payment.
-      if (mpesaTx) {
-        const claimed = await MpesaTransaction.findOneAndUpdate(
-          { _id: mpesaTx._id, saleId: null },
-          { $set: { saleId: sale._id } },
-          { session },
-        );
-        if (!claimed) {
-          throw new SaleRejection(400, 'This M-Pesa transaction has already been linked to a sale.');
-        }
-      }
-
-      // The debt itself — booked last, with the server's own totalAmount and a
-      // server-computed due date. Nothing the client sent about limits,
-      // balances or dates is consulted anywhere in this path.
-      //
-      // Inside the same transaction as the stock movement and the sale row, so
-      // the three commit together or not at all: a shop can never end up with
-      // stock gone and no debt recorded, or a debt recorded against a sale that
-      // rolled back. bookDebt's own guard is what serializes two tills selling
-      // to the same customer at once — see creditService.
-      if (isCreditSale) {
-        creditResult = await bookDebt({
-          shop: req.user.shop,
-          customerId: creditCustomer._id,
-          amount: totalAmount,
-          settings: creditSettings,
-          user: req.user,
-          session,
-          saleId: sale._id,
-          shiftId: activeShift?._id ?? null,
-          clientRef: typeof idempotencyKey === 'string' ? idempotencyKey : null,
-        });
-      }
+    const { saleObj, creditResult, negativeStockAlerts, creditCustomerName } = await createSaleTransaction({
+      user: req.user,
+      items,
+      paymentMethod,
+      mpesaTransactionId,
+      mpesaReceiptNumber,
+      customerId,
+      idempotencyKey,
     });
 
-    const saleObj = sale.toObject();
-    saleObj.receiptToken = signReceiptToken(sale._id);
-    if (creditResult) {
-      // What the receipt and the confirmation need: when it's due, and where
-      // the customer now stands. Server-computed, so the client displays it
-      // rather than deriving it.
-      saleObj.credit = {
-        transactionId: creditResult.transaction._id,
-        dueAt: creditResult.transaction.dueAt,
-        account: summariseAccount(creditResult.customer, creditSettings),
-      };
-    }
     if (negativeStockAlerts.length > 0) {
       // Awaited (not fire-and-forget): this backend runs on Vercel, which
       // kills async work started after the response goes out.
-      await notifyOwnersNegativeStock(shop, req.user.name, negativeStockAlerts);
+      await notifyOwnersNegativeStock(req.user.shop._id, req.user.name, negativeStockAlerts);
     }
+
     res.status(201).json({
       success: true,
       data: saleObj,
       message: creditResult
-        ? `Sale recorded on ${creditCustomer.name}'s account.`
+        ? `Sale recorded on ${creditCustomerName}'s account.`
         : 'Sale recorded successfully',
     });
   } catch (error) {
     if (error instanceof SaleRejection) {
-      return res.status(error.status).json({ success: false, message: error.message });
+      return res.status(error.status).json({
+        success: false,
+        ...(error.code ? { code: error.code } : {}),
+        message: error.message,
+      });
     }
     // A credit refusal (over limit, blocked, overdue, ineligible product)
     // carries the code and the figures the till needs to explain itself.
@@ -394,8 +101,6 @@ export const createSale = async (req, res) => {
       });
     }
     throw error;
-  } finally {
-    session.endSession();
   }
 };
 

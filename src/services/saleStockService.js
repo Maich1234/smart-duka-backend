@@ -22,6 +22,7 @@ export async function restoreSaleStock(sale, session) {
   };
 
   for (const item of sale.items) {
+    if (!item.productId) continue; // a custom/service line — never touched inventory
     const product = await getProduct(item.productId);
     if (!product) continue; // deleted since the sale — nothing to restore
 

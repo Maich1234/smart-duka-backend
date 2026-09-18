@@ -3,8 +3,12 @@ import Sale from '../models/Sale.js';
 import Rating from '../models/Rating.js';
 import Shop from '../models/Shop.js';
 import SubscriptionPlan from '../models/SubscriptionPlan.js';
+import Quotation from '../models/Quotation.js';
 import { verifyReceiptToken } from '../utils/receiptToken.js';
+import { verifyQuotationToken } from '../utils/quotationToken.js';
 import { sendEmail } from '../utils/email.js';
+import { renderQuotationPdf } from '../services/quotationPdfService.js';
+import { toPdfData } from './quotationController.js';
 
 const SUPPORT_INBOX = process.env.SUPPORT_EMAIL || 'info@duqana.co.ke';
 
@@ -78,6 +82,72 @@ export const getPublicReceipt = async (req, res) => {
       rating: rating ? { stars: rating.stars, comment: rating.comment } : null,
     },
   });
+};
+
+export const getPublicQuotation = async (req, res) => {
+  const quotationId = verifyQuotationToken(req.params.token);
+  if (!quotationId) {
+    return res.status(400).json({ success: false, message: 'Invalid or unrecognized quotation code' });
+  }
+
+  const quotation = await Quotation.findById(quotationId).populate('shop', 'name phone address logoUrl currency quotationTemplate');
+  if (!quotation) {
+    return res.status(404).json({ success: false, message: 'Quotation not found' });
+  }
+
+  res.json({
+    success: true,
+    data: {
+      quoteNumber: quotation.quoteNumber,
+      shopName: quotation.shop?.name,
+      shopPhone: quotation.shop?.phone,
+      shopAddress: quotation.shop?.address,
+      shopLogoUrl: quotation.shop?.logoUrl,
+      currency: quotation.shop?.currency,
+      template: quotation.shop?.quotationTemplate,
+      customerSnapshot: quotation.customerSnapshot,
+      items: quotation.items.map((i) => ({
+        name: i.name,
+        description: i.description,
+        quantity: i.quantity,
+        unitPrice: i.unitPrice,
+        subtotal: i.subtotal,
+      })),
+      subtotal: quotation.subtotal,
+      taxRate: quotation.taxRate,
+      taxAmount: quotation.taxAmount,
+      total: quotation.total,
+      notes: quotation.notes,
+      validUntil: quotation.validUntil,
+      status: quotation.status,
+      createdAt: quotation.createdAt,
+    },
+  });
+};
+
+/**
+ * GET /public/quotation/:token/pdf — the same token mechanism as
+ * getPublicQuotation, rendered as a downloadable PDF. Populates the same
+ * shop fields toPdfData reads, plus quotationTemplate for template choice.
+ */
+export const getPublicQuotationPdf = async (req, res) => {
+  const quotationId = verifyQuotationToken(req.params.token);
+  if (!quotationId) {
+    return res.status(400).json({ success: false, message: 'Invalid or unrecognized quotation code' });
+  }
+
+  const quotation = await Quotation.findById(quotationId).populate('shop', 'name phone address quotationTemplate currency');
+  if (!quotation) {
+    return res.status(404).json({ success: false, message: 'Quotation not found' });
+  }
+
+  const buffer = await renderQuotationPdf(
+    toPdfData(quotation, quotation.shop),
+    quotation.shop.quotationTemplate || 'classic',
+  );
+  res.set('Content-Type', 'application/pdf');
+  res.set('Content-Disposition', `inline; filename="${quotation.quoteNumber}.pdf"`);
+  res.send(buffer);
 };
 
 export const submitPublicRating = async (req, res) => {

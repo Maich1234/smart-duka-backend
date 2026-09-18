@@ -25,7 +25,7 @@ const ROW_HEIGHT = 18;
 const FONT_SIZE = 8.5;
 
 /** Replaces glyphs the standard fonts can't encode, rather than throwing. */
-function sanitize(value) {
+export function sanitize(value) {
   return String(value ?? '')
     .replace(/[–—]/g, '-')
     .replace(/[’‘]/g, "'")

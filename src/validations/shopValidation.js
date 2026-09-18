@@ -48,6 +48,7 @@ export const updateShopConfigSchema = Joi.object({
   purchaseCostAllocationMethod: Joi.string().valid('quantity', 'value', 'none').optional(),
   aiEnabled: Joi.boolean().optional(),
   barcodeScanningEnabled: Joi.boolean().optional(),
+  quotationTemplate: Joi.string().valid('classic', 'modern', 'minimal').optional(),
   paymentMethods: paymentMethodsSchema.optional(),
   // Partial by design — the Settings screen writes one field at a time. The
   // controller merges rather than replaces, so sending { enabled: true } never
