@@ -18,7 +18,7 @@ const shopConfigPayload = (shop) => ({
   // Same reasoning: a shop created before credit existed has no subdocument,
   // and the till needs to know credit is off rather than read `undefined`.
   creditSettings: resolveCreditSettings(shop),
-  capabilities: { guardedCreditSale: true },
+  capabilities: { guardedCreditSale: true, guardedQuotationMutations: true },
 });
 
 export const getShopConfig = async (req, res) => {

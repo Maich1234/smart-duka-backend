@@ -522,6 +522,7 @@ test('updateQuotation: recomputes subtotal/total from the new items, ignoring th
   stubQuotationFindOne(quotationDoc({ _id: 'q1', status: 'draft' }));
   stubCustomerFindOne({ _id: CUSTOMER_ID, name: 'Jane' });
   stubProductFind([{ _id: PRODUCT_ID, name: 'Haircut', sellingPrice: 300 }]);
+  mock.method(Quotation, 'findOneAndUpdate', async (filter, update) => quotationDoc({ _id: 'q1', ...update.$set }));
 
   const res = makeRes();
   await updateQuotation(makeReq({
@@ -543,6 +544,18 @@ test('updateQuotation: recomputes subtotal/total from the new items, ignoring th
   // to a Sale either.
   assert.equal(res.body.data.taxAmount, 0);
   assert.equal(res.body.data.total, 300);
+});
+
+test('updateQuotation: rejects a concurrent quotation change using its version', async () => {
+  stubQuotationFindOne(quotationDoc({ _id: 'q1', status: 'draft', __v: 3 }));
+  stubCustomerFindOne({ _id: CUSTOMER_ID, name: 'Jane' });
+  let filter;
+  mock.method(Quotation, 'findOneAndUpdate', async (query) => { filter = query; return null; });
+  const res = makeRes();
+  await updateQuotation(makeReq({ role: 'owner', params: { id: 'q1' }, body: { customerId: CUSTOMER_ID, items: [{ name: 'X', quantity: 1, unitPrice: 1 }], validUntil: '2026-12-01' } }), res);
+  assert.equal(res.statusCode, 409);
+  assert.equal(filter.__v, 3);
+  assert.equal(filter.status, 'draft');
 });
 
 // ── declineQuotation ─────────────────────────────────────────────────────────
@@ -612,11 +625,24 @@ test('deleteQuotation: refuses to delete a converted quotation', async () => {
 test('deleteQuotation: deletes a draft quotation', async () => {
   const doc = quotationDoc({ _id: 'q1', status: 'draft' });
   stubQuotationFindOne(doc);
+  let filter;
+  mock.method(Quotation, 'findOneAndDelete', async (query) => { filter = query; return doc; });
   const res = makeRes();
   await deleteQuotation(makeReq({ role: 'owner', params: { id: 'q1' } }), res);
 
   assert.equal(res.statusCode, 200);
-  assert.equal(doc.deleted, true);
+  assert.equal(filter.shop, SHOP_ID);
+  assert.deepEqual(filter.status.$in, ['draft', 'declined']);
+});
+
+test('deleteQuotation: refuses deletion when the quotation changed after lookup', async () => {
+  stubQuotationFindOne(quotationDoc({ _id: 'q1', status: 'draft', __v: 4 }));
+  let filter;
+  mock.method(Quotation, 'findOneAndDelete', async (query) => { filter = query; return null; });
+  const res = makeRes();
+  await deleteQuotation(makeReq({ role: 'owner', params: { id: 'q1' } }), res);
+  assert.equal(res.statusCode, 409);
+  assert.equal(filter.__v, 4);
 });
 
 // ── convertQuotation ─────────────────────────────────────────────────────────
@@ -863,7 +889,9 @@ test('convertQuotation: beforeCommit\'s atomic guard rejects a race the initial 
     return [{ ...docs[0], _id: 'sale-x', toObject: () => ({ ...docs[0], _id: 'sale-x' }) }];
   });
   let updateOptions;
+  let updateFilter;
   mock.method(Quotation, 'findOneAndUpdate', async (filter, update, options) => {
+    updateFilter = filter;
     updateOptions = options;
     return null; // another convert already won — the DB no longer matches status: 'draft'
   });
@@ -871,9 +899,10 @@ test('convertQuotation: beforeCommit\'s atomic guard rejects a race the initial 
   const res = makeRes();
   await convertQuotation(makeReq({ role: 'owner', params: { id: 'q1' }, body: { paymentMethod: 'cash' } }), res);
 
-  assert.equal(res.statusCode, 400);
+  assert.equal(res.statusCode, 409);
   assert.match(res.body.message, /already converted/);
   assert.equal(saleCreateCalls, 1, 'the sale attempt happens inside the transaction, before beforeCommit aborts it');
+  assert.equal(updateFilter.shop, SHOP_ID);
   assert.equal(updateOptions.session, sessions[0], "beforeCommit's update must run on the transaction's own session, not a separate one");
 });
 

@@ -350,7 +350,9 @@ export const updateQuotation = async (req, res) => {
   }
 
   // See createQuotation's comment: quotations never carry tax.
-  quotation.set({
+  const updated = await Quotation.findOneAndUpdate(
+    { _id: req.params.id, shop, status: 'draft', __v: quotation.__v },
+    { $inc: { __v: 1 }, $set: {
     customer: customer._id,
     customerSnapshot: { name: customer.name, phone: customer.phone || '', email: customer.email || '' },
     items: resolved,
@@ -360,10 +362,12 @@ export const updateQuotation = async (req, res) => {
     total: subtotal,
     notes: notes || '',
     validUntil,
-  });
-  await quotation.save();
+    } },
+    { new: true, runValidators: true },
+  );
+  if (!updated) return res.status(409).json({ success: false, message: 'This quotation changed. Refresh it before editing.' });
 
-  res.json({ success: true, data: present(quotation) });
+  res.json({ success: true, data: present(updated) });
 };
 
 export const declineQuotation = async (req, res) => {
@@ -390,7 +394,8 @@ export const deleteQuotation = async (req, res) => {
   if (quotation.status === 'converted') {
     return res.status(400).json({ success: false, message: 'A converted quotation cannot be deleted — see its linked sale instead.' });
   }
-  await quotation.deleteOne();
+  const deleted = await Quotation.findOneAndDelete({ _id: req.params.id, shop: req.user.shop._id, status: { $in: ['draft', 'declined'] }, __v: quotation.__v });
+  if (!deleted) return res.status(409).json({ success: false, message: 'This quotation changed. Refresh it before deleting.' });
   res.json({ success: true, message: 'Quotation deleted' });
 };
 
@@ -457,12 +462,12 @@ export const convertQuotation = async (req, res) => {
       // before a second Sale can ever be committed.
       beforeCommit: async (session, sale) => {
         const updated = await Quotation.findOneAndUpdate(
-          { _id: quotation._id, status: 'draft' },
+          { _id: quotation._id, shop, status: 'draft', __v: quotation.__v },
           { $set: { status: 'converted', convertedSale: sale._id } },
           { session },
         );
         if (!updated) {
-          throw new SaleRejection(400, 'This quotation was already converted.');
+          throw new SaleRejection(409, 'This quotation was already converted or changed. Refresh it before trying again.');
         }
       },
     });
