@@ -50,7 +50,7 @@ export const createSale = async (req, res) => {
     return res.status(403).json({ success: false, message: 'Permission denied' });
   }
 
-  const { items, paymentMethod, mpesaTransactionId, mpesaReceiptNumber, customerId } = req.body;
+  const { items, paymentMethod, mpesaTransactionId, mpesaReceiptNumber, customerId, requireCreditBooking } = req.body;
   // The same key the idempotency middleware keyed this request on. Stamped
   // onto the ledger row under a unique index, so a retry can never book a
   // second debt even after the IdempotencyRecord has aged out of its 72h
@@ -67,6 +67,7 @@ export const createSale = async (req, res) => {
       mpesaReceiptNumber,
       customerId,
       idempotencyKey,
+      requireCreditBooking,
     });
 
     if (negativeStockAlerts.length > 0) {

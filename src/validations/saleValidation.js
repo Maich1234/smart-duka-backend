@@ -36,6 +36,7 @@ export const createSaleSchema = Joi.object({
   // because the confirmation sheet displays all four and it must be obvious
   // that displaying them is not the same as trusting them.
   customerId: Joi.string().hex().length(24).optional(),
+  requireCreditBooking: Joi.boolean().optional(),
 }).unknown(false);
 
 export const saleQuerySchema = Joi.object({

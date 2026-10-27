@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import Product from '../models/Product.js';
+import Shop from '../models/Shop.js';
 import Sale from '../models/Sale.js';
 import MpesaTransaction from '../models/MpesaTransaction.js';
 import Customer from '../models/Customer.js';
@@ -54,6 +55,7 @@ export const createSaleTransaction = async ({
   mpesaReceiptNumber,
   customerId,
   idempotencyKey,
+  requireCreditBooking,
   beforeCommit,
 }) => {
   const shop = user.shop._id;
@@ -66,6 +68,9 @@ export const createSaleTransaction = async ({
   // the module is off. See creditSale below.)
   const creditSettings = resolveCreditSettings(user.shop);
   const isCreditSale = paymentMethod === CREDIT_METHOD_KEY && creditSettings.enabled;
+  if (requireCreditBooking && !isCreditSale) {
+    throw new SaleRejection(409, 'Credit is no longer available. Refresh shop settings before selling.', 'CREDIT_UNAVAILABLE');
+  }
 
   // The shop's own button list is the authority on what's a valid method —
   // Joi only checked the key's shape, since it can't see the shop.
@@ -174,6 +179,16 @@ export const createSaleTransaction = async ({
     const earnsCommission = user.role === 'staff' && user.commissionEligible === true;
 
     await session.withTransaction(async () => {
+      // Serialize the guarded sale with changes to this shop's credit setting.
+      // An actual write forces a transaction conflict if another request toggles it.
+      if (requireCreditBooking) {
+        const enabledShop = await Shop.findOneAndUpdate(
+          { _id: shop, 'creditSettings.enabled': true },
+          { $inc: { __v: 1 } },
+          { session, new: true },
+        );
+        if (!enabledShop) throw new SaleRejection(409, 'Credit is no longer available. Refresh shop settings before selling.', 'CREDIT_UNAVAILABLE');
+      }
       let totalAmount = 0;
       let totalCommission = 0;
       saleItems = [];
