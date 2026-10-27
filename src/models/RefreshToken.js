@@ -5,6 +5,7 @@ import mongoose from 'mongoose';
 // token revokes it and issues a replacement; presenting an already-revoked
 // token is treated as theft and revokes every session for that user.
 const refreshTokenSchema = new mongoose.Schema({
+  sessionId: { type: String },
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   tokenHash: { type: String, required: true, unique: true },
   expiresAt: { type: Date, required: true },
@@ -27,6 +28,7 @@ const refreshTokenSchema = new mongoose.Schema({
 });
 
 // Mongo removes expired docs shortly after expiresAt passes.
+refreshTokenSchema.index({ user: 1, sessionId: 1, revokedAt: 1, expiresAt: 1 });
 refreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 export default mongoose.model('RefreshToken', refreshTokenSchema);

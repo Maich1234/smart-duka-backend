@@ -110,3 +110,30 @@ test('rejects an item referencing a product outside this shop', async () => {
   assert.equal(res.statusCode, 400);
   assert.match(res.body.message, /not found in this shop/);
 });
+
+test('M-Pesa payment amount must match the server total before sale creation', async () => {
+  mock.method(MpesaTransaction, 'findOne', async () => ({ _id:'mtx1', status:'success', saleId:null, amount:1 }));
+  mock.method(Product, 'find', () => ({ session: async () => [PRODUCT] }));
+  const create = mock.method(Sale, 'create', async () => { throw new Error('must not create sale'); });
+  const res = makeRes();
+  await createSale(makeReq({ items:[{productId:String(PRODUCT._id),quantity:1}], paymentMethod:'mpesa', mpesaTransactionId:'mtx1' }),res);
+  assert.equal(res.statusCode,409);
+  assert.equal(create.mock.callCount(),0);
+});
+
+test('durable keyed sale replays its committed result without touching stock', async () => {
+  const { default: SaleOperation } = await import('../src/models/SaleOperation.js');
+  let stored;
+  mock.method(SaleOperation, 'findOne', () => ({ lean: async () => stored ?? null }));
+  mock.method(SaleOperation, 'create', async (rows, options) => { assert.ok(options.session); stored=rows[0]; return rows; });
+  mock.method(Product, 'find', () => ({ session: async () => [PRODUCT] }));
+  const create=mock.method(Sale,'create',async docs=>[{...docs[0],_id:'sale1',toObject:()=>({...docs[0],_id:'sale1'})}]);
+  const req=makeReq({items:[{productId:String(PRODUCT._id),quantity:1}],headers:{'x-idempotency-key':'stable-sale'}});
+  const first=makeRes(); await createSale(req,first);
+  const second=makeRes(); await createSale(req,second);
+  assert.equal(first.statusCode,201); assert.equal(second.statusCode,201);
+  assert.equal(create.mock.callCount(),1); assert.equal(second.body.data._id,'sale1');
+  req.body.items[0].quantity=2;
+  const conflict=makeRes(); await createSale(req,conflict);
+  assert.equal(conflict.statusCode,409);
+});

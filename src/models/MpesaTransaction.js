@@ -19,6 +19,7 @@ const mpesaTransactionSchema = new mongoose.Schema({
   // Transaction details
   phoneNumber: { type: String, required: true },
   amount: { type: Number, required: true },
+  confirmedAmount: Number,
   accountReference: { type: String },
   status: {
     type: String,

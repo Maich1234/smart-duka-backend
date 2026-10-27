@@ -197,6 +197,14 @@ export const updateProduct = async (req, res) => {
     return res.status(400).json({ success: false, message: bundleError });
   }
 
+  if (Array.isArray(req.body.variants)) {
+    const owned = new Set((product.variants ?? []).map(v => String(v._id)));
+    const supplied = req.body.variants.filter(v => v._id).map(v => String(v._id));
+    if (supplied.some(id => !owned.has(id)) || new Set(supplied).size !== supplied.length) {
+      return res.status(400).json({ success: false, message: 'Variant references must belong to this product and be unique.' });
+    }
+  }
+
   // Updates are partial: a request may change `commission` without resending
   // `sellingPrice` (or vice versa). Validate the merged result, or a floor
   // could be slipped above a price that simply wasn't in this payload.

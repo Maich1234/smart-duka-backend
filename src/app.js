@@ -44,7 +44,8 @@ app.use(async (req, res, next) => {
 });
 
 app.use(cors());
-app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+// Log route categories, never URLs containing callback or public bearer tokens.
+app.use(morgan(':method :status :response-time ms'));
 // 1 MB cap — largest legitimate payload is a product with variants (~ a few
 // KB); anything bigger is abuse or a client bug.
 // rawBody is kept alongside the parsed body for Paystack's webhook signature

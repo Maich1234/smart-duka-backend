@@ -6,6 +6,7 @@ import mongoose from 'mongoose';
 // outcome instead of re-executing it — e.g. a sale that committed but whose
 // response was lost to a timeout must not decrement stock twice.
 const idempotencyRecordSchema = new mongoose.Schema({
+  digest: String,
   key: { type: String, required: true },
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   method: { type: String, required: true },

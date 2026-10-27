@@ -454,6 +454,7 @@ export const convertQuotation = async (req, res) => {
       mpesaReceiptNumber,
       customerId: String(quotation.customer),
       idempotencyKey,
+      operationScope: `quotation:${quotation._id}`,
       // Runs inside the same Mongo transaction as the Sale write. The
       // status: 'draft' filter is the idempotency guard: a retried request
       // (offline queue replay, double-tap) finds the quotation already

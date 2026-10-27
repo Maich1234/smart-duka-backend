@@ -3,6 +3,7 @@ import { METHOD_KEY_PATTERN } from '../constants/salePaymentMethods.js';
 import { nextInvoiceNumber } from '../services/invoiceNumberService.js';
 
 const saleItemSchema = new mongoose.Schema({
+
   // Absent for a custom/free-text line (see the Quotation convert-to-sale
   // flow) — every reader of this field must treat a missing productId as "no
   // catalog product," not as a data error.
@@ -96,6 +97,8 @@ const saleItemSchema = new mongoose.Schema({
 });
 
 const saleSchema = new mongoose.Schema({
+  mpesaPaidAmount: Number,
+  paymentRoundingDifference: Number,
   shop: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Shop',

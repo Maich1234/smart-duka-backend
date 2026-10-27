@@ -1,3 +1,4 @@
+import { requestDigest } from '../utils/requestDigest.js';
 import IdempotencyRecord from '../models/IdempotencyRecord.js';
 
 // Replays the stored response for retried mutations carrying the same
@@ -19,8 +20,10 @@ const idempotency = async (req, res, next) => {
   const key = req.headers['x-idempotency-key'] ?? req.headers['idempotency-key'];
   if (!key || typeof key !== 'string' || key.length > 128 || !req.user) return next();
 
+  const digest = requestDigest({ method: req.method, path: req.originalUrl, body: req.body });
   try {
     await IdempotencyRecord.create({
+      digest,
       key,
       user: req.user._id,
       method: req.method,
@@ -29,6 +32,9 @@ const idempotency = async (req, res, next) => {
   } catch (err) {
     if (err.code !== 11000) return next(err);
     const existing = await IdempotencyRecord.findOne({ user: req.user._id, key });
+    if (existing && ((existing.method && existing.method !== req.method) || (existing.path && existing.path !== req.originalUrl) || (existing.digest && existing.digest !== digest))) {
+      return res.status(409).json({ success: false, message: 'This request key was already used for another operation.' });
+    }
     if (existing?.statusCode) {
       res.set('X-Idempotent-Replay', 'true');
       return res

@@ -212,7 +212,6 @@ export const getTransactionStatus = async (req, res) => {
  * Validates, updates the transaction record, and prevents duplicate processing.
  */
 export const handleCallback = async (req, res) => {
-  res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
 
   try {
     const parsed = parseSTKCallback(req.body);
@@ -223,16 +222,20 @@ export const handleCallback = async (req, res) => {
 
     if (!transaction) {
       console.error('[M-Pesa Callback] Unknown checkoutRequestId:', parsed.checkoutRequestId);
-      return;
+      return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
     }
 
-    if (transaction.status !== 'pending') return;
+    if (transaction.status !== 'pending') return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
 
     transaction.callbackPayload = req.body;
     transaction.callbackReceivedAt = new Date();
     transaction.resultCode = String(parsed.resultCode);
 
-    if (parsed.success) {
+    if (parsed.success && (!Number.isFinite(Number(parsed.amount)) || Number(parsed.amount) !== Math.ceil(transaction.amount))) {
+      transaction.status = 'failed';
+      transaction.errorMessage = 'Confirmed payment amount differs from the requested amount. Manual reconciliation required.';
+    } else if (parsed.success) {
+      transaction.confirmedAmount = Number(parsed.amount);
       transaction.status = 'success';
       transaction.mpesaReceiptNumber = parsed.mpesaReceiptNumber;
       transaction.transactionDate = new Date();
@@ -251,15 +254,17 @@ export const handleCallback = async (req, res) => {
 
     await transaction.save();
 
-    logAudit({
+    await logAudit({
       shopId: transaction.shop,
       action: `mpesa.callback.${transaction.status}`,
       entityType: 'MpesaTransaction',
       entityId: transaction._id,
       details: { resultCode: parsed.resultCode, mpesaReceiptNumber: parsed.mpesaReceiptNumber },
     }).catch(() => {});
+    return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
   } catch (err) {
     console.error('[M-Pesa Callback] Processing error:', err.message);
+    return res.status(503).json({ success: false, message: 'Could not persist callback. Retry later.' });
   }
 };
 

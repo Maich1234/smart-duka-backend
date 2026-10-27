@@ -24,6 +24,7 @@ const INTENTIONAL_REVOCATION_REASONS = new Set([
 export const issueRefreshToken = async (userId, device = {}) => {
   const raw = crypto.randomBytes(48).toString('hex');
   await RefreshToken.create({
+    sessionId: device.sessionId ?? crypto.randomUUID(),
     user: userId,
     tokenHash: hashToken(raw),
     expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
@@ -82,12 +83,14 @@ export const rotateRefreshToken = async (raw) => {
     throw new RefreshTokenError('Session expired. Please sign in again.');
   }
 
+  const sessionId = doc.sessionId ?? crypto.randomUUID();
   const newRaw = await issueRefreshToken(doc.user, {
+    sessionId,
     deviceId: doc.deviceId,
     deviceName: doc.deviceName,
     platform: doc.platform,
   });
-  return { userId: doc.user, refreshToken: newRaw };
+  return { userId: doc.user, refreshToken: newRaw, sessionId };
 };
 
 /** Best-effort revocation on logout. Unknown tokens are ignored. */

@@ -1,4 +1,6 @@
 import mongoose from 'mongoose';
+import SaleOperation from '../models/SaleOperation.js';
+import { requestDigest } from '../utils/requestDigest.js';
 import Product from '../models/Product.js';
 import Shop from '../models/Shop.js';
 import Sale from '../models/Sale.js';
@@ -57,8 +59,19 @@ export const createSaleTransaction = async ({
   idempotencyKey,
   requireCreditBooking,
   beforeCommit,
+  operationScope = 'sale',
 }) => {
   const shop = user.shop._id;
+  const operationKey = typeof idempotencyKey === 'string' && idempotencyKey.length <= 128 && idempotencyKey ? idempotencyKey : null;
+  const digest = operationKey ? requestDigest({ shop: String(shop), operationScope, items, paymentMethod, mpesaTransactionId, mpesaReceiptNumber, customerId, requireCreditBooking }) : null;
+  const replay = async () => {
+    const stored = await SaleOperation.findOne({ user: user._id, key: operationKey }).lean();
+    if (!stored) return null;
+    if (stored.digest !== digest) throw new SaleRejection(409, 'This sale reference belongs to a different request.', 'IDEMPOTENCY_CONFLICT');
+    return { ...stored.result, negativeStockAlerts: [], creditResult: null };
+  };
+  if (operationKey) { const prior = await replay(); if (prior) return prior; }
+
 
   // Credit is behaviour, not a label: once the owner switches the module on,
   // the till may take credit whether or not they ever added the button to
@@ -155,6 +168,7 @@ export const createSaleTransaction = async ({
 
   try {
     let sale;
+    let saleObj;
     let saleItems;
     let negativeStockAlerts;
     let creditResult;
@@ -277,6 +291,9 @@ export const createSaleTransaction = async ({
         assertProductsCreditEligible([...productCache.values()], creditSettings);
       }
 
+      if (mpesaTx && (!Number.isFinite(mpesaTx.amount) || Math.abs(mpesaTx.amount - totalAmount) > 0.005 || (mpesaTx.confirmedAmount != null && mpesaTx.confirmedAmount !== Math.ceil(totalAmount)))) {
+        throw new SaleRejection(409, 'The confirmed M-Pesa amount does not match this sale. Reconcile the payment before continuing.', 'PAYMENT_AMOUNT_MISMATCH');
+      }
       [sale] = await Sale.create([{
         shop,
         items: saleItems,
@@ -293,6 +310,8 @@ export const createSaleTransaction = async ({
         ...(saleCustomer ? { customer: saleCustomer._id, customerName: saleCustomer.name } : {}),
         ...(activeShift ? { shift: activeShift._id } : {}),
         ...(mpesaTx ? {
+          mpesaPaidAmount: mpesaTx.confirmedAmount ?? Math.ceil(mpesaTx.amount),
+          paymentRoundingDifference: (mpesaTx.confirmedAmount ?? Math.ceil(mpesaTx.amount)) - totalAmount,
           mpesaTransactionId: mpesaTx._id,
           mpesaReceiptNumber: mpesaTx.mpesaReceiptNumber,
         } : mpesaReceiptNumber ? {
@@ -314,7 +333,7 @@ export const createSaleTransaction = async ({
       // not a second sale for the same payment.
       if (mpesaTx) {
         const claimed = await MpesaTransaction.findOneAndUpdate(
-          { _id: mpesaTx._id, saleId: null },
+          { _id: mpesaTx._id, saleId: null, status: 'success', amount: mpesaTx.amount },
           { $set: { saleId: sale._id } },
           { session },
         );
@@ -349,20 +368,13 @@ export const createSaleTransaction = async ({
       if (beforeCommit) {
         await beforeCommit(session, sale);
       }
+      saleObj = sale.toObject();
+      saleObj.receiptToken = signReceiptToken(sale._id);
+      if (creditResult) saleObj.credit = { transactionId: creditResult.transaction._id, dueAt: creditResult.transaction.dueAt, account: summariseAccount(creditResult.customer, creditSettings) };
+      if (operationKey) {
+        await SaleOperation.create([{ user: user._id, key: operationKey, digest, result: { saleObj, creditCustomerName: creditCustomer?.name ?? null } }], { session });
+      }
     });
-
-    const saleObj = sale.toObject();
-    saleObj.receiptToken = signReceiptToken(sale._id);
-    if (creditResult) {
-      // What the receipt and the confirmation need: when it's due, and where
-      // the customer now stands. Server-computed, so the client displays it
-      // rather than deriving it.
-      saleObj.credit = {
-        transactionId: creditResult.transaction._id,
-        dueAt: creditResult.transaction.dueAt,
-        account: summariseAccount(creditResult.customer, creditSettings),
-      };
-    }
 
     return {
       sale,
@@ -371,6 +383,9 @@ export const createSaleTransaction = async ({
       negativeStockAlerts,
       creditCustomerName: creditCustomer?.name ?? null,
     };
+  } catch (error) {
+    if (operationKey && error.code === 11000) { const prior = await replay(); if (prior) return prior; }
+    throw error;
   } finally {
     session.endSession();
   }

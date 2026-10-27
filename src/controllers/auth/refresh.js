@@ -13,7 +13,7 @@ import {
  */
 export const refresh = async (req, res) => {
   try {
-    const { userId, refreshToken } = await rotateRefreshToken(req.body?.refreshToken);
+    const { userId, refreshToken, sessionId } = await rotateRefreshToken(req.body?.refreshToken);
 
     // Deactivated / deleted accounts must not be able to mint access tokens.
     const user = await User.findById(userId).select('isActive');
@@ -23,7 +23,7 @@ export const refresh = async (req, res) => {
 
     res.json({
       success: true,
-      data: { token: generateToken(userId), refreshToken },
+      data: { token: generateToken(userId, sessionId), refreshToken },
     });
   } catch (err) {
     if (err instanceof RefreshTokenError) {
