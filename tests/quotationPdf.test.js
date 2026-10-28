@@ -61,6 +61,7 @@ function decodePdfTextStreams(buffer) {
 
 const sample = {
   quoteNumber: 'QUO-2609-00001',
+  verifyUrl: 'https://www.duqana.co.ke/q/test-signed-quotation',
   shopName: 'Test Plumbing Co',
   shopPhone: '0712345678',
   shopAddress: '123 Moi Avenue, Nairobi',
@@ -171,4 +172,16 @@ test('renderQuotationPdf sanitizes non-Latin-1 script in every free-text field b
     assert.match(drawnText, /Thanks for your business/, `${template}: notes`);
     assert.match(drawnText, /Nairobi\s*Road/, `${template}: shop address`);
   }
+});
+
+for (const template of ['classic', 'modern', 'minimal']) {
+  test(`${template} PDF includes the original-document validation link and instructions`, async () => {
+    const pdf = await renderQuotationPdf(sample, template);
+    assert.match(pdf.toString('latin1'), /\/URI \(https:\/\/www\.duqana\.co\.ke\/q\/test-signed-quotation\)/);
+    assert.match(decodePdfTextStreams(pdf).drawnText, /Validate this quotation/);
+  });
+}
+test('quotation PDFs cannot silently omit validation', async () => {
+  const { verifyUrl, ...missing } = sample;
+  await assert.rejects(renderQuotationPdf(missing, 'classic'), /requires a validation URL/);
 });

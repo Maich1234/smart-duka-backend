@@ -142,6 +142,7 @@ function present(quotation) {
 /** Shapes a quotation + its shop into renderQuotationPdf's input — shared with publicController.js's getPublicQuotationPdf. */
 export const toPdfData = (quotation, shop) => ({
   quoteNumber: quotation.quoteNumber,
+  verifyUrl: `${PUBLIC_WEB_URL}/q/${signQuotationToken(quotation._id)}`,
   shopName: shop.name,
   shopPhone: shop.phone,
   shopAddress: shop.address,
