@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import QRCode from 'qrcode';
 import { sanitize } from './books/renderers/pdf.js';
 
 /**
@@ -95,13 +96,34 @@ function drawItemsTable(doc, data, { headerColor, top }) {
 }
 
 function drawFooter(doc, data, y) {
-  doc.fontSize(8).fillColor('#666');
+  doc.font('Helvetica').fontSize(8).fillColor('#666');
   if (data.notes) {
+    const height = doc.heightOfString(data.notes, { width: 495 });
+    if (y + height + 30 > doc.page.height - 50) { doc.addPage(); y = 50; }
     doc.text('Notes', 50, y);
     doc.text(data.notes, 50, y + 12, { width: 495 });
-    y += 40;
+    y = doc.y + 16;
   }
+  if (y + 155 > doc.page.height - 45) { doc.addPage(); y = 50; }
   doc.text(`Valid until ${formatDate(data.validUntil)}. This is a quotation, not a tax invoice.`, 50, y, { width: 495, align: 'center' });
+  y += 28;
+  // Local vector generation keeps customer documents off third-party QR APIs.
+  // Include a four-module quiet zone so paper copies remain scannable.
+  const { modules } = QRCode.create(data.verifyUrl, { errorCorrectionLevel: 'M' });
+  const size = 110;
+  const quiet = 4;
+  const scale = size / (modules.size + quiet * 2);
+  doc.save().rect(50, y, size, size).fill('#ffffff');
+  doc.fillColor('#000000');
+  for (let row = 0; row < modules.size; row++) {
+    for (let col = 0; col < modules.size; col++) {
+      if (modules.get(row, col)) doc.rect(50 + (col + quiet) * scale, y + (row + quiet) * scale, scale, scale).fill();
+    }
+  }
+  doc.restore();
+  doc.font('Helvetica-Bold').fontSize(10).fillColor('#0F766E').text('Validate this quotation', 180, y + 20, { width: 340 });
+  doc.font('Helvetica').fontSize(9).fillColor('#666').text('Scan to view the original on DuQana and compare its number, items and total with this PDF.', 180, y + 40, { width: 340 });
+  doc.fillColor('#0F766E').text('Open original quotation', 180, y + 80, { width: 340, link: data.verifyUrl, underline: true });
 }
 
 function classicTemplate(doc, data) {
@@ -169,6 +191,7 @@ export const renderQuotationPdf = async (data, template) => {
   if (!render) {
     throw new Error(`Unknown quotation template: ${template}`);
   }
+  if (!data.verifyUrl) throw new Error('A quotation PDF requires a validation URL.');
   const doc = new PDFDocument({ size: 'A4', margin: 0 });
   render(doc, sanitizeQuotationData(data));
   return bufferFromDoc(doc);
