@@ -26,6 +26,8 @@ const subscriptionPaymentSchema = new mongoose.Schema({
   // Always computed server-side by subscriptionPricingService — never client input.
   amount: { type: Number, required: true, min: 0 },
   additionalCharge: { type: Number, default: 0, min: 0 },
+  // Exact accrued staff lines included in this invoice. Undefined for legacy payments.
+  seatAdjustmentIds: { type: [mongoose.Schema.Types.ObjectId], default: undefined },
   currency: { type: String, default: 'KES', uppercase: true, trim: true },
   // 'free': the server-computed price was covered entirely by a promo/
   // referral discount — no provider was ever charged.
