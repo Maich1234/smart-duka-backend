@@ -25,6 +25,7 @@ import { withMpesaCallbackSecret } from '../services/mpesaService.js';
 import { logAudit } from '../services/auditLogService.js';
 import { cleanupFailedSeatPayment } from '../domains/billing/application/seatCleanup.js';
 import { applySuccessfulPayment } from '../domains/billing/application/applySuccessfulPayment.js';
+import { recordPaymentOutcome } from '../domains/billing/application/recordPaymentOutcome.js';
 import { activateFreeSubscription } from '../domains/billing/application/activateFreeSubscription.js';
 import { reconcilePayment } from '../domains/billing/application/reconcilePayment.js';
 import { paystackAmountMismatch } from '../domains/billing/domain/fraud.js';
@@ -36,6 +37,15 @@ import { sendEmail } from '../utils/email.js';
 import { renderSubscriptionEmail, SUBSCRIPTION_UNSUBSCRIBE_MAILTO } from '../utils/emailTemplates.js';
 
 const shopIdOf = (req) => req.user.shop._id ?? req.user.shop;
+
+// The provider can confirm money before activation commits. Keep the client
+// waiting instead of displaying a finished receipt while access is still locked.
+function paymentClientState(payment) {
+  if (payment.status === 'success' && payment.purpose !== 'seat_addition' && !payment.periodEnd) {
+    return { status: 'pending', errorMessage: 'Payment confirmed. We are finishing your subscription activation.' };
+  }
+  return { status: payment.status, errorMessage: payment.errorMessage ?? null };
+}
 
 /** Seeds the default Starter/Growth/Business plans the first time the API is hit. */
 async function ensureDefaultPlans() {
@@ -518,14 +528,13 @@ export const initiatePayment = async (req, res) => {
           idempotent: true,
           data: {
             paymentId: existing._id,
-            status: existing.status,
+            ...paymentClientState(existing),
             amount: existing.amount,
             receipt: existing.receipt ?? null,
-            errorMessage: existing.errorMessage ?? null,
           },
-          message: existing.status === 'pending'
+          message: paymentClientState(existing).status === 'pending'
             ? 'Payment request already sent. Keep waiting for the M-PESA PIN prompt.'
-            : `Duplicate request — payment already ${existing.status}.`,
+            : `Duplicate request — payment already ${paymentClientState(existing).status}.`,
         });
       }
     }
@@ -613,8 +622,8 @@ export const initiatePayment = async (req, res) => {
             return res.json({
               success: true,
               idempotent: true,
-              data: { paymentId: existing._id, status: existing.status, amount: existing.amount },
-              message: existing.status === 'success' ? 'Already activated.' : `Duplicate request — payment already ${existing.status}.`,
+              data: { paymentId: existing._id, ...paymentClientState(existing), amount: existing.amount },
+              message: paymentClientState(existing).status === 'success' ? 'Already activated.' : `Duplicate request — payment already ${paymentClientState(existing).status}.`,
             });
           }
         }
@@ -696,7 +705,7 @@ export const initiatePayment = async (req, res) => {
           return res.json({
             success: true,
             idempotent: true,
-            data: { paymentId: existing._id, status: existing.status, amount: existing.amount },
+            data: { paymentId: existing._id, ...paymentClientState(existing), amount: existing.amount },
             message: 'Payment request already sent. Keep waiting for the M-PESA PIN prompt.',
           });
         }
@@ -751,26 +760,19 @@ export const getPaymentStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Payment not found' });
     }
 
-    if (payment.status === 'pending') {
-      const ageMs = Date.now() - new Date(payment.createdAt).getTime();
-      if (ageMs > 2 * 60 * 1000) {
-        payment.status = 'timeout';
-        payment.errorMessage = 'The payment request expired before it was confirmed.';
-        await payment.save();
-      }
-    }
+    // Reading a payment must not turn a slow provider response into a
+    // persisted failure. A client can stop polling without expiring payment.
 
     return res.json({
       success: true,
       data: {
         paymentId: payment._id,
-        status: payment.status,
+        ...paymentClientState(payment),
         amount: payment.amount,
         additionalCharge: payment.additionalCharge ?? 0,
         currency: payment.currency,
         receipt: payment.receipt ?? null,
         periodEnd: payment.periodEnd ?? null,
-        errorMessage: payment.errorMessage ?? null,
       },
     });
   } catch (err) {
@@ -781,7 +783,7 @@ export const getPaymentStatus = async (req, res) => {
 
 /**
  * POST /subscriptions/mpesa/callback — Safaricom webhook, public (no JWT).
- * Atomically claims the pending payment so duplicate callbacks are no-ops,
+ * Records authenticated provider results without downgrading confirmed success,
  * then on success extends the subscription: the paid period starts when the
  * trial ends ("your subscription only starts after your trial ends"), or
  * stacks on the current paid period, or starts now — whichever is latest.
@@ -810,33 +812,28 @@ export const handleMpesaCallback = async (req, res) => {
       status = 'failed';
     }
 
-    // Atomic claim: only one callback can move the payment out of 'pending'.
-    const payment = await SubscriptionPayment.findOneAndUpdate(
-      { providerRef: parsed.providerRef, status: 'pending' },
-      {
-        $set: {
-          status,
-          resultCode: parsed.resultCode,
-          errorMessage: parsed.success ? null : parsed.resultDesc,
-          receipt: parsed.receipt,
-          transactionDate: parsed.success ? new Date() : undefined,
-          callbackPayload: req.body,
-          callbackReceivedAt: new Date(),
-        },
-      },
-      { new: true }
-    );
-
-    if (!payment) {
-      console.error('[Subscriptions Callback] Unknown or already-settled providerRef:', parsed.providerRef);
+    if (typeof parsed.providerRef !== 'string' || !parsed.providerRef.trim()) {
       return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
     }
-
-    if (status === 'success') {
-      await applySuccessfulPayment(payment);
-    } else {
+    const candidate = await SubscriptionPayment.findOne({ provider: 'mpesa', providerRef: parsed.providerRef });
+    if (!candidate) return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+    const { payment, changed } = await recordPaymentOutcome(candidate._id, {
+      status,
+      resultCode: parsed.resultCode,
+      errorMessage: parsed.success ? null : parsed.resultDesc,
+      receipt: parsed.receipt,
+      ...(parsed.success && { transactionDate: new Date() }),
+      callbackPayload: req.body,
+      callbackReceivedAt: new Date(),
+    });
+    if (!payment) return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+    if (payment.status === 'success') {
+      // Includes late confirmations and retries after an activation failure.
+      if (!payment.periodEnd) await applySuccessfulPayment(payment);
+    } else if (changed) {
       await cleanupFailedSeatPayment(payment);
     }
+    if (!changed) return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
 
     logAudit({
       shopId: payment.shop,
@@ -849,16 +846,15 @@ export const handleMpesaCallback = async (req, res) => {
     return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
   } catch (err) {
     console.error('[Subscriptions Callback] Processing error:', err.message);
-    // Still 200 — Safaricom retries on non-200, and a retry would just replay
-    // the same (already-logged) failure. The reconciliation cron/recheck
-    // endpoint is the real recovery path for whatever went wrong here.
-    return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+    // Do not acknowledge an activation we failed to finish. Re-delivery is
+    // safe: the confirmed result and atomic activation marker are retained.
+    return res.status(503).json({ ResultCode: 1, ResultDesc: 'Processing incomplete. Please retry.' });
   }
 };
 
 /**
  * POST /subscriptions/paystack/webhook — Paystack's webhook, public (no
- * JWT). Same atomic-claim + idempotent-activation shape as
+ * JWT). Same guarded outcome + idempotent-activation shape as
  * handleMpesaCallback; only `charge.success` is acted on, everything else
  * (refunds, transfers, etc.) is accepted and ignored.
  */
@@ -883,38 +879,28 @@ export const handlePaystackWebhook = async (req, res) => {
       return res.status(200).json({ received: true });
     }
 
-    // Atomic claim: only one delivery can move the payment out of 'pending'.
-    const payment = await SubscriptionPayment.findOneAndUpdate(
-      { providerRef: parsed.providerRef, status: 'pending' },
-      {
-        $set: {
-          status: 'success',
-          resultCode: parsed.resultCode,
-          errorMessage: null,
-          receipt: parsed.receipt,
-          transactionDate: new Date(),
-          callbackPayload: req.body,
-          callbackReceivedAt: new Date(),
-        },
-      },
-      { new: true }
-    );
-
-    if (!payment) {
-      console.error('[Paystack Webhook] Unknown or already-settled reference:', parsed.providerRef);
+    if (typeof parsed.providerRef !== 'string' || !parsed.providerRef.trim()) {
       return res.status(200).json({ received: true });
     }
-
-    const mismatch = paystackAmountMismatch(payment, parsed.amountKobo);
+    const candidate = await SubscriptionPayment.findOne({ provider: 'bank', providerRef: parsed.providerRef });
+    if (!candidate) return res.status(200).json({ received: true });
+    // Check the amount before recording success, including late callbacks.
+    const mismatch = paystackAmountMismatch(candidate, parsed.amountKobo, parsed.currency);
+    const { payment, changed } = await recordPaymentOutcome(candidate._id, {
+      status: mismatch ? 'failed' : 'success',
+      resultCode: parsed.resultCode,
+      errorMessage: mismatch ?? null,
+      ...(!mismatch && { receipt: parsed.receipt, transactionDate: new Date() }),
+      callbackPayload: req.body,
+      callbackReceivedAt: new Date(),
+    });
+    if (!payment) return res.status(200).json({ received: true });
+    if (payment.status === 'success' && !payment.periodEnd) await applySuccessfulPayment(payment);
+    if (!changed) return res.status(200).json({ received: true });
     if (mismatch) {
-      payment.status = 'failed';
-      payment.errorMessage = mismatch;
-      await payment.save();
       console.error('[Paystack Webhook]', mismatch, 'payment', String(payment._id));
       return res.status(200).json({ received: true });
     }
-
-    await applySuccessfulPayment(payment);
 
     logAudit({
       shopId: payment.shop,
@@ -927,10 +913,8 @@ export const handlePaystackWebhook = async (req, res) => {
     return res.status(200).json({ received: true });
   } catch (err) {
     console.error('[Paystack Webhook] Processing error:', err.message);
-    // Still 200 — a non-200 makes Paystack retry, which would just replay
-    // the same (already-logged) failure. The cron reconciliation and the
-    // owner-facing recheck endpoint are the real recovery path.
-    return res.status(200).json({ received: true });
+    // Let the provider retry rather than acknowledging incomplete processing.
+    return res.status(503).json({ received: false });
   }
 };
 
@@ -949,13 +933,12 @@ export const recheckPayment = async (req, res) => {
       success: true,
       data: {
         paymentId: payment._id,
-        status: payment.status,
+        ...paymentClientState(payment),
         amount: payment.amount,
         additionalCharge: payment.additionalCharge ?? 0,
         currency: payment.currency,
         receipt: payment.receipt ?? null,
         periodEnd: payment.periodEnd ?? null,
-        errorMessage: payment.errorMessage ?? null,
       },
     });
   } catch (err) {
@@ -992,9 +975,10 @@ export const reconcileByMessage = async (req, res) => {
     const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
     // An exact receipt match (callback already recorded it, just didn't
     // activate) beats guessing from recency.
-    const candidate = await SubscriptionPayment.findOne({ shop: shopId, receipt })
+    const candidate = await SubscriptionPayment.findOne({ shop: shopId, provider: 'mpesa', receipt })
       ?? await SubscriptionPayment.findOne({
         shop: shopId,
+        provider: 'mpesa',
         createdAt: { $gte: since },
         $or: [{ periodEnd: { $exists: false } }, { periodEnd: null }],
       }).sort({ createdAt: -1 });
@@ -1025,12 +1009,11 @@ export const reconcileByMessage = async (req, res) => {
       success: true,
       data: {
         paymentId: candidate._id,
-        status: candidate.status,
+        ...paymentClientState(candidate),
         amount: candidate.amount,
         currency: candidate.currency,
         receipt: candidate.receipt ?? null,
         periodEnd: candidate.periodEnd ?? null,
-        errorMessage: candidate.errorMessage ?? null,
       },
       message: candidate.periodEnd
         ? 'Payment verified — your subscription is active.'

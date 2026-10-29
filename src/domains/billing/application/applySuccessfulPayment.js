@@ -65,6 +65,9 @@ export async function applySuccessfulPayment(payment) {
         return;
       }
       if (current.status !== 'success') throw new Error('Only a confirmed successful payment can activate a subscription.');
+      if (current.provider === 'bank' && !current.providerConfirmedAt) {
+        throw new Error('Bank payment requires a verified amount and currency before activation.');
+      }
       const subscription = await Subscription.findOne({ _id: current.subscription, shop: current.shop }).session(session);
       if (!subscription) throw new Error('Payment subscription is no longer available.');
 

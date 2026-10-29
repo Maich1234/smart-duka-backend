@@ -49,6 +49,8 @@ const subscriptionPaymentSchema = new mongoose.Schema({
   // Provider receipt on success (M-Pesa receipt number).
   receipt: { type: String },
   transactionDate: { type: Date },
+  // Set only after validating a provider confirmation, before activation.
+  providerConfirmedAt: { type: Date },
   // The service period this payment covers, set when the charge succeeds.
   periodStart: { type: Date },
   periodEnd: { type: Date },
