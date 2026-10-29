@@ -2,6 +2,8 @@ import Product from '../models/Product.js';
 import InventoryMovement from '../models/InventoryMovement.js';
 import { allocateAdditionalCosts, landedUnitCost, round2 } from './purchaseCostAllocation.js';
 
+const roundQuantity = (value) => Math.round(value * 1000) / 1000;
+
 export class PurchaseLineError extends Error {
   constructor(message, status = 400) {
     super(message);
@@ -31,7 +33,7 @@ const makeProductCache = (shop, session) => {
  * computeShiftSummary).
  */
 export const computeWeightedAverageCost = (priorQuantity, priorCost, incomingQuantity, incomingUnitCost) => {
-  const newQuantity = round2(priorQuantity + incomingQuantity);
+  const newQuantity = roundQuantity(priorQuantity + incomingQuantity);
   // A negative priorQuantity (sold before it was ever purchased into the
   // system) carries no real cost basis to blend in — treat it like starting
   // from zero. Otherwise its negative term skews the "average" past both
@@ -96,7 +98,7 @@ export async function applyPurchaseReceiptStock(purchase, session) {
     const unitCost = landedUnitCost(item, allocatedExtras[i]);
     const priorQuantity = target.quantity;
     const priorCost = target.costPrice;
-    const newQuantity = round2(priorQuantity + item.quantity);
+    const newQuantity = roundQuantity(priorQuantity + item.quantity);
 
     target.quantity = newQuantity;
     target.costPrice = computeWeightedAverageCost(priorQuantity, priorCost, item.quantity, unitCost);
@@ -142,15 +144,33 @@ export async function reversePurchaseStock(purchase, session) {
   const touched = new Set();
   const movements = [];
 
-  for (const item of purchase.items) {
+  // The journal records what was actually received. Later tracking/type edits
+  // must not change which products/variants a cancellation removes.
+  const history = await InventoryMovement.find({
+    shop, refModel: 'Purchase', refId: purchase._id,
+    reason: { $in: ['purchase', 'purchase_reversed'] },
+  }).select('product variantId direction quantity').session(session).lean();
+  let receiptItems = purchase.items;
+  if (history.length) {
+    const net = new Map();
+    for (const movement of history) {
+      const key = `${movement.product}:${movement.variantId ?? ''}`;
+      const entry = net.get(key) ?? { productId: movement.product, variantId: movement.variantId, quantity: 0 };
+      entry.quantity = roundQuantity(entry.quantity + (movement.direction === 'in' ? 1 : -1) * movement.quantity);
+      net.set(key, entry);
+    }
+    receiptItems = [...net.values()].filter(item => item.quantity > 0);
+  }
+
+  for (const item of receiptItems) {
     const product = await getProduct(item.productId);
     if (!product) continue;
 
     const type = product.productType || 'standard';
-    if (type === 'bundle' || type === 'service' || !product.trackInventory) continue;
+    if (!history.length && (type === 'bundle' || type === 'service' || !product.trackInventory)) continue;
 
     let target;
-    if (type === 'configurable') {
+    if (item.variantId || (!history.length && type === 'configurable')) {
       target = item.variantId ? product.variants.id(item.variantId) : null;
       if (!target) continue;
     } else {
@@ -159,7 +179,7 @@ export async function reversePurchaseStock(purchase, session) {
     touched.add(product._id.toString());
 
     const priorQuantity = target.quantity;
-    const newQuantity = round2(priorQuantity - item.quantity);
+    const newQuantity = roundQuantity(priorQuantity - item.quantity);
     target.quantity = newQuantity;
 
     movements.push({
@@ -167,7 +187,7 @@ export async function reversePurchaseStock(purchase, session) {
       product: product._id,
       variantId: item.variantId,
       direction: 'out',
-      quantity: round2(priorQuantity - newQuantity),
+      quantity: roundQuantity(priorQuantity - newQuantity),
       reason: 'purchase_reversed',
       refModel: 'Purchase',
       refId: purchase._id,

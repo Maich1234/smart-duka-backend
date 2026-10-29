@@ -102,7 +102,7 @@ export const updateProductSchema = Joi.object({
   commission: commissionSchema,
   creditEligible: Joi.boolean(),
   bundleItems: Joi.array().items(bundleItemSchema).min(1),
-  variants: Joi.array().items(variantSchema).min(1),
+  variants: Joi.array().items(variantSchema.fork('quantity', () => Joi.number().min(0))).min(1),
   promotions: Joi.array().items(promotionSchema),
 }).unknown(false);
 

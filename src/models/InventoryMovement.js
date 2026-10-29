@@ -60,5 +60,7 @@ const inventoryMovementSchema = new mongoose.Schema({
 
 // Hot path: "stock history for this product" list, newest first.
 inventoryMovementSchema.index({ shop: 1, product: 1, createdAt: -1 });
+// Purchase edits/cancellations reconstruct their remaining receipt impact.
+inventoryMovementSchema.index({ shop: 1, refModel: 1, refId: 1 });
 
 export default mongoose.model('InventoryMovement', inventoryMovementSchema);

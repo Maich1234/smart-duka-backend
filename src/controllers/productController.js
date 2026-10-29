@@ -158,7 +158,8 @@ export const createProduct = async (req, res) => {
   }
 
   const product = await Product.create({ ...req.body, shop: req.user.shop._id });
-  res.status(201).json({ success: true, data: product });
+  const data = product.toObject();
+  res.status(201).json({ success: true, data: req.user.role === 'staff' ? sanitizeForStaff(data, showsCommissionTo(req.user)) : data });
 };
 
 export const updateProduct = async (req, res) => {
@@ -169,6 +170,23 @@ export const updateProduct = async (req, res) => {
   const product = await Product.findOne({ _id: req.params.id, shop: req.user.shop._id });
   if (!product) {
     return res.status(404).json({ success: false, message: 'Product not found' });
+  }
+
+  const canEditStock = req.user.role === 'owner' || req.user.permissions?.includes('edit_product_stock');
+  if (!canEditStock) {
+    const changesQuantity = req.body.quantity !== undefined && req.body.quantity !== product.quantity;
+    const changesVariantStock = req.body.variants?.some(variant => {
+      const prior = variant._id ? product.variants.id(variant._id) : null;
+      return variant.quantity !== undefined && variant.quantity !== (prior?.quantity ?? 0);
+    });
+    if (changesQuantity || changesVariantStock) return res.status(403).json({ success: false, message: 'You do not have permission to change stock quantities.' });
+    delete req.body.quantity;
+  }
+  if (req.body.variants) {
+    req.body.variants = req.body.variants.map(variant => ({
+      ...variant,
+      quantity: variant.quantity ?? (variant._id ? product.variants.id(variant._id)?.quantity : 0) ?? 0,
+    }));
   }
 
   // Staff never receive `costPrice` or `commission` — productVisibility.js
@@ -220,8 +238,19 @@ export const updateProduct = async (req, res) => {
     }
   }
 
-  const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
-  res.json({ success: true, data: updatedProduct });
+  const guard = { _id: product._id, shop: req.user.shop._id, updatedAt: product.updatedAt };
+  if (req.body.quantity !== undefined) guard.quantity = product.quantity;
+  if (req.body.variants) {
+    // Replacing an array must not put back quantities a concurrent sale used.
+    guard.$expr = { $eq: [
+      { $map: { input: { $ifNull: ['$variants', []] }, as: 'variant', in: { id: '$$variant._id', quantity: '$$variant.quantity' } } },
+      { $literal: product.variants.map(variant => ({ id: variant._id, quantity: variant.quantity })) },
+    ] };
+  }
+  const updatedProduct = await Product.findOneAndUpdate(guard, req.body, { new: true, runValidators: true });
+  if (!updatedProduct) return res.status(409).json({ success: false, code: 'PRODUCT_CHANGED', message: 'This product changed while you were editing. Refresh its details and try again.' });
+  const data = updatedProduct.toObject();
+  res.json({ success: true, data: req.user.role === 'staff' ? sanitizeForStaff(data, showsCommissionTo(req.user)) : data });
 };
 
 export const deleteProduct = async (req, res) => {
@@ -256,8 +285,11 @@ export const updateStock = async (req, res) => {
   }
 
   const previousQuantity = product.quantity;
-  product.quantity = quantity;
-  await product.save();
+  const updated = await Product.findOneAndUpdate(
+    { _id: product._id, shop: req.user.shop._id, quantity: previousQuantity },
+    { $set: { quantity } }, { new: true, runValidators: true },
+  );
+  if (!updated) return res.status(409).json({ success: false, code: 'STOCK_CHANGED', message: 'Stock changed while you were saving. Refresh the product and enter your counted quantity again.' });
 
   // Manual stock corrections are a shrinkage signal — record who moved what,
   // and under which shift, so shift/daily reports can surface adjustments.
@@ -280,5 +312,6 @@ export const updateStock = async (req, res) => {
     req,
   });
 
-  res.json({ success: true, data: product });
+  const data = updated.toObject();
+  res.json({ success: true, data: req.user.role === 'staff' ? sanitizeForStaff(data, showsCommissionTo(req.user)) : data });
 };
