@@ -589,6 +589,7 @@ export const initiatePayment = async (req, res) => {
         const payment = await activateFreeSubscription({
           shopId, subscription, plan, billingCycle, staffCount, price, promotion,
           requestedBy: req.user._id, idempotencyKey, req,
+          seatAdjustmentIds: subscription.seatAdjustments.map(a => a._id),
         });
         return res.status(201).json({
           success: true,
@@ -672,6 +673,7 @@ export const initiatePayment = async (req, res) => {
         billingCycle,
         staffCount,
         amount: amountDue,
+        seatAdjustmentIds: subscription.seatAdjustments.map(a => a._id),
         currency: price.currency,
         provider: provider.key,
         providerRef: charge.providerRef,

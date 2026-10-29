@@ -13,17 +13,15 @@ import { logAudit } from '../../../services/auditLogService.js';
  * subscription payment already is in this codebase: the unique
  * (shop, idempotencyKey) index on SubscriptionPayment rejects a second
  * insert for the same attempt (recovered by the caller exactly like the
- * mpesa/paystack path), and applySuccessfulPayment's own periodEnd guard
- * makes activation idempotent per payment record. The promotion's
- * redemption slot is claimed atomically inside applySuccessfulPayment,
- * before any subscription state changes — if that claim loses the race
- * (cap reached, expired between validation and here), applySuccessfulPayment
- * throws before mutating anything, and this function marks the just-created
+ * mpesa/paystack path). applySuccessfulPayment re-reads the payment marker
+ * and commits activation plus promotion redemption in one transaction. If
+ * the promotion claim loses the race (cap reached or expired), that
+ * transaction rolls back and this function marks the just-created
  * payment record failed rather than leaving a phantom "successful" charge
  * with nothing behind it.
  */
 export async function activateFreeSubscription({
-  shopId, subscription, plan, billingCycle, staffCount, price, promotion, requestedBy, idempotencyKey, req,
+  shopId, subscription, plan, billingCycle, staffCount, price, promotion, requestedBy, idempotencyKey, req, seatAdjustmentIds,
 }) {
   const payment = await SubscriptionPayment.create({
     shop: shopId,
@@ -32,6 +30,7 @@ export async function activateFreeSubscription({
     billingCycle,
     staffCount,
     amount: 0,
+    seatAdjustmentIds,
     additionalCharge: price.additionalCharge ?? 0,
     currency: price.currency,
     provider: 'free',
