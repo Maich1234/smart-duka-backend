@@ -49,10 +49,10 @@ export const getPlatformStats = async (req, res) => {
 export const getPublicPlans = async (req, res) => {
   const plans = await SubscriptionPlan.find({ active: true })
     .sort({ displayOrder: 1 })
-    .select('slug name tagline description billingType monthlyPrice maxStaff extraStaffPrice trialDays currency highlights badge')
+    .select('slug name tagline description billingType monthlyPrice monthlyCharge minUsers unlimitedUsers maxStaff extraStaffPrice trialDays currency highlights badge')
     .lean();
 
-  res.set('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+  res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
   res.json({ success: true, data: { plans } });
 };
 

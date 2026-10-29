@@ -32,6 +32,7 @@ export async function activateFreeSubscription({
     billingCycle,
     staffCount,
     amount: 0,
+    additionalCharge: price.additionalCharge ?? 0,
     currency: price.currency,
     provider: 'free',
     status: 'success',

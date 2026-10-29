@@ -25,6 +25,13 @@ const subscriptionPlanSchema = new mongoose.Schema({
     required: true,
   },
   monthlyPrice: { type: Number, required: true, min: 0 },
+  // Fixed per-shop charge, not a percentage tax. It recurs each billed month.
+  monthlyCharge: { type: Number, default: 0, min: 0 },
+  minUsers: { type: Number, default: 1, min: 1 },
+  unlimitedUsers: { type: Boolean, default: false },
+  // Price the next user band during mid-period seat changes. Renewal resolves
+  // the actual active plan for that band before persisting a payment.
+  overflowTiers: { type: [{ maxUsers: { type: Number, default: null }, monthlyPrice: { type: Number, min: 0, required: true } }], default: [] },
   // Quarterly price is computed as monthly × 3 × (1 − quarterlyDiscountPercent/100).
   quarterlyDiscountPercent: { type: Number, default: 10, min: 0, max: 100 },
   // Yearly price is computed as monthly × 12 × (1 − yearlyDiscountPercent/100)
