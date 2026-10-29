@@ -1,3 +1,4 @@
+import { canViewPurchasePrices, presentPurchase } from '../services/purchaseVisibility.js';
 import Supplier from '../models/Supplier.js';
 import Purchase from '../models/Purchase.js';
 import { parsePagination } from '../utils/pagination.js';
@@ -52,17 +53,20 @@ export const getSupplierById = async (req, res) => {
     .limit(5);
 
   const purchaseCount = stats?.purchaseCount ?? 0;
+  const canSeePrices = canViewPurchasePrices(req.user);
   res.json({
     success: true,
     data: {
       ...supplier.toObject(),
       stats: {
         purchaseCount,
-        totalSpend: stats?.totalSpend ?? 0,
-        averagePurchaseCost: purchaseCount > 0 ? (stats.totalSpend / purchaseCount) : 0,
+        ...(canSeePrices ? {
+          totalSpend: stats?.totalSpend ?? 0,
+          averagePurchaseCost: purchaseCount > 0 ? (stats.totalSpend / purchaseCount) : 0,
+        } : {}),
         lastPurchaseDate: stats?.lastPurchaseDate ?? null,
       },
-      recentPurchases,
+      recentPurchases: recentPurchases.map(purchase => presentPurchase(purchase, req.user)),
     },
   });
 };

@@ -1,3 +1,4 @@
+import { presentMutationReplay } from '../services/mutationReplayVisibility.js';
 import IdempotencyRecord from '../models/IdempotencyRecord.js';
 
 // Replays the stored response for retried mutations carrying the same
@@ -10,7 +11,7 @@ import IdempotencyRecord from '../models/IdempotencyRecord.js';
 //   1. No key header → pass through (backwards compatible).
 //   2. Atomically insert a stub record. If the insert conflicts, a previous
 //      attempt owns this key:
-//        • finished → replay its stored status + body verbatim
+//        • finished → replay its stored result with current response visibility
 //        • still in flight → 425 so the client retries shortly (the offline
 //          queue treats 425 as transient, never as a permanent failure)
 //   3. Wrap res.json to persist the outcome. 5xx outcomes are NOT stored —
@@ -29,12 +30,19 @@ const idempotency = async (req, res, next) => {
   } catch (err) {
     if (err.code !== 11000) return next(err);
     const existing = await IdempotencyRecord.findOne({ user: req.user._id, key });
+    if (existing && (existing.method !== req.method || existing.path !== req.originalUrl)) {
+      return res.status(409).json({ success: false, code: 'IDEMPOTENCY_KEY_REUSED', message: 'This request key belongs to a different action. Use the original action when retrying.' });
+    }
     if (existing?.statusCode) {
+      let body;
+      try { body = JSON.parse(existing.responseBody ?? '{}'); }
+      catch { return res.status(503).json({ success: false, message: 'The saved result could not be restored. Check the original action before trying again.' }); }
+      const savedShop = body?.data?.shop ?? body?.data?.transaction?.shop;
+      if (savedShop && String(savedShop._id ?? savedShop) !== String(req.user.shop._id ?? req.user.shop)) {
+        return res.status(403).json({ success: false, message: 'This saved result belongs to a different shop.' });
+      }
       res.set('X-Idempotent-Replay', 'true');
-      return res
-        .status(existing.statusCode)
-        .type('application/json')
-        .send(existing.responseBody ?? '{}');
+      return res.status(existing.statusCode).json(presentMutationReplay(body, req));
     }
     // Stub with no outcome: either the first attempt is still running, or its
     // invocation died mid-request (serverless kill). Anything older than 2 min

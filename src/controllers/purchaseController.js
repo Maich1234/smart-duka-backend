@@ -14,21 +14,7 @@ import { logAudit } from '../services/auditLogService.js';
 import { parsePagination } from '../utils/pagination.js';
 import { escapeRegex } from '../utils/escapeRegex.js';
 
-const canViewPrices = (user) => user.role === 'owner' || user.permissions?.includes('view_purchase_prices');
-
-// Staff without 'view_purchase_prices' can still create/view purchases, but
-// wholesale cost figures (what was actually paid) are stripped from the
-// response — the entry form itself is unaffected, since a staffer must be
-// able to type in the price they're handing over.
-const redactPrices = (purchase) => {
-  const obj = purchase.toObject ? purchase.toObject() : purchase;
-  obj.items = obj.items.map(({ unitCost, totalCost, ...rest }) => rest);
-  obj.additionalCosts = obj.additionalCosts.map(({ amount, ...rest }) => rest);
-  delete obj.productsTotal;
-  delete obj.additionalCostsTotal;
-  delete obj.grandTotal;
-  return obj;
-};
+import { canViewPurchasePrices, presentPurchase } from '../services/purchaseVisibility.js';
 
 /**
  * Builds the embedded items[] snapshot for a create/update, validating each
@@ -153,7 +139,7 @@ export const createPurchase = async (req, res) => {
       req,
     }).catch(() => {});
 
-    const data = canViewPrices(req.user) ? purchase.toObject() : redactPrices(purchase);
+    const data = presentPurchase(purchase, req.user);
     res.status(201).json({
       success: true,
       data,
@@ -224,7 +210,7 @@ export const getPurchases = async (req, res) => {
     Purchase.countDocuments(query),
   ]);
 
-  const data = canViewPrices(req.user) ? purchases : purchases.map(redactPrices);
+  const data = purchases.map(purchase => presentPurchase(purchase, req.user));
   res.json({
     success: true,
     data,
@@ -243,7 +229,7 @@ export const getPurchaseById = async (req, res) => {
     .populate('cancelledBy', 'name');
   if (!purchase) return res.status(404).json({ success: false, message: 'Purchase not found' });
 
-  const data = canViewPrices(req.user) ? purchase.toObject() : redactPrices(purchase);
+  const data = presentPurchase(purchase, req.user);
   res.json({ success: true, data });
 };
 
@@ -334,7 +320,7 @@ export const updatePurchase = async (req, res) => {
       entityType: 'Purchase', entityId: purchase._id, details: { grandTotal: purchase.grandTotal }, req,
     }).catch(() => {});
 
-    const data = canViewPrices(req.user) ? purchase.toObject() : redactPrices(purchase);
+    const data = presentPurchase(purchase, req.user);
     res.json({ success: true, data, message: 'Purchase updated.' });
   } catch (error) {
     if (error instanceof PurchaseLineError) return res.status(error.status).json({ success: false, message: error.message });
@@ -379,7 +365,7 @@ export const deletePurchase = async (req, res) => {
       entityType: 'Purchase', entityId: purchase._id, details: {}, req,
     }).catch(() => {});
 
-    res.json({ success: true, data: purchase.toObject(), message: 'Purchase cancelled and stock reversed.' });
+    res.json({ success: true, data: presentPurchase(purchase, req.user), message: 'Purchase cancelled and stock reversed.' });
   } catch (error) {
     if (error instanceof PurchaseLineError) return res.status(error.status).json({ success: false, message: error.message });
     throw error;
@@ -429,6 +415,8 @@ export const getPurchaseStatsHandler = async (req, res) => {
     return res.status(403).json({ success: false, message: 'Permission denied' });
   }
   const stats = await getPurchaseStats(req.user.shop._id);
+  stats.recentPurchases = stats.recentPurchases.map(purchase => presentPurchase(purchase, req.user));
+  if (!canViewPurchasePrices(req.user)) delete stats.totalSpend;
   res.json({ success: true, data: stats });
 };
 
@@ -436,6 +424,7 @@ export const getPurchaseAnalyticsHandler = async (req, res) => {
   if (req.user.role !== 'owner' && !req.user.permissions?.includes('view_purchases')) {
     return res.status(403).json({ success: false, message: 'Permission denied' });
   }
+  if (!canViewPurchasePrices(req.user)) return res.status(403).json({ success: false, message: 'You do not have permission to view purchase cost reports.' });
   const { period } = req.query;
   const data = await getPurchaseAnalytics(req.user.shop._id, { period });
   res.json({ success: true, data });

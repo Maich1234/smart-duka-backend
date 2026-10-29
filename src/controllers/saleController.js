@@ -1,3 +1,4 @@
+import { presentSale } from '../services/saleVisibility.js';
 import { randomUUID } from 'node:crypto';
 import mongoose from 'mongoose';
 import Sale from '../models/Sale.js';
@@ -78,7 +79,7 @@ export const createSale = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      data: saleObj,
+      data: presentSale(saleObj, req.user),
       message: creditResult
         ? `Sale recorded on ${creditCustomerName}'s account.`
         : 'Sale recorded successfully',
@@ -172,7 +173,7 @@ export const voidSale = async (req, res) => {
 
     return res.json({
       success: true,
-      data: sale.toObject(),
+      data: presentSale(sale, req.user),
       message: creditReversal
         ? 'Sale voided, stock restored, and the debt cancelled.'
         : 'Sale voided and stock restored.',
@@ -338,7 +339,7 @@ export const refundSale = async (req, res) => {
       // Network/metadata failure is not proof that no reversal was accepted.
       // Keep the reservation; never offer another payout based on elapsed time.
       return res.status(202).json({
-        success: true, data: reserved.toObject(),
+        success: true, data: presentSale(reserved, req.user),
         message: 'The refund request is reserved but its outcome is not confirmed. Please check with support before refunding again.',
       });
     }
@@ -356,7 +357,7 @@ export const refundSale = async (req, res) => {
 
     return res.json({
       success: true,
-      data: (recorded ?? reserved).toObject(),
+      data: presentSale(recorded ?? reserved, req.user),
       message: recorded?.status === 'refunded'
         ? 'M-Pesa refund confirmed and stock restored.'
         : recorded?.status === 'completed'
@@ -394,7 +395,7 @@ export const refundSale = async (req, res) => {
       req,
     }).catch(() => {});
 
-    return res.json({ success: true, data: fresh.toObject(), message: 'Sale refunded and stock restored.' });
+    return res.json({ success: true, data: presentSale(fresh, req.user), message: 'Sale refunded and stock restored.' });
   } catch (error) {
     if (error instanceof SaleRejection) return res.status(error.status).json({ success: false, ...(error.code ? { code: error.code } : {}), message: error.message });
     throw error;
@@ -456,7 +457,7 @@ export const getSales = async (req, res) => {
     const total = result?.total?.[0]?.count ?? 0;
     return res.json({
       success: true,
-      data: result?.data ?? [],
+      data: (result?.data ?? []).map(sale => presentSale(sale, req.user)),
       pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     });
   }
@@ -467,18 +468,18 @@ export const getSales = async (req, res) => {
     () => Sale.countDocuments(query),
   );
 
-  res.json({ success: true, ...result });
+  res.json({ success: true, ...result, data: result.data.map(sale => presentSale(sale, req.user)) });
 };
 
 export const getSaleById = async (req, res) => {
   const sale = await Sale.findOne({ _id: req.params.id, shop: req.user.shop._id }).populate('staff', 'name email');
   if (!sale) return res.status(404).json({ success: false, message: 'Sale not found' });
-  if (req.user.role === 'staff' && !req.user.permissions?.includes('view_all_sales') && sale.staff._id.toString() !== req.user._id.toString()) {
+  if (req.user.role === 'staff' && !req.user.permissions?.includes('view_all_sales') && String(sale.staff?._id ?? sale.staff) !== String(req.user._id)) {
     return res.status(403).json({ success: false, message: 'Access denied' });
   }
   const saleObj = sale.toObject();
   saleObj.receiptToken = signReceiptToken(sale._id);
-  res.json({ success: true, data: saleObj });
+  res.json({ success: true, data: presentSale(saleObj, req.user) });
 };
 
 export const getSalesStats = async (req, res) => {
@@ -571,7 +572,7 @@ export const getMySales = async (req, res) => {
     (s, l) => Sale.find(query).skip(s).limit(l).sort({ createdAt: -1 }),
     () => Sale.countDocuments(query),
   );
-  res.json({ success: true, ...result });
+  res.json({ success: true, ...result, data: result.data.map(sale => presentSale(sale, req.user)) });
 };
 
 export const getMyCommission = async (req, res) => {
