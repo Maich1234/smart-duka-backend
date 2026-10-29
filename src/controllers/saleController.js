@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import mongoose from 'mongoose';
 import Sale from '../models/Sale.js';
 import User from '../models/User.js';
@@ -201,26 +202,6 @@ function getReversalResultUrl() {
   return null;
 }
 
-/** Extracts a readable Safaricom error out of initiateReversal's thrown message. */
-function reversalErrorMessage(err) {
-  const jsonMatch = (err.message ?? '').match(/\{.*\}/s);
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (parsed.errorMessage) return `Safaricom rejected the refund: "${parsed.errorMessage}"`;
-    } catch { /* fall through */ }
-  }
-  if (/ETIMEDOUT|ECONNREFUSED/i.test(err.message)) {
-    return 'Could not reach the M-Pesa API. Check your internet connection and try again.';
-  }
-  if (/decrypt|Security Credential/i.test(err.message)) return err.message;
-  return `M-Pesa refund request failed: ${err.message}`;
-}
-
-// A reversal whose result callback never arrives would lock the sale in
-// 'refund_pending' forever — after this window we let the user retry.
-const REFUND_RETRY_AFTER_MS = 10 * 60 * 1000;
-
 /**
  * POST /sales/:id/refund — returns the customer's money and restores stock.
  *
@@ -257,11 +238,7 @@ export const refundSale = async (req, res) => {
     return res.status(400).json({ success: false, message: 'This sale has already been refunded.' });
   }
   if (sale.status === 'refund_pending') {
-    const age = Date.now() - new Date(sale.refund?.requestedAt ?? 0).getTime();
-    if (age < REFUND_RETRY_AFTER_MS) {
-      return res.status(400).json({ success: false, message: 'A refund for this sale is already being processed by M-Pesa. Please wait for it to complete.' });
-    }
-    // Result callback never arrived — fall through and let the user retry.
+    return res.status(400).json({ success: false, message: 'A refund for this sale is still awaiting confirmation. Check it with support before refunding again.' });
   }
 
   // A credit sale where the customer hasn't paid yet has no money to give
@@ -325,6 +302,19 @@ export const refundSale = async (req, res) => {
       return res.status(503).json({ success: false, message: 'MPESA_REVERSAL_RESULT_URL or MPESA_CALLBACK_SECRET is not configured on the server. Contact the app administrator.' });
     }
 
+    // Reserve before any provider call. A different user/key, a void or a
+    // cash refund must compete for this same sale, not dispatch independently.
+    const attemptId = randomUUID();
+    const reserved = await Sale.findOneAndUpdate(
+      { _id: sale._id, shop, status: 'completed' },
+      { $set: { status: 'refund_pending', refund: {
+        attemptId, amount: sale.totalAmount, method: 'mpesa', reason,
+        requestedBy: req.user._id, requestedAt: new Date(),
+      } } },
+      { new: true },
+    );
+    if (!reserved) return res.status(400).json({ success: false, message: 'This sale changed or already has a refund in progress. Refresh its details before continuing.' });
+
     let reversal;
     try {
       reversal = await initiateReversal({
@@ -332,24 +322,28 @@ export const refundSale = async (req, res) => {
         transactionId: receiptNumber,
         amount: sale.totalAmount,
         remarks: reason || `Refund ${sale.invoiceNumber}`,
-        resultUrl,
-        queueTimeoutUrl,
+        resultUrl: `${resultUrl}/${sale._id}/${attemptId}`,
+        queueTimeoutUrl: `${queueTimeoutUrl}/${sale._id}/${attemptId}`,
       });
+      if (!reversal?.originatorConversationId || !reversal?.conversationId) throw new Error('Provider did not return refund references.');
+      // Preserve an early result callback and never overwrite a newer attempt.
+      await Sale.updateOne(
+        { _id: sale._id, 'refund.attemptId': attemptId, status: 'refund_pending' },
+        { $set: {
+          'refund.originatorConversationId': reversal.originatorConversationId,
+          'refund.conversationId': reversal.conversationId,
+        } },
+      );
     } catch (err) {
-      return res.status(503).json({ success: false, message: reversalErrorMessage(err) });
+      console.error('[M-Pesa Reversal] Initiation outcome uncertain:', err.message);
+      // Network/metadata failure is not proof that no reversal was accepted.
+      // Keep the reservation; never offer another payout based on elapsed time.
+      return res.status(202).json({
+        success: true, data: reserved.toObject(),
+        message: 'The refund request is reserved but its outcome is not confirmed. Please check with support before refunding again.',
+      });
     }
-
-    sale.status = 'refund_pending';
-    sale.refund = {
-      amount: sale.totalAmount,
-      method: 'mpesa',
-      reason,
-      requestedBy: req.user._id,
-      requestedAt: new Date(),
-      originatorConversationId: reversal.originatorConversationId,
-      conversationId: reversal.conversationId,
-    };
-    await sale.save();
+    const recorded = await Sale.findById(sale._id);
 
     logAudit({
       shopId: shop,
@@ -363,35 +357,38 @@ export const refundSale = async (req, res) => {
 
     return res.json({
       success: true,
-      data: sale.toObject(),
-      message: 'Refund initiated — M-Pesa is returning the money to the customer. Stock will be restored once it completes.',
+      data: (recorded ?? reserved).toObject(),
+      message: recorded?.status === 'refunded'
+        ? 'M-Pesa refund confirmed and stock restored.'
+        : recorded?.status === 'completed'
+          ? 'M-Pesa did not complete this refund. Check the sale details.'
+          : 'Refund request sent. Awaiting M-Pesa confirmation before restoring stock.',
     });
   }
 
   // ── Cash refund path (cash/card sales, or M-Pesa refunded over the counter) ──
   const session = await mongoose.startSession();
-  session.startTransaction();
+  let fresh;
   try {
-    const fresh = await Sale.findOne({ _id: sale._id, shop }).session(session);
-    if (!fresh || !['completed', 'refund_pending'].includes(fresh.status)) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ success: false, message: 'This sale can no longer be refunded.' });
-    }
-
-    await restoreSaleStock(fresh, session);
-
-    fresh.status = 'refunded';
-    fresh.refund = {
-      amount: fresh.totalAmount,
-      method: 'cash',
-      reason,
-      requestedBy: req.user._id,
-      requestedAt: new Date(),
-      completedAt: new Date(),
-    };
-    await fresh.save({ session });
-    await session.commitTransaction();
+    await session.withTransaction(async () => {
+      fresh = await Sale.findOne({ _id: sale._id, shop }).session(session);
+      if (!fresh || fresh.status !== 'completed') {
+        throw new SaleRejection(400, 'This sale can no longer be refunded or has a refund awaiting confirmation.');
+      }
+      if (fresh.customer) {
+        const debt = await CreditTransaction.findOne({
+          sale: fresh._id, shop, type: { $in: DEBT_TX_TYPES }, status: 'outstanding',
+        }).session(session);
+        if (debt?.outstanding > 0) throw new SaleRejection(400, 'This credit sale still has unpaid debt. Reverse any repayments and void it instead.', 'CREDIT_SALE_UNPAID');
+      }
+      await restoreSaleStock(fresh, session);
+      fresh.status = 'refunded';
+      fresh.refund = {
+        amount: fresh.totalAmount, method: 'cash', reason,
+        requestedBy: req.user._id, requestedAt: new Date(), completedAt: new Date(),
+      };
+      await fresh.save({ session });
+    });
 
     logAudit({
       shopId: shop,
@@ -405,10 +402,10 @@ export const refundSale = async (req, res) => {
 
     return res.json({ success: true, data: fresh.toObject(), message: 'Sale refunded and stock restored.' });
   } catch (error) {
-    await session.abortTransaction();
+    if (error instanceof SaleRejection) return res.status(error.status).json({ success: false, ...(error.code ? { code: error.code } : {}), message: error.message });
     throw error;
   } finally {
-    session.endSession();
+    await session.endSession();
   }
 };
 

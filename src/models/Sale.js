@@ -201,6 +201,8 @@ const saleSchema = new mongoose.Schema({
   // Transaction Reversal API — initiation sets 'refund_pending' and the
   // result callback settles it to 'refunded' or back to 'completed'.
   refund: {
+    // Correlates callbacks even if the provider reply is lost or arrives late.
+    attemptId: { type: String },
     amount: { type: Number, min: 0 },
     method: { type: String, enum: ['cash', 'mpesa'] },
     reason: { type: String, maxlength: 300 },
