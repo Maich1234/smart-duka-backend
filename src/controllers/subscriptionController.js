@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import SubscriptionPlan from '../models/SubscriptionPlan.js';
 import Subscription from '../models/Subscription.js';
 import SubscriptionPayment from '../models/SubscriptionPayment.js';
@@ -500,7 +501,13 @@ export const initiatePayment = async (req, res) => {
   try {
     const shopId = shopIdOf(req);
     const { phoneNumber, billingCycle, planSlug, promoCode, provider: providerKey } = req.body;
-    const idempotencyKey = req.headers['idempotency-key'] ?? req.headers['x-idempotency-key'];
+    const rawKey = req.headers['idempotency-key'] ?? req.headers['x-idempotency-key'];
+    if (rawKey != null && (typeof rawKey !== 'string' || !rawKey.trim() || rawKey.length > 128)) {
+      return res.status(400).json({ success: false, message: 'Payment request key must be between 1 and 128 characters.' });
+    }
+    // A compound sparse index still indexes a missing key when shop exists.
+    // Every attempt needs a value; callers supplying a key retain replay safety.
+    const idempotencyKey = rawKey?.trim() ?? `auto:${randomUUID()}`;
 
     // ── 1. Idempotency: a retry must never fire a second STK push ──────────
     if (idempotencyKey) {
