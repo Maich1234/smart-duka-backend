@@ -7,8 +7,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * Billable head-count for a shop: the owner plus every active staff account.
  * Never below 1 — a solo owner is one billable user.
  */
-export async function getBillableUserCount(shopId) {
-  const count = await User.countDocuments({ shop: shopId, isActive: true });
+export async function getBillableUserCount(shopId, session = null) {
+  const query = User.countDocuments({ shop: shopId, isActive: true });
+  const count = await (session ? query.session(session) : query);
   return Math.max(count, 1);
 }
 

@@ -67,6 +67,8 @@ const shopPaymentMethodSchema = new mongoose.Schema({
 }, { _id: false });
 
 const shopSchema = new mongoose.Schema({
+  // Internal serialization point for transactional staff head-count changes.
+  staffBillingRevision: { type: Number, default: 0, select: false },
   name: {
     type: String,
     required: true,
