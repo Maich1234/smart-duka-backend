@@ -39,6 +39,10 @@ const subscriptionPaymentSchema = new mongoose.Schema({
   // Provider correlation ids (M-Pesa: CheckoutRequestID / MerchantRequestID).
   providerRef: { type: String, index: true },
   merchantRequestId: { type: String },
+  // Reserved before provider dispatch so retries cannot send another request.
+  initiationState: { type: String, enum: ['starting', 'submitted', 'uncertain'] },
+  // Publishable checkout key, never the provider secret. Needed for replay.
+  checkoutPublicKey: { type: String },
   phoneNumber: { type: String },
   status: {
     type: String,

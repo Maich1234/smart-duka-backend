@@ -28,9 +28,9 @@ import {
 const router = express.Router();
 
 // Safaricom posts subscription STK results here — public, no JWT auth, but
-// the final path segment is a shared secret (see verifyMpesaCallbackToken)
+// a secret path segment authenticates the provider (see verifyMpesaCallbackToken)
 // since Daraja has no callback-signing mechanism.
-router.post('/mpesa/callback/:token', verifyMpesaCallbackToken, handleMpesaCallback);
+router.post('/mpesa/callback/:token/:paymentId?', verifyMpesaCallbackToken, handleMpesaCallback);
 // Paystack posts charge results here — public, no JWT auth; verified via
 // x-paystack-signature instead.
 router.post('/paystack/webhook', handlePaystackWebhook);
