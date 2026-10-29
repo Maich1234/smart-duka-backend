@@ -47,6 +47,20 @@ function paymentClientState(payment) {
   return { status: payment.status, errorMessage: payment.errorMessage ?? null };
 }
 
+function paymentStartData(payment) {
+  return {
+    paymentId: payment._id,
+    ...paymentClientState(payment),
+    amount: payment.amount,
+    currency: payment.currency,
+    billingCycle: payment.billingCycle,
+    receipt: payment.receipt ?? null,
+    publicKey: payment.checkoutPublicKey ?? null,
+    providerRef: payment.providerRef ?? null,
+    initiationState: payment.initiationState ?? null,
+  };
+}
+
 /** Seeds the default Starter/Growth/Business plans the first time the API is hit. */
 async function ensureDefaultPlans() {
   const count = await SubscriptionPlan.estimatedDocumentCount();
@@ -526,14 +540,9 @@ export const initiatePayment = async (req, res) => {
         return res.json({
           success: true,
           idempotent: true,
-          data: {
-            paymentId: existing._id,
-            ...paymentClientState(existing),
-            amount: existing.amount,
-            receipt: existing.receipt ?? null,
-          },
+          data: paymentStartData(existing),
           message: paymentClientState(existing).status === 'pending'
-            ? 'Payment request already sent. Keep waiting for the M-PESA PIN prompt.'
+            ? 'This payment is being processed. Check its status before starting another.'
             : `Duplicate request — payment already ${paymentClientState(existing).status}.`,
         });
       }
@@ -635,44 +644,29 @@ export const initiatePayment = async (req, res) => {
       }
     }
 
-    // ── 3. Charge via the provider abstraction ─────────────────────────────
-    const callbackUrl = withMpesaCallbackSecret(getSubscriptionCallbackUrl());
-    if (!callbackUrl) {
-      return res.status(503).json({
-        success: false,
-        message: 'SUBSCRIPTION_MPESA_CALLBACK_URL or MPESA_CALLBACK_SECRET is not configured on the server. Contact the app administrator.',
-      });
-    }
-
+    // Validate configuration before reserving an attempt; these reads do not
+    // contact a payment network. Bank checkout does not need an M-Pesa URL.
     const provider = getPaymentProvider(providerKey);
-    if (provider.key === 'mpesa' && !KENYAN_PHONE_PATTERN.test(phoneNumber ?? '')) {
-      return res.status(400).json({ success: false, message: 'Phone number must be in +2547XXXXXXXX or +2541XXXXXXXX format' });
+    if (!provider.available) return res.status(400).json({ success: false, message: 'This payment method is not available yet.' });
+    let callbackUrl;
+    if (provider.key === 'mpesa') {
+      callbackUrl = withMpesaCallbackSecret(getSubscriptionCallbackUrl());
+      if (!callbackUrl) return res.status(503).json({ success: false, message: 'M-Pesa callbacks are not configured. Please contact support.' });
+      if (!KENYAN_PHONE_PATTERN.test(phoneNumber ?? '')) return res.status(400).json({ success: false, message: 'Phone number must be in +2547XXXXXXXX or +2541XXXXXXXX format' });
+      // Fail before dispatch/reservation for invalid server URL configuration.
+      callbackUrl = new URL(callbackUrl);
     }
-    let charge;
+    let config;
     try {
-      charge = await provider.charge({
-        phoneNumber,
-        amount: amountDue,
-        reference: 'DUKANA',
-        description: `DuQana ${plan.name} (${billingCycle})`,
-        callbackUrl,
-        email: req.user.email,
-      });
+      config = await provider.getConfig?.();
     } catch (err) {
-      if (err.code === 'PROVIDER_UNAVAILABLE') {
-        return res.status(400).json({ success: false, message: err.message });
-      }
-      if (err.code === 'PLATFORM_PAYMENTS_UNCONFIGURED') {
-        return res.status(503).json({ success: false, message: err.message });
-      }
-      console.error('[Subscriptions] charge failed:', err.message);
-      return res.status(503).json({
-        success: false,
-        message: 'Could not reach M-PESA to start the payment. Please try again in a moment.',
-      });
+      console.error('[Subscriptions] provider configuration unavailable:', err.message);
+      return res.status(503).json({ success: false, message: 'This payment method is temporarily unavailable. Please contact support.' });
     }
 
-    // ── 4. Record the pending payment ──────────────────────────────────────
+    // Reserve the unique intent BEFORE touching the provider. The database
+    // winner alone dispatches; concurrent callers replay this same attempt.
+    const reservedRef = provider.key === 'bank' ? `DKN-${randomUUID()}` : undefined;
     let payment;
     try {
       payment = await SubscriptionPayment.create({
@@ -685,32 +679,77 @@ export const initiatePayment = async (req, res) => {
         seatAdjustmentIds: subscription.seatAdjustments.map(a => a._id),
         currency: price.currency,
         provider: provider.key,
-        providerRef: charge.providerRef,
-        merchantRequestId: charge.merchantRequestId,
-        phoneNumber: charge.phoneNumber ?? phoneNumber,
+        providerRef: reservedRef,
+        checkoutPublicKey: provider.key === 'bank' ? config.publicKey : undefined,
+        phoneNumber,
         status: 'pending',
+        initiationState: 'starting',
         promotion: promotion?._id ?? null,
         promoCode: promotion?.code ?? null,
         promoDiscount: price.promoDiscount,
         referralDiscount: price.referralDiscount,
         additionalCharge: price.additionalCharge,
         requestedBy: req.user._id,
-        ...(idempotencyKey && { idempotencyKey }),
+        idempotencyKey,
       });
     } catch (err) {
-      // Idempotency-race recovery, same pattern as mpesaController.
-      if (err.code === 11000 && idempotencyKey) {
-        const existing = await SubscriptionPayment.findOne({ shop: shopId, idempotencyKey });
-        if (existing) {
-          return res.json({
-            success: true,
-            idempotent: true,
-            data: { paymentId: existing._id, ...paymentClientState(existing), amount: existing.amount },
-            message: 'Payment request already sent. Keep waiting for the M-PESA PIN prompt.',
-          });
-        }
+      if (err.code !== 11000) throw err;
+      const existing = await SubscriptionPayment.findOne({ shop: shopId, idempotencyKey });
+      if (!existing) throw err;
+      return res.json({ success: true, idempotent: true, data: paymentStartData(existing), message: 'This payment is already being processed. Check its status before starting another.' });
+    }
+
+    if (callbackUrl) callbackUrl.pathname = `${callbackUrl.pathname.replace(/\/+$/, '')}/${payment._id}`;
+    let charge;
+    try {
+      charge = await provider.charge({
+        phoneNumber,
+        amount: amountDue,
+        reference: reservedRef ?? 'DUKANA',
+        description: `DuQana ${plan.name} (${billingCycle})`,
+        callbackUrl: callbackUrl?.toString(),
+        email: req.user.email,
+      });
+      if (!charge?.providerRef) throw new Error('Provider did not return a payment reference.');
+    } catch (err) {
+      console.error('[Subscriptions] provider initiation uncertain:', err.message);
+      // A network error is not proof that the provider did nothing. Keep the
+      // intent and return its ID; never automatically repeat the dispatch.
+      try {
+        await SubscriptionPayment.updateOne(
+          { _id: payment._id, status: 'pending' },
+          { $set: { initiationState: 'uncertain', errorMessage: 'We could not confirm the payment request. Check this payment before starting another.' } },
+        );
+        payment = await SubscriptionPayment.findById(payment._id) ?? payment;
+      } catch (storageError) {
+        console.error('[Subscriptions] could not refresh reserved payment:', storageError.message);
       }
-      throw err;
+      return res.status(paymentClientState(payment).status === 'pending' ? 202 : 200).json({ success: true, data: paymentStartData(payment), message: 'Check this payment’s recorded status before starting another request.' });
+    }
+    // Do not save a stale pending status over an early successful callback.
+    try {
+      const updated = await SubscriptionPayment.findOneAndUpdate(
+        { _id: payment._id, $or: [{ providerRef: null }, { providerRef: charge.providerRef }] },
+        { $set: {
+          providerRef: charge.providerRef,
+          merchantRequestId: charge.merchantRequestId,
+          phoneNumber: charge.phoneNumber ?? phoneNumber,
+          checkoutPublicKey: charge.publicKey,
+          initiationState: 'submitted',
+        } },
+        { new: true },
+      );
+      if (!updated) throw new Error('Provider returned a conflicting payment reference.');
+      payment = updated;
+    } catch (storageError) {
+      console.error('[Subscriptions] could not finish reserved payment:', storageError.message);
+      // The provider may already have accepted the request. Preserve its
+      // durable attempt ID in the response even if this metadata write fails.
+      return res.status(202).json({
+        success: true,
+        data: paymentStartData(payment),
+        message: 'Your payment request is recorded. Check its status before starting another.',
+      });
     }
 
     logAudit({
@@ -728,22 +767,12 @@ export const initiatePayment = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      data: {
-        paymentId: payment._id,
-        status: 'pending',
-        amount: amountDue,
-        currency: price.currency,
-        billingCycle,
-        planSlug: plan.slug,
-        // Paystack only: the client opens its own popup against this key and
-        // reference. Absent (null) for providers that push a prompt
-        // server-side instead, like M-Pesa's STK push.
-        publicKey: charge.publicKey ?? null,
-        providerRef: charge.providerRef,
-      },
-      message: provider.key === 'mpesa'
-        ? 'Payment request sent. Enter your M-PESA PIN on your phone to finish.'
-        : 'Payment started.',
+      data: { ...paymentStartData(payment), planSlug: plan.slug },
+      message: paymentClientState(payment).status === 'success'
+        ? 'Payment confirmed — your subscription is active.'
+        : provider.key === 'mpesa'
+          ? 'Payment request sent. Enter your M-PESA PIN on your phone to finish.'
+          : 'Payment started.',
     });
   } catch (err) {
     console.error('[Subscriptions] initiatePayment error:', err);
@@ -815,10 +844,25 @@ export const handleMpesaCallback = async (req, res) => {
     if (typeof parsed.providerRef !== 'string' || !parsed.providerRef.trim()) {
       return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
     }
-    const candidate = await SubscriptionPayment.findOne({ provider: 'mpesa', providerRef: parsed.providerRef });
+    let candidate;
+    if (req.params.paymentId) {
+      if (!/^[a-f\d]{24}$/i.test(req.params.paymentId)) return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+      candidate = await SubscriptionPayment.findOne({
+        _id: req.params.paymentId,
+        provider: 'mpesa',
+        $or: [
+          { providerRef: parsed.providerRef },
+          { providerRef: null, initiationState: { $in: ['starting', 'uncertain'] } },
+        ],
+      });
+    } else {
+      candidate = await SubscriptionPayment.findOne({ provider: 'mpesa', providerRef: parsed.providerRef });
+    }
     if (!candidate) return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
     const { payment, changed } = await recordPaymentOutcome(candidate._id, {
       status,
+      providerRef: parsed.providerRef,
+      initiationState: 'submitted',
       resultCode: parsed.resultCode,
       errorMessage: parsed.success ? null : parsed.resultDesc,
       receipt: parsed.receipt,

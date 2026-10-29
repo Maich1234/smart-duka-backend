@@ -1,5 +1,5 @@
 // Safaricom's Daraja API has no webhook-signing mechanism, so every M-Pesa
-// callback URL we hand it embeds a shared secret as its final path segment
+// callback URL we hand it embeds a shared secret in its path
 // (see withMpesaCallbackSecret in services/mpesaService.js) instead. This
 // checks that segment — the only thing standing between these endpoints
 // (which must stay publicly reachable, no JWT) and anyone on the internet

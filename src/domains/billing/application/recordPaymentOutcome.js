@@ -8,6 +8,9 @@ export async function recordPaymentOutcome(paymentId, outcome) {
     ? [{ status: { $ne: 'success' } }, { status: 'success', providerConfirmedAt: null }]
     : [{ status: { $in: ['pending', 'timeout'] } }, { provider: 'bank', status: 'success', providerConfirmedAt: null }];
   const filter = { _id: paymentId, periodEnd: null, $or: eligible };
+  if (outcome.providerRef) {
+    filter.$and = [{ $or: [{ providerRef: null }, { providerRef: outcome.providerRef }] }];
+  }
   const fields = outcome.status === 'success' ? { ...outcome, providerConfirmedAt: new Date() } : outcome;
   const updated = await SubscriptionPayment.findOneAndUpdate(filter, { $set: fields }, { new: true });
   return { payment: updated ?? await SubscriptionPayment.findById(paymentId), changed: !!updated };
