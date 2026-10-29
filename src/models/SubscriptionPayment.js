@@ -88,7 +88,8 @@ const subscriptionPaymentSchema = new mongoose.Schema({
   },
 }, { timestamps: true });
 
-// Unique idempotency key per shop — sparse so documents without the key are not constrained
+// Unique intent key per shop. The payment endpoint generates a key for
+// headerless requests: a compound sparse index also indexes shop-only rows.
 subscriptionPaymentSchema.index({ shop: 1, idempotencyKey: 1 }, { unique: true, sparse: true });
 
 export default mongoose.model('SubscriptionPayment', subscriptionPaymentSchema);
