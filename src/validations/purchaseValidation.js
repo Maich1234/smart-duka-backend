@@ -4,7 +4,10 @@ import { MONEY_OUT_METHODS } from '../constants/paymentMethods.js';
 
 const purchaseItemInputSchema = Joi.object({
   productId: Joi.string().required(),
-  quantity: Joi.number().positive().required(),
+  quantity: Joi.number().min(0.001).custom((value, helpers) =>
+    Math.abs(value * 1000 - Math.round(value * 1000)) < 1e-7
+      ? value : helpers.message('Quantity supports up to three decimal places.')
+  ).required(),
   unitCost: Joi.number().min(0).required(),
   // Client computes and sends whichever value it derived (see the New
   // Purchase screen's quantity/unitCost/totalCost auto-calc) — the server

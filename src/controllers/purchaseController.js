@@ -110,47 +110,38 @@ export const createPurchase = async (req, res) => {
   }
 
   const session = await mongoose.startSession();
-  session.startTransaction();
 
   try {
-    let built;
-    try {
+    let purchase, built, grandTotal, requiresApproval;
+    await session.withTransaction(async () => {
       built = await buildPurchaseItems(items, { shop, session });
-    } catch (err) {
-      await session.abortTransaction();
-      session.endSession();
-      if (err instanceof PurchaseLineError) return res.status(err.status).json({ success: false, message: err.message });
-      throw err;
-    }
+      const { additionalCosts: costItems, additionalCostsTotal } = buildAdditionalCosts(additionalCosts, req.user._id);
+      grandTotal = round2(built.productsTotal + additionalCostsTotal);
+      requiresApproval = needsOwnerApproval(req.user);
 
-    const { additionalCosts: costItems, additionalCostsTotal } = buildAdditionalCosts(additionalCosts, req.user._id);
-    const grandTotal = round2(built.productsTotal + additionalCostsTotal);
-    const requiresApproval = needsOwnerApproval(req.user);
+      [purchase] = await Purchase.create([{
+        shop,
+        supplier: supplierDoc?._id,
+        supplierName: supplierDoc?.name ?? supplierName ?? '',
+        items: built.items,
+        additionalCosts: costItems,
+        productsTotal: built.productsTotal,
+        additionalCostsTotal,
+        grandTotal,
+        allocationMethod: req.user.shop?.purchaseCostAllocationMethod ?? 'none',
+        status: requiresApproval ? 'pending_approval' : 'completed',
+        inventoryUpdated: !requiresApproval,
+        staff: req.user._id,
+        // Omitted by older clients and offline payloads queued before the field
+        // existed — the schema default ('cash') covers those.
+        ...(paymentMethod ? { paymentMethod } : {}),
+        ...(purchaseDate ? { purchaseDate } : {}),
+      }], { session });
 
-    const [purchase] = await Purchase.create([{
-      shop,
-      supplier: supplierDoc?._id,
-      supplierName: supplierDoc?.name ?? supplierName ?? '',
-      items: built.items,
-      additionalCosts: costItems,
-      productsTotal: built.productsTotal,
-      additionalCostsTotal,
-      grandTotal,
-      allocationMethod: req.user.shop?.purchaseCostAllocationMethod ?? 'none',
-      status: requiresApproval ? 'pending_approval' : 'completed',
-      inventoryUpdated: !requiresApproval,
-      staff: req.user._id,
-      // Omitted by older clients and offline payloads queued before the field
-      // existed — the schema default ('cash') covers those.
-      ...(paymentMethod ? { paymentMethod } : {}),
-      ...(purchaseDate ? { purchaseDate } : {}),
-    }], { session });
-
-    if (!requiresApproval) {
-      await applyPurchaseReceiptStock(purchase, session);
-    }
-
-    await session.commitTransaction();
+      if (!requiresApproval) {
+        await applyPurchaseReceiptStock(purchase, session);
+      }
+    });
 
     logAudit({
       shopId: shop,
@@ -171,10 +162,10 @@ export const createPurchase = async (req, res) => {
         : 'Purchase recorded and stock updated.',
     });
   } catch (error) {
-    await session.abortTransaction();
+    if (error instanceof PurchaseLineError) return res.status(error.status).json({ success: false, message: error.message });
     throw error;
   } finally {
-    session.endSession();
+    await session.endSession();
   }
 };
 
@@ -277,79 +268,66 @@ export const updatePurchase = async (req, res) => {
 
   const { supplierId, supplierName, items, additionalCosts, paymentMethod, purchaseDate } = req.body;
   const session = await mongoose.startSession();
-  session.startTransaction();
 
   try {
-    const purchase = await Purchase.findOne({ _id: existing._id, shop }).session(session);
+    let purchase;
+    await session.withTransaction(async () => {
+      purchase = await Purchase.findOne({ _id: existing._id, shop }).session(session);
 
-    // Editing a completed purchase reverses and re-applies its stock below —
-    // the same stock movement createPurchase gates behind owner approval, so
-    // a staffer denied that approval on create can't get it back through edit.
-    if (purchase.status === 'completed' && needsOwnerApproval(req.user)) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(403).json({
-        success: false,
-        message: 'You need update-inventory permission to edit a completed purchase — ask an owner to make this change.',
-      });
-    }
+      if (!purchase) throw new PurchaseLineError('Purchase not found', 404);
+      if (purchase.status === 'cancelled') throw new PurchaseLineError('This purchase was cancelled and can no longer be edited.');
 
-    if (purchase.inventoryUpdated) {
-      await reversePurchaseStock(purchase, session);
-    }
+      // Editing a completed purchase reverses and re-applies its stock below —
+      // the same stock movement createPurchase gates behind owner approval, so
+      // a staffer denied that approval on create can't get it back through edit.
+      if (purchase.status === 'completed' && needsOwnerApproval(req.user)) {
+        throw new PurchaseLineError('You need update-inventory permission to edit a completed purchase — ask an owner to make this change.', 403);
+      }
 
-    if (supplierId !== undefined) {
-      if (supplierId) {
-        const supplierDoc = await Supplier.findOne({ _id: supplierId, shop }).session(session);
-        if (!supplierDoc) {
-          await session.abortTransaction();
-          session.endSession();
-          return res.status(400).json({ success: false, message: 'Supplier not found in this shop' });
+      if (purchase.inventoryUpdated) {
+        await reversePurchaseStock(purchase, session);
+      }
+
+      if (supplierId !== undefined) {
+        if (supplierId) {
+          const supplierDoc = await Supplier.findOne({ _id: supplierId, shop }).session(session);
+          if (!supplierDoc) throw new PurchaseLineError('Supplier not found in this shop');
+          purchase.supplier = supplierDoc._id;
+          purchase.supplierName = supplierDoc.name;
+        } else {
+          purchase.supplier = undefined;
+          purchase.supplierName = supplierName ?? '';
         }
-        purchase.supplier = supplierDoc._id;
-        purchase.supplierName = supplierDoc.name;
-      } else {
-        purchase.supplier = undefined;
-        purchase.supplierName = supplierName ?? '';
+      } else if (supplierName !== undefined) {
+        purchase.supplierName = supplierName;
       }
-    } else if (supplierName !== undefined) {
-      purchase.supplierName = supplierName;
-    }
 
-    if (paymentMethod !== undefined) {
-      purchase.paymentMethod = paymentMethod;
-    }
-
-    if (items) {
-      let built;
-      try {
-        built = await buildPurchaseItems(items, { shop, session });
-      } catch (err) {
-        await session.abortTransaction();
-        session.endSession();
-        if (err instanceof PurchaseLineError) return res.status(err.status).json({ success: false, message: err.message });
-        throw err;
+      if (paymentMethod !== undefined) {
+        purchase.paymentMethod = paymentMethod;
       }
-      purchase.items = built.items;
-      purchase.productsTotal = built.productsTotal;
-    }
 
-    if (additionalCosts) {
-      const built = buildAdditionalCosts(additionalCosts, req.user._id);
-      purchase.additionalCosts = built.additionalCosts;
-      purchase.additionalCostsTotal = built.additionalCostsTotal;
-    }
+      if (items) {
+        const built = await buildPurchaseItems(items, { shop, session });
+        purchase.items = built.items;
+        purchase.productsTotal = built.productsTotal;
+      }
 
-    purchase.grandTotal = round2(purchase.productsTotal + purchase.additionalCostsTotal);
-    if (purchaseDate) purchase.purchaseDate = purchaseDate;
+      if (additionalCosts) {
+        const built = buildAdditionalCosts(additionalCosts, req.user._id);
+        purchase.additionalCosts = built.additionalCosts;
+        purchase.additionalCostsTotal = built.additionalCostsTotal;
+      }
 
-    if (purchase.status === 'completed') {
-      await applyPurchaseReceiptStock(purchase, session);
-      purchase.inventoryUpdated = true;
-    }
+      purchase.grandTotal = round2(purchase.productsTotal + purchase.additionalCostsTotal);
+      if (purchaseDate) purchase.purchaseDate = purchaseDate;
 
-    await purchase.save({ session });
-    await session.commitTransaction();
+      if (purchase.status === 'completed') {
+        await applyPurchaseReceiptStock(purchase, session);
+        purchase.inventoryUpdated = true;
+      }
+
+      await purchase.save({ session });
+    });
 
     logAudit({
       shopId: shop, userId: req.user._id, action: 'purchase.updated',
@@ -359,10 +337,10 @@ export const updatePurchase = async (req, res) => {
     const data = canViewPrices(req.user) ? purchase.toObject() : redactPrices(purchase);
     res.json({ success: true, data, message: 'Purchase updated.' });
   } catch (error) {
-    await session.abortTransaction();
+    if (error instanceof PurchaseLineError) return res.status(error.status).json({ success: false, message: error.message });
     throw error;
   } finally {
-    session.endSession();
+    await session.endSession();
   }
 };
 
@@ -377,31 +355,24 @@ export const deletePurchase = async (req, res) => {
 
   const shop = req.user.shop._id;
   const session = await mongoose.startSession();
-  session.startTransaction();
 
   try {
-    const purchase = await Purchase.findOne({ _id: req.params.id, shop }).session(session);
-    if (!purchase) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({ success: false, message: 'Purchase not found' });
-    }
-    if (purchase.status === 'cancelled') {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ success: false, message: 'This purchase has already been cancelled.' });
-    }
+    let purchase;
+    await session.withTransaction(async () => {
+      purchase = await Purchase.findOne({ _id: req.params.id, shop }).session(session);
+      if (!purchase) throw new PurchaseLineError('Purchase not found', 404);
+      if (purchase.status === 'cancelled') throw new PurchaseLineError('This purchase has already been cancelled.');
 
-    if (purchase.inventoryUpdated) {
-      await reversePurchaseStock(purchase, session);
-    }
+      if (purchase.inventoryUpdated) {
+        await reversePurchaseStock(purchase, session);
+      }
 
-    purchase.status = 'cancelled';
-    purchase.inventoryUpdated = false;
-    purchase.cancelledAt = new Date();
-    purchase.cancelledBy = req.user._id;
-    await purchase.save({ session });
-    await session.commitTransaction();
+      purchase.status = 'cancelled';
+      purchase.inventoryUpdated = false;
+      purchase.cancelledAt = new Date();
+      purchase.cancelledBy = req.user._id;
+      await purchase.save({ session });
+    });
 
     logAudit({
       shopId: shop, userId: req.user._id, action: 'purchase.cancelled',
@@ -410,10 +381,10 @@ export const deletePurchase = async (req, res) => {
 
     res.json({ success: true, data: purchase.toObject(), message: 'Purchase cancelled and stock reversed.' });
   } catch (error) {
-    await session.abortTransaction();
+    if (error instanceof PurchaseLineError) return res.status(error.status).json({ success: false, message: error.message });
     throw error;
   } finally {
-    session.endSession();
+    await session.endSession();
   }
 };
 
@@ -425,26 +396,19 @@ export const approvePurchase = async (req, res) => {
 
   const shop = req.user.shop._id;
   const session = await mongoose.startSession();
-  session.startTransaction();
 
   try {
-    const purchase = await Purchase.findOne({ _id: req.params.id, shop }).session(session);
-    if (!purchase) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({ success: false, message: 'Purchase not found' });
-    }
-    if (purchase.status !== 'pending_approval') {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ success: false, message: 'This purchase is not awaiting approval.' });
-    }
+    let purchase;
+    await session.withTransaction(async () => {
+      purchase = await Purchase.findOne({ _id: req.params.id, shop }).session(session);
+      if (!purchase) throw new PurchaseLineError('Purchase not found', 404);
+      if (purchase.status !== 'pending_approval') throw new PurchaseLineError('This purchase is not awaiting approval.');
 
-    await applyPurchaseReceiptStock(purchase, session);
-    purchase.status = 'completed';
-    purchase.inventoryUpdated = true;
-    await purchase.save({ session });
-    await session.commitTransaction();
+      await applyPurchaseReceiptStock(purchase, session);
+      purchase.status = 'completed';
+      purchase.inventoryUpdated = true;
+      await purchase.save({ session });
+    });
 
     logAudit({
       shopId: shop, userId: req.user._id, action: 'purchase.approved',
@@ -453,10 +417,10 @@ export const approvePurchase = async (req, res) => {
 
     res.json({ success: true, data: purchase.toObject(), message: 'Purchase approved — stock updated.' });
   } catch (error) {
-    await session.abortTransaction();
+    if (error instanceof PurchaseLineError) return res.status(error.status).json({ success: false, message: error.message });
     throw error;
   } finally {
-    session.endSession();
+    await session.endSession();
   }
 };
 
