@@ -26,6 +26,7 @@ import { logAudit } from '../services/auditLogService.js';
 import { cleanupFailedSeatPayment } from '../domains/billing/application/seatCleanup.js';
 import { applySuccessfulPayment } from '../domains/billing/application/applySuccessfulPayment.js';
 import { recordPaymentOutcome } from '../domains/billing/application/recordPaymentOutcome.js';
+import { findUnfinishedCheckout, reserveSubscriptionCheckout } from '../domains/billing/application/reserveSubscriptionCheckout.js';
 import { activateFreeSubscription } from '../domains/billing/application/activateFreeSubscription.js';
 import { reconcilePayment } from '../domains/billing/application/reconcilePayment.js';
 import { paystackAmountMismatch } from '../domains/billing/domain/fraud.js';
@@ -58,6 +59,7 @@ function paymentStartData(payment) {
     publicKey: payment.checkoutPublicKey ?? null,
     providerRef: payment.providerRef ?? null,
     initiationState: payment.initiationState ?? null,
+    provider: payment.provider,
   };
 }
 
@@ -548,6 +550,12 @@ export const initiatePayment = async (req, res) => {
       }
     }
 
+    const unfinished = await findUnfinishedCheckout(shopId);
+    if (unfinished) return res.json({
+      success: true, idempotent: true, data: paymentStartData(unfinished),
+      message: 'Please finish checking your existing payment before starting another.',
+    });
+
     // ── 2. Resolve subscription, plan, and server-side price ───────────────
     let subscription = await Subscription.findOne({ shop: shopId });
     const plans = await getActivePlans();
@@ -604,24 +612,18 @@ export const initiatePayment = async (req, res) => {
     // charges) — nothing here is trusted from the client.
     if (amountDue <= 0) {
       try {
-        const payment = await activateFreeSubscription({
+        const { payment, created } = await activateFreeSubscription({
           shopId, subscription, plan, billingCycle, staffCount, price, promotion,
           requestedBy: req.user._id, idempotencyKey, req,
           seatAdjustmentIds: subscription.seatAdjustments.map(a => a._id),
         });
-        return res.status(201).json({
+        return res.status(created ? 201 : 200).json({
           success: true,
-          data: {
-            paymentId: payment._id,
-            status: 'success',
-            amount: 0,
-            currency: price.currency,
-            billingCycle,
-            planSlug: plan.slug,
-            publicKey: null,
-            providerRef: null,
-          },
-          message: 'Your promo code covers the full amount — subscription activated for free.',
+          idempotent: !created,
+          data: paymentStartData(payment),
+          message: paymentClientState(payment).status === 'success'
+            ? 'Your subscription is active.'
+            : 'Please finish checking your existing payment before starting another.',
         });
       } catch (err) {
         // Idempotency-race recovery, same pattern as the charged path below.
@@ -669,7 +671,7 @@ export const initiatePayment = async (req, res) => {
     const reservedRef = provider.key === 'bank' ? `DKN-${randomUUID()}` : undefined;
     let payment;
     try {
-      payment = await SubscriptionPayment.create({
+      const reservation = await reserveSubscriptionCheckout({
         shop: shopId,
         subscription: subscription._id,
         plan: plan._id,
@@ -691,6 +693,11 @@ export const initiatePayment = async (req, res) => {
         additionalCharge: price.additionalCharge,
         requestedBy: req.user._id,
         idempotencyKey,
+      });
+      payment = reservation.payment;
+      if (!reservation.created) return res.json({
+        success: true, idempotent: true, data: paymentStartData(payment),
+        message: 'Please finish checking your existing payment before starting another.',
       });
     } catch (err) {
       if (err.code !== 11000) throw err;
@@ -780,6 +787,17 @@ export const initiatePayment = async (req, res) => {
   }
 };
 
+/** GET /subscriptions/checkout — owner recovery across browsers and sessions. */
+export const getUnfinishedCheckout = async (req, res) => {
+  try {
+    const payment = await findUnfinishedCheckout(shopIdOf(req));
+    return res.json({ success: true, data: { checkout: payment ? paymentStartData(payment) : null } });
+  } catch (err) {
+    console.error('[Subscriptions] checkout recovery failed:', err.message);
+    return res.status(503).json({ success: false, message: 'Could not check your previous payment. Please try again.' });
+  }
+};
+
 /** GET /subscriptions/pay/:paymentId — polls a pending charge. */
 export const getPaymentStatus = async (req, res) => {
   try {
@@ -797,6 +815,7 @@ export const getPaymentStatus = async (req, res) => {
       data: {
         paymentId: payment._id,
         ...paymentClientState(payment),
+        provider: payment.provider,
         amount: payment.amount,
         additionalCharge: payment.additionalCharge ?? 0,
         currency: payment.currency,
@@ -978,6 +997,7 @@ export const recheckPayment = async (req, res) => {
       data: {
         paymentId: payment._id,
         ...paymentClientState(payment),
+        provider: payment.provider,
         amount: payment.amount,
         additionalCharge: payment.additionalCharge ?? 0,
         currency: payment.currency,
@@ -1054,6 +1074,7 @@ export const reconcileByMessage = async (req, res) => {
       data: {
         paymentId: candidate._id,
         ...paymentClientState(candidate),
+        provider: candidate.provider,
         amount: candidate.amount,
         currency: candidate.currency,
         receipt: candidate.receipt ?? null,

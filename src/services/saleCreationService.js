@@ -184,6 +184,7 @@ export const createSaleTransaction = async ({
       // by more than one cart line (e.g. shared bundle components). Rebuilt
       // per attempt — reusing docs across retries would replay stale versions.
       const productCache = new Map();
+      const stockMovements = [];
 
       // One round trip for the whole basket instead of one per line. A 20-item
       // cart used to be 20 sequential queries holding the transaction (and its
@@ -218,7 +219,7 @@ export const createSaleTransaction = async ({
 
         let resolved;
         try {
-          resolved = await resolveSaleLine(product, item, { shop, session, productCache, negativeStockAlerts });
+          resolved = await resolveSaleLine(product, item, { shop, session, productCache, negativeStockAlerts, stockMovements });
         } catch (err) {
           if (err instanceof SaleLineError) throw new SaleRejection(err.status, err.message);
           throw err;
@@ -250,6 +251,19 @@ export const createSaleTransaction = async ({
         });
       }
 
+      if (mpesaTx) {
+        // Re-read within the transaction: a typed receipt may match an
+        // unconfirmed transaction, and confirmation alone is not proof that
+        // its amount covers this basket. Never trust a client-side total.
+        const confirmed = await MpesaTransaction.findOne({ _id: mpesaTx._id, shop }).session(session);
+        if (!confirmed || confirmed.status !== 'success') {
+          throw new SaleRejection(400, 'M-Pesa payment not confirmed. Please wait for payment confirmation before recording the sale.');
+        }
+        if (!Number.isFinite(confirmed.amount) || Math.round(confirmed.amount * 100) < Math.round(totalAmount * 100)) {
+          throw new SaleRejection(400, 'The confirmed M-Pesa payment does not cover this sale total.', 'PAYMENT_AMOUNT_INSUFFICIENT');
+        }
+      }
+
       for (const doc of productCache.values()) {
         await doc.save({ session });
       }
@@ -265,6 +279,7 @@ export const createSaleTransaction = async ({
       [sale] = await Sale.create([{
         shop,
         items: saleItems,
+        stockMovements,
         totalAmount,
         totalCommission,
         paymentMethod,
@@ -299,7 +314,7 @@ export const createSaleTransaction = async ({
       // not a second sale for the same payment.
       if (mpesaTx) {
         const claimed = await MpesaTransaction.findOneAndUpdate(
-          { _id: mpesaTx._id, saleId: null },
+          { _id: mpesaTx._id, shop, status: 'success', saleId: null },
           { $set: { saleId: sale._id } },
           { session },
         );

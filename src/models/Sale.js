@@ -107,6 +107,17 @@ const saleSchema = new mongoose.Schema({
     type: String,
   },
   items: [saleItemSchema],
+  // Exact deductions at checkout, including bundle components and variants.
+  // undefined identifies legacy sales; [] means this sale moved no stock.
+  // Never supplied by the client: populated by the pricing engine.
+  stockMovements: {
+    type: [new mongoose.Schema({
+      product: { type: mongoose.Schema.Types.ObjectId, required: true },
+      variant: { type: mongoose.Schema.Types.ObjectId },
+      quantity: { type: Number, required: true, min: 0 },
+    }, { _id: false })],
+    default: undefined,
+  },
   totalAmount: {
     type: Number,
     required: true,

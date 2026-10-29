@@ -1,4 +1,4 @@
-import SubscriptionPayment from '../../../models/SubscriptionPayment.js';
+import { reserveSubscriptionCheckout } from './reserveSubscriptionCheckout.js';
 import { applySuccessfulPayment } from './applySuccessfulPayment.js';
 import { logAudit } from '../../../services/auditLogService.js';
 
@@ -9,6 +9,7 @@ import { logAudit } from '../../../services/auditLogService.js';
  * -supplied amount or a client's own "this is free" claim), so there is
  * nothing to charge and no payment provider is involved.
  *
+ * Reservation is serialized per shop, including existing paid attempts.
  * Retries and duplicate clicks are made safe the same way every other
  * subscription payment already is in this codebase: the unique
  * (shop, idempotencyKey) index on SubscriptionPayment rejects a second
@@ -23,7 +24,7 @@ import { logAudit } from '../../../services/auditLogService.js';
 export async function activateFreeSubscription({
   shopId, subscription, plan, billingCycle, staffCount, price, promotion, requestedBy, idempotencyKey, req, seatAdjustmentIds,
 }) {
-  const payment = await SubscriptionPayment.create({
+  const { payment, created } = await reserveSubscriptionCheckout({
     shop: shopId,
     subscription: subscription._id,
     plan: plan._id,
@@ -43,6 +44,8 @@ export async function activateFreeSubscription({
     requestedBy,
     ...(idempotencyKey && { idempotencyKey }),
   });
+
+  if (!created) return { payment, created };
 
   try {
     await applySuccessfulPayment(payment);
@@ -71,5 +74,5 @@ export async function activateFreeSubscription({
     req,
   }).catch(() => {});
 
-  return payment;
+  return { payment, created };
 }
