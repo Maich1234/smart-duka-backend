@@ -121,44 +121,34 @@ export const voidSale = async (req, res) => {
 
   const shop = req.user.shop._id;
   const session = await mongoose.startSession();
-  session.startTransaction();
+  let sale;
+  let creditReversal;
 
   try {
-    const sale = await Sale.findOne({ _id: req.params.id, shop }).session(session);
-    if (!sale) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({ success: false, message: 'Sale not found' });
-    }
-    if (sale.status !== 'completed') {
-      await session.abortTransaction();
-      session.endSession();
-      const why = sale.status === 'voided'
-        ? 'This sale has already been voided.'
-        : 'This sale has a refund in progress or completed — it can no longer be voided.';
-      return res.status(400).json({ success: false, message: why });
-    }
+    // A concurrent void (or another stock movement) may win after our read.
+    // Retry transient conflicts with a fresh snapshot, then check the sale's
+    // status again. Keep all writes inside the transaction and respond only
+    // after commit, so a retry cannot restore stock or cancel debt twice.
+    await session.withTransaction(async () => {
+      sale = await Sale.findOne({ _id: req.params.id, shop }).session(session);
+      creditReversal = null;
+      if (!sale) throw new SaleRejection(404, 'Sale not found');
+      if (sale.status !== 'completed') {
+        throw new SaleRejection(400, sale.status === 'voided'
+          ? 'This sale has already been voided.'
+          : 'This sale has a refund in progress or completed — it can no longer be voided.');
+      }
 
-    // A voided credit sale must take its debt with it, in the same transaction
-    // that restores the stock — otherwise the shop has the goods back and the
-    // customer still owes for them.
-    //
-    // Refused once any repayment has landed against it: unwinding a debt the
-    // customer has already partly settled is a refund decision, not a void,
-    // and quietly cancelling it would discard the record of money that
-    // genuinely changed hands. reverseDebt says so and points at the reversal
-    // flow, which is owner-only and demands a reason.
-    let creditReversal = null;
-    if (sale.customer) {
-      const debt = await CreditTransaction.findOne({
-        sale: sale._id,
-        shop,
-        type: { $in: DEBT_TX_TYPES },
-        status: 'outstanding',
-      }).session(session);
-
-      if (debt) {
-        try {
+      // Cancel an unpaid credit debt atomically with its sale and stock.
+      // A partly repaid debt needs its repayment reversed before voiding.
+      if (sale.customer) {
+        const debt = await CreditTransaction.findOne({
+          sale: sale._id,
+          shop,
+          type: { $in: DEBT_TX_TYPES },
+          status: 'outstanding',
+        }).session(session);
+        if (debt) {
           creditReversal = await reverseDebt({
             shop: req.user.shop,
             transaction: debt,
@@ -168,34 +158,18 @@ export const voidSale = async (req, res) => {
               ? `Sale voided: ${String(req.body.reason).slice(0, 260)}`
               : 'Sale voided',
           });
-        } catch (error) {
-          if (error instanceof CreditRejection) {
-            await session.abortTransaction();
-            session.endSession();
-            return res.status(error.status).json({
-              success: false,
-              code: error.code,
-              message: error.code === 'DEBT_PARTLY_REPAID'
-                ? 'This credit sale has already been partly repaid, so it can\'t be voided. Reverse the repayment first, or refund the customer.'
-                : error.message,
-            });
-          }
-          throw error;
         }
       }
-    }
 
-    await restoreSaleStock(sale, session);
+      await restoreSaleStock(sale, session);
+      sale.status = 'voided';
+      sale.voidedAt = new Date();
+      sale.voidedBy = req.user._id;
+      if (req.body?.reason) sale.voidReason = String(req.body.reason).slice(0, 300);
+      await sale.save({ session });
+    });
 
-    sale.status = 'voided';
-    sale.voidedAt = new Date();
-    sale.voidedBy = req.user._id;
-    if (req.body?.reason) sale.voidReason = String(req.body.reason).slice(0, 300);
-    await sale.save({ session });
-
-    await session.commitTransaction();
-
-    res.json({
+    return res.json({
       success: true,
       data: sale.toObject(),
       message: creditReversal
@@ -203,10 +177,18 @@ export const voidSale = async (req, res) => {
         : 'Sale voided and stock restored.',
     });
   } catch (error) {
-    await session.abortTransaction();
+    if (error instanceof SaleRejection || error instanceof CreditRejection) {
+      return res.status(error.status).json({
+        success: false,
+        ...(error.code ? { code: error.code } : {}),
+        message: error.code === 'DEBT_PARTLY_REPAID'
+          ? 'This credit sale has already been partly repaid, so it can\'t be voided. Reverse the repayment first, or refund the customer.'
+          : error.message,
+      });
+    }
     throw error;
   } finally {
-    session.endSession();
+    await session.endSession();
   }
 };
 
