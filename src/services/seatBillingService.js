@@ -118,21 +118,10 @@ export function clearSeatAdjustments(subscription) {
 }
 
 /**
- * Books the seat credit for a staff account that has just been deleted, and
- * re-snapshots the subscription's head-count.
- *
- * Call AFTER the user document is actually gone (and outside any transaction
- * that removed it) — the credit is derived from a live re-count, so a delete
- * that hasn't committed yet would produce the wrong number.
- *
- * Shared by both removal paths on purpose. The owner-initiated one
- * (staffController.deleteStaff) did this inline, while accounts destroyed by
- * purgeScheduledDeletions — a staff member closing their own account — skipped
- * it entirely, so the shop kept paying for a seat nobody occupied and
- * `staffCount` drifted permanently out of sync. That drift is exactly the bug
- * the head-count write-back below was added to fix once already.
- *
- * Inactive accounts were never billable, so they release nothing.
+ * Legacy compatibility helper for callers that already deleted a user.
+ * Staff lifecycle routes and scheduled closures now use
+ * mutateStaffWithBilling so deletion, count and credit commit atomically.
+ * Do not use this post-commit helper for new staff mutation paths.
  */
 export async function releaseStaffSeat({ shopId, staff, wasActive, reason = 'staff_removed' }) {
   if (!wasActive || !shopId) return null;

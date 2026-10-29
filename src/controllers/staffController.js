@@ -6,7 +6,8 @@ import { DEFAULT_STAFF_PERMISSIONS, withImpliedPermissions } from '../constants/
 import { parsePagination } from '../utils/pagination.js';
 import { escapeRegex } from '../utils/escapeRegex.js';
 import { getBillableUserCount } from '../services/subscriptionPricingService.js';
-import { accrueSeatChange, computeSeatChange, releaseStaffSeat } from '../services/seatBillingService.js';
+import { computeSeatChange } from '../services/seatBillingService.js';
+import { mutateStaffWithBilling } from '../services/staffBillingMutation.js';
 import { resolveStaffEmailSlot } from './seatPaymentController.js';
 import { revokeAllSessions } from '../services/refreshTokenService.js';
 import { logAudit } from '../services/auditLogService.js';
@@ -78,42 +79,18 @@ export const createStaff = async (req, res) => {
   }
 
   const shopId = req.user.shop._id;
-  const subscription = await Subscription.findOne({ shop: shopId }).populate('plan');
-  const beforeCount = await getBillableUserCount(shopId);
-
   const isEmailVerified = isSystemGeneratedEmail(email, req.user.shop.name);
-  const staff = await User.create({
-    ...req.body,
-    role: 'staff',
-    shop: req.user.shop._id,
-    isActive: true,
-    isEmailVerified,
-    permissions: withImpliedPermissions(req.body.permissions ?? DEFAULT_STAFF_PERMISSIONS),
+  const { staff, subscription, adjustment } = await mutateStaffWithBilling({
+    shopId, reason: 'staff_added',
+    mutate: async session => {
+      const staff = new User({
+        ...req.body, role: 'staff', shop: shopId, isActive: true, isEmailVerified,
+        permissions: withImpliedPermissions(req.body.permissions ?? DEFAULT_STAFF_PERMISSIONS),
+      });
+      await staff.save({ session });
+      return { staff };
+    },
   });
-
-  // Seats are postpaid: the account works immediately and the prorated cost
-  // of the extra seat lands on the next invoice. Never blocks on payment —
-  // an owner onboarding their first cashier must not hit a checkout wall,
-  // and the mobile app ships with no purchase flow at all.
-  const adjustment = subscription?.plan
-    ? await accrueSeatChange({
-      subscription,
-      plan: subscription.plan,
-      fromCount: beforeCount,
-      toCount: beforeCount + 1,
-      reason: 'staff_added',
-      staff,
-    })
-    : null;
-
-  // Written back even when there was nothing to accrue (trial, or a
-  // plan-less subscription) — this is the same staffCount snapshot the
-  // mobile "Billable people" card reads, and until now only removal
-  // (releaseStaffSeat) kept it in sync; addition left it stale.
-  if (subscription) {
-    subscription.staffCount = beforeCount + 1;
-    await subscription.save();
-  }
 
   // Awaited: a serverless invocation is frozen once the response is flushed, so
   // a dangling promise here never even reached the code generation — real-email
@@ -198,40 +175,29 @@ export const checkStaffEmailAvailability = async (req, res) => {
 
 export const updateStaff = async (req, res) => {
   const shopId = req.user.shop._id;
-  const staff = await User.findOne({ _id: req.params.id, role: 'staff', shop: shopId });
-  if (!staff) return res.status(404).json({ success: false, message: 'Staff not found' });
-
   const { name, email, phone, isActive, permissions, commissionEligible } = req.body;
-  // Toggling isActive changes billable head-count, so it has to be priced the
-  // same way createStaff prices a new seat. Without this, deactivate →
-  // reactivate was a free seat: the old seat-payment gate only ever guarded
-  // creation, leaving this endpoint as an open bypass.
-  const activationChanged = isActive !== undefined && isActive !== staff.isActive;
-  const previousEmail = staff.email;
-  const nextPermissions = permissions ? withImpliedPermissions(permissions) : null;
-  const permissionsChanged = !!nextPermissions && !sameStringSet(nextPermissions, staff.permissions);
-
-  // Security-relevant changes to alert/audit — collected before mutating so
-  // the "changed to X" wording reflects what actually moved.
-  const changes = [];
-  if (name) staff.name = name;
-  if (email && email !== staff.email) {
-    changes.push(`email changed to ${email}`);
-    staff.email = email;
-  }
-  if (phone && phone !== staff.phone) {
-    changes.push(`phone number changed to ${phone}`);
-    staff.phone = phone;
-  }
-  if (activationChanged) {
-    changes.push(isActive ? 'account reactivated' : 'account deactivated');
-    staff.isActive = isActive;
-  }
-  if (permissionsChanged) changes.push('permissions updated');
-  if (nextPermissions) staff.permissions = nextPermissions;
-  if (commissionEligible !== undefined) staff.commissionEligible = commissionEligible;
-
-  await staff.save();
+  const { staff, changes, previousEmail, adjustment } = await mutateStaffWithBilling({
+    shopId,
+    mutate: async session => {
+      const staff = await User.findOne({ _id: req.params.id, role: 'staff', shop: shopId }).session(session);
+      if (!staff) throw Object.assign(new Error('Staff not found'), { status: 404 });
+      const previousEmail = staff.email;
+      const nextPermissions = permissions ? withImpliedPermissions(permissions) : null;
+      const changes = [];
+      if (name) staff.name = name;
+      if (email && email !== staff.email) { changes.push(`email changed to ${email}`); staff.email = email; }
+      if (phone && phone !== staff.phone) { changes.push(`phone number changed to ${phone}`); staff.phone = phone; }
+      if (isActive !== undefined && isActive !== staff.isActive) {
+        changes.push(isActive ? 'account reactivated' : 'account deactivated');
+        staff.isActive = isActive;
+      }
+      if (nextPermissions && !sameStringSet(nextPermissions, staff.permissions)) changes.push('permissions updated');
+      if (nextPermissions) staff.permissions = nextPermissions;
+      if (commissionEligible !== undefined) staff.commissionEligible = commissionEligible;
+      await staff.save({ session });
+      return { staff, changes, previousEmail, billingReason: isActive ? 'staff_reactivated' : 'staff_deactivated' };
+    },
+  });
 
   if (changes.length > 0) {
     await logAudit({
@@ -249,31 +215,6 @@ export const updateStaff = async (req, res) => {
     await notifySecurityEvent(staff, 'staff_account_updated', { req, detail: changes.join(', '), email: previousEmail || staff.email });
   }
 
-  let adjustment = null;
-  if (activationChanged) {
-    const subscription = await Subscription.findOne({ shop: shopId }).populate('plan');
-    if (subscription) {
-      // Count is read *after* the save, so it already reflects the change.
-      const afterCount = await getBillableUserCount(shopId);
-      const beforeCount = isActive ? afterCount - 1 : afterCount + 1;
-      adjustment = subscription.plan
-        ? await accrueSeatChange({
-          subscription,
-          plan: subscription.plan,
-          fromCount: beforeCount,
-          toCount: afterCount,
-          reason: isActive ? 'staff_reactivated' : 'staff_deactivated',
-          staff,
-        })
-        : null;
-      // Same write-back as createStaff / releaseStaffSeat — keeps the
-      // mobile "Billable people" snapshot in sync with every head-count
-      // change, not just deletions and payments.
-      subscription.staffCount = afterCount;
-      await subscription.save();
-    }
-  }
-
   const staffResponse = staff.toObject();
   delete staffResponse.password;
   res.json({
@@ -285,16 +226,15 @@ export const updateStaff = async (req, res) => {
 
 export const deleteStaff = async (req, res) => {
   const shopId = req.user.shop._id;
-  const staff = await User.findOne({ _id: req.params.id, role: 'staff', shop: shopId });
-  if (!staff) return res.status(404).json({ success: false, message: 'Staff not found' });
-
-  const wasActive = staff.isActive;
-  await staff.deleteOne();
-
-  // Credits back the unused part of the period this seat was paid for and
-  // re-snapshots head-count. Shared with purgeScheduledDeletions so a staff
-  // member closing their own account releases the seat too.
-  await releaseStaffSeat({ shopId, staff, wasActive });
+  await mutateStaffWithBilling({
+    shopId, reason: 'staff_removed',
+    mutate: async session => {
+      const staff = await User.findOne({ _id: req.params.id, role: 'staff', shop: shopId }).session(session);
+      if (!staff) throw Object.assign(new Error('Staff not found'), { status: 404 });
+      await staff.deleteOne({ session });
+      return { staff };
+    },
+  });
 
   res.json({ success: true, message: 'Staff deleted successfully' });
 };

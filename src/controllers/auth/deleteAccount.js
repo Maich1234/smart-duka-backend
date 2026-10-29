@@ -3,7 +3,7 @@ import User from '../../models/User.js';
 import Shop from '../../models/Shop.js';
 import Subscription from '../../models/Subscription.js';
 import { revokeAllSessions } from '../../services/refreshTokenService.js';
-import { releaseStaffSeat } from '../../services/seatBillingService.js';
+import { mutateStaffWithBilling } from '../../services/staffBillingMutation.js';
 import { logAudit } from '../../services/auditLogService.js';
 import { sendPushToUser } from '../../utils/push.js';
 
@@ -391,53 +391,46 @@ export async function purgeScheduledDeletions(now = new Date()) {
   for (const user of due) {
     const shopId = user.shop?._id ?? user.shop;
     const isOwner = user.role === 'owner';
-    const wasActive = user.isActive;
     let cascadedStaffIds = [];
 
-    const session = await mongoose.startSession();
     try {
-      await session.withTransaction(async () => {
-        if (isOwner) {
-          // Cascade: staff accounts and the subscription have no meaning once
-          // the shop is gone. Financial documents are deliberately untouched.
-          const staff = await User.find({ shop: shopId, role: 'staff' }).select('_id').session(session);
-          cascadedStaffIds = staff.map((s) => s._id);
-
-          await User.deleteMany({ shop: shopId }).session(session);
-          await Subscription.deleteOne({ shop: shopId }).session(session);
-          await Shop.deleteOne({ _id: shopId }).session(session);
-        } else {
-          await User.deleteOne({ _id: user._id }).session(session);
-        }
-      });
+      if (isOwner) {
+        const session = await mongoose.startSession();
+        let purged = false;
+        try {
+          await session.withTransaction(async () => {
+            const current = await User.findOne({ _id: user._id, deletionScheduledAt: { $ne: null, $lte: now } }).session(session);
+            if (!current) { purged = false; return; }
+            const staff = await User.find({ shop: shopId, role: 'staff' }).select('_id').session(session);
+            cascadedStaffIds = staff.map(s => s._id);
+            await User.deleteMany({ shop: shopId }).session(session);
+            await Subscription.deleteOne({ shop: shopId }).session(session);
+            await Shop.deleteOne({ _id: shopId }).session(session);
+            purged = true;
+          });
+        } finally { await session.endSession(); }
+        if (!purged) continue;
+      } else {
+        const outcome = await mutateStaffWithBilling({
+          shopId, reason: 'staff_account_closed',
+          mutate: async session => {
+            const staff = await User.findOne({ _id: user._id, shop: shopId, role: 'staff', deletionScheduledAt: { $ne: null, $lte: now } }).session(session);
+            if (!staff) return { staff: null };
+            await staff.deleteOne({ session });
+            return { staff };
+          },
+        });
+        if (!outcome.staff) continue;
+      }
     } catch (err) {
       console.error('[purgeScheduledDeletions] failed for user', String(user._id), err.message);
-      session.endSession();
       continue;
-    } finally {
-      session.endSession();
     }
 
     // Sessions live outside the transaction's collections; revoke after commit.
     await revokeAllSessions(user._id, 'account_deleted').catch(() => {});
     for (const staffId of cascadedStaffIds) {
       await revokeAllSessions(staffId, 'account_deleted').catch(() => {});
-    }
-
-    // A staff member closing their own account vacates a billable seat exactly
-    // as if the owner had removed them, so the credit and head-count snapshot
-    // have to be booked here too — this path used to skip it, leaving the shop
-    // paying for a seat nobody occupied. Owners are skipped deliberately: the
-    // whole subscription is deleted above, so there is nothing to adjust.
-    if (!isOwner) {
-      await releaseStaffSeat({
-        shopId,
-        staff: user,
-        wasActive,
-        reason: 'staff_account_closed',
-      }).catch((err) =>
-        console.error('[purgeScheduledDeletions] seat release failed for', String(user._id), err.message),
-      );
     }
 
     await logAudit({
