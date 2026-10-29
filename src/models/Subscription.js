@@ -79,7 +79,7 @@ const subscriptionSchema = new mongoose.Schema({
   // Last successful payment.
   amountPaid: { type: Number, default: 0 },
   currency: { type: String, default: 'KES', uppercase: true, trim: true },
-  paymentProvider: { type: String, enum: ['mpesa', 'card', 'bank', null], default: null },
+  paymentProvider: { type: String, enum: ['mpesa', 'card', 'bank', 'free', null], default: null },
   paymentReference: { type: String, default: null },
   promotion: {
     type: mongoose.Schema.Types.ObjectId,

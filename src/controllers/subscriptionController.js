@@ -36,7 +36,7 @@ import { renderSubscriptionEmail, SUBSCRIPTION_UNSUBSCRIBE_MAILTO } from '../uti
 
 const shopIdOf = (req) => req.user.shop._id ?? req.user.shop;
 
-/** Seeds the default Starter/Business plans the first time the API is hit. */
+/** Seeds the default Starter/Growth/Business plans the first time the API is hit. */
 async function ensureDefaultPlans() {
   const count = await SubscriptionPlan.estimatedDocumentCount();
   if (count === 0) await SubscriptionPlan.insertMany(DEFAULT_PLANS);
@@ -171,6 +171,7 @@ export const previewPricing = async (req, res) => {
         yearlySavings: price.yearlySavings,
         promoDiscount: price.promoDiscount,
         referralDiscount: price.referralDiscount,
+        additionalCharge: price.additionalCharge,
         amountDue: price.amountDue,
         currency: price.currency,
       },
@@ -242,6 +243,7 @@ export const getMySubscription = async (req, res) => {
         planSlug: price.plan.slug,
         billingCycle: price.billingCycle,
         basePrice: price.amountDue,
+        additionalCharge: price.additionalCharge,
         referralDiscount: price.referralDiscount,
         seatCharges,
         seatAdjustments: describeSeatAdjustments(subscription),
@@ -525,7 +527,7 @@ export const initiatePayment = async (req, res) => {
     let subscription = await Subscription.findOne({ shop: shopId });
     const plans = await getActivePlans();
     const staffCount = await getBillableUserCount(shopId);
-    const plan = planSlug
+    let plan = planSlug
       ? plans.find((p) => p.slug === planSlug)
       : plans.find((p) => subscription && String(p._id) === String(subscription.plan))
         ?? pickPlanForStaffCount(plans, staffCount);
@@ -544,6 +546,7 @@ export const initiatePayment = async (req, res) => {
       plans, plan, staffCount, billingCycle, promotion,
       referralCreditPercent: subscription?.referralDiscountPercent ?? 0,
     });
+    plan = price.plan;
     // Accrued mid-period seat changes settle on this invoice. Added after the
     // promotion so a discount code applies to the plan price, not to seats
     // already consumed.
@@ -672,6 +675,7 @@ export const initiatePayment = async (req, res) => {
         promoCode: promotion?.code ?? null,
         promoDiscount: price.promoDiscount,
         referralDiscount: price.referralDiscount,
+        additionalCharge: price.additionalCharge,
         requestedBy: req.user._id,
         ...(idempotencyKey && { idempotencyKey }),
       });
@@ -753,6 +757,7 @@ export const getPaymentStatus = async (req, res) => {
         paymentId: payment._id,
         status: payment.status,
         amount: payment.amount,
+        additionalCharge: payment.additionalCharge ?? 0,
         currency: payment.currency,
         receipt: payment.receipt ?? null,
         periodEnd: payment.periodEnd ?? null,
@@ -937,6 +942,7 @@ export const recheckPayment = async (req, res) => {
         paymentId: payment._id,
         status: payment.status,
         amount: payment.amount,
+        additionalCharge: payment.additionalCharge ?? 0,
         currency: payment.currency,
         receipt: payment.receipt ?? null,
         periodEnd: payment.periodEnd ?? null,

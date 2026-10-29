@@ -20,20 +20,26 @@ export async function getBillableUserCount(shopId) {
 export function pickPlanForStaffCount(plans, staffCount) {
   const active = plans
     .filter((p) => p.active !== false)
-    .sort((a, b) => a.maxStaff - b.maxStaff);
+    .sort((a, b) => (a.unlimitedUsers ? Infinity : a.maxStaff) - (b.unlimitedUsers ? Infinity : b.maxStaff));
   if (active.length === 0) return null;
-  return active.find((p) => staffCount <= p.maxStaff) ?? active[active.length - 1];
+  return active.find((p) => p.unlimitedUsers || staffCount <= p.maxStaff) ?? active[active.length - 1];
 }
 
-/** Monthly total for one plan at a given head-count (tier overflow included). */
-export function monthlyTotalForPlan(plan, staffCount) {
-  let total = plan.billingType === 'per_staff'
-    ? staffCount * plan.monthlyPrice
-    : plan.monthlyPrice;
-  if (staffCount > plan.maxStaff && plan.extraStaffPrice > 0) {
+/** Base price before the fixed monthly charge. Legacy per-user plans remain supported. */
+export function monthlyBaseForPlan(plan, staffCount) {
+  if (!plan.unlimitedUsers && staffCount > plan.maxStaff && plan.overflowTiers?.length) {
+    const band = plan.overflowTiers.find(tier => tier.maxUsers == null || staffCount <= tier.maxUsers);
+    if (band) return Math.round(band.monthlyPrice);
+  }
+  let total = plan.billingType === 'per_staff' ? staffCount * plan.monthlyPrice : plan.monthlyPrice;
+  if (!plan.unlimitedUsers && staffCount > plan.maxStaff && plan.extraStaffPrice > 0) {
     total += (staffCount - plan.maxStaff) * plan.extraStaffPrice;
   }
   return Math.round(total);
+}
+
+export function monthlyTotalForPlan(plan, staffCount) {
+  return monthlyBaseForPlan(plan, staffCount) + (plan.monthlyCharge ?? 0);
 }
 
 /**
@@ -50,19 +56,19 @@ export function computeSeatAdditionImpact(plan, currentStaffCount, billingCycle 
 
 /** Quarterly total: monthly × 3 less the quarterly discount. */
 export function quarterlyTotalForPlan(plan, staffCount) {
-  const monthly = monthlyTotalForPlan(plan, staffCount);
+  const monthly = monthlyBaseForPlan(plan, staffCount);
   const discount = (plan.quarterlyDiscountPercent ?? 0) / 100;
-  return Math.round(monthly * 3 * (1 - discount));
+  return Math.round(monthly * 3 * (1 - discount)) + (plan.monthlyCharge ?? 0) * 3;
 }
 
 /** Yearly total: explicit override, else monthly × 12 less the yearly discount. */
 export function yearlyTotalForPlan(plan, staffCount) {
-  if (plan.yearlyPrice != null && plan.billingType === 'flat' && staffCount <= plan.maxStaff) {
-    return Math.round(plan.yearlyPrice);
+  if (plan.yearlyPrice != null && plan.billingType === 'flat' && (plan.unlimitedUsers || staffCount <= plan.maxStaff)) {
+    return Math.round(plan.yearlyPrice) + (plan.monthlyCharge ?? 0) * 12;
   }
-  const monthly = monthlyTotalForPlan(plan, staffCount);
+  const monthly = monthlyBaseForPlan(plan, staffCount);
   const discount = (plan.yearlyDiscountPercent ?? 0) / 100;
-  return Math.round(monthly * 12 * (1 - discount));
+  return Math.round(monthly * 12 * (1 - discount)) + (plan.monthlyCharge ?? 0) * 12;
 }
 
 /** Full-period total for a head-count on a plan, for any billing cycle. */
@@ -113,7 +119,9 @@ export function applyReferralCredit(amount, referralCreditPercent) {
 export function computePrice({
   plans, plan = null, staffCount, billingCycle = 'monthly', promotion = null, referralCreditPercent = 0,
 }) {
-  const chosen = plan ?? pickPlanForStaffCount(plans, staffCount);
+  // New flat tiers must not be bypassed by supplying an outgrown plan slug.
+  const outgrown = plan && !plan.unlimitedUsers && staffCount > plan.maxStaff && plan.overflowTiers?.length;
+  const chosen = outgrown ? pickPlanForStaffCount(plans, staffCount) : plan ?? pickPlanForStaffCount(plans, staffCount);
   if (!chosen) throw new Error('No active subscription plans are configured');
 
   const monthlyTotal = monthlyTotalForPlan(chosen, staffCount);
@@ -135,6 +143,7 @@ export function computePrice({
     yearlyTotal,
     quarterlySavings,
     yearlySavings,
+    additionalCharge: (chosen.monthlyCharge ?? 0) * ({ monthly: 1, quarterly: 3, yearly: 12 }[billingCycle] ?? 1),
     amountDue: afterReferral,
     promoDiscount,
     referralDiscount,
