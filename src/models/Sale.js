@@ -118,6 +118,8 @@ const saleSchema = new mongoose.Schema({
     }, { _id: false })],
     default: undefined,
   },
+  // Internal write guard shared by repayment corrections and sale refunds.
+  creditRevision: { type: Number, select: false },
   totalAmount: {
     type: Number,
     required: true,

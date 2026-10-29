@@ -15,7 +15,7 @@ import { escapeRegex } from '../utils/escapeRegex.js';
 import { sendPushToUser } from '../utils/push.js';
 import { methodLabel } from '../constants/salePaymentMethods.js';
 import CreditTransaction from '../models/CreditTransaction.js';
-import { DEBT_TX_TYPES } from '../constants/credit.js';
+import { CREDIT_METHOD_KEY, DEBT_TX_TYPES } from '../constants/credit.js';
 import { CreditRejection, reverseDebt } from '../services/creditService.js';
 
 /**
@@ -202,6 +202,22 @@ function getReversalResultUrl() {
   return null;
 }
 
+// A cancelled debt is not evidence of money received. Keep this check inside
+// the cash transaction as well as before dispatching any provider reversal.
+async function assertCreditRefundEligible(sale, shop, session = null) {
+  const debt = sale.customer ? await CreditTransaction.findOne({
+    sale: sale._id, shop, type: { $in: DEBT_TX_TYPES },
+  }).session(session).lean() : null;
+  if ((debt && (debt.status !== 'paid' || debt.outstanding > 0))
+    || (sale.paymentMethod === CREDIT_METHOD_KEY && !debt)) {
+    throw new SaleRejection(400,
+      debt?.outstanding > 0
+        ? 'This credit sale is not fully repaid. Reverse any recorded repayments before voiding it; there is no full payment to refund.'
+        : 'This sale has no confirmed repayment to refund. Cancelling a debt does not record a payment. Review the account, or void the sale if only the goods are being returned.',
+      'CREDIT_SALE_UNPAID');
+  }
+}
+
 /**
  * POST /sales/:id/refund — returns the customer's money and restores stock.
  *
@@ -241,28 +257,11 @@ export const refundSale = async (req, res) => {
     return res.status(400).json({ success: false, message: 'A refund for this sale is still awaiting confirmation. Check it with support before refunding again.' });
   }
 
-  // A credit sale where the customer hasn't paid yet has no money to give
-  // back. Refunding it would hand cash over the counter for a purchase that
-  // was never paid for, and leave the debt standing. Voiding is the correct
-  // action — it cancels the debt and restores the stock — so say so rather
-  // than silently doing the wrong one.
-  if (sale.customer) {
-    const debt = await CreditTransaction.findOne({
-      sale: sale._id,
-      shop,
-      type: { $in: DEBT_TX_TYPES },
-      status: 'outstanding',
-    }).lean();
-    if (debt && debt.outstanding > 0) {
-      const partlyRepaid = debt.outstanding < debt.amount;
-      return res.status(400).json({
-        success: false,
-        code: 'CREDIT_SALE_UNPAID',
-        message: partlyRepaid
-          ? 'This credit sale is only partly repaid. Reverse the repayment first, then void the sale to cancel what is still owed.'
-          : 'This sale was taken on credit and hasn\'t been paid for. Void it instead — that cancels the debt and returns the stock.',
-      });
-    }
+  try {
+    await assertCreditRefundEligible(sale, shop);
+  } catch (error) {
+    if (error instanceof SaleRejection) return res.status(error.status).json({ success: false, code: error.code, message: error.message });
+    throw error;
   }
 
   const reason = req.body?.reason ? String(req.body.reason).slice(0, 300) : undefined;
@@ -375,12 +374,7 @@ export const refundSale = async (req, res) => {
       if (!fresh || fresh.status !== 'completed') {
         throw new SaleRejection(400, 'This sale can no longer be refunded or has a refund awaiting confirmation.');
       }
-      if (fresh.customer) {
-        const debt = await CreditTransaction.findOne({
-          sale: fresh._id, shop, type: { $in: DEBT_TX_TYPES }, status: 'outstanding',
-        }).session(session);
-        if (debt?.outstanding > 0) throw new SaleRejection(400, 'This credit sale still has unpaid debt. Reverse any repayments and void it instead.', 'CREDIT_SALE_UNPAID');
-      }
+      await assertCreditRefundEligible(fresh, shop, session);
       await restoreSaleStock(fresh, session);
       fresh.status = 'refunded';
       fresh.refund = {
