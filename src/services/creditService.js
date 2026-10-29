@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import Customer from '../models/Customer.js';
+import Sale from '../models/Sale.js';
 import CreditTransaction from '../models/CreditTransaction.js';
 import {
   CREDIT_TX_TYPES,
@@ -600,6 +601,40 @@ export const reverseRepayment = async ({ shop, transaction, user, session, reaso
   const shopId = shop._id ?? shop;
   const value = money(transaction.amount);
 
+  // Reopening a repayment must reopen exactly its original debts. A refunded
+  // sale cannot become a new debt after its goods and money were returned.
+  const allocations = transaction.allocations ?? [];
+  if (!allocations.length || money(allocations.reduce((sum, a) => sum + a.amount, 0)) !== value) {
+    throw new CreditRejection(409, 'ALLOCATION_UNAVAILABLE', 'This payment allocation needs review before it can be reversed. Contact support.');
+  }
+  const debts = [];
+  const seen = new Set();
+  for (const allocation of allocations) {
+    const key = String(allocation.transaction);
+    const debt = await CreditTransaction.findOne({
+      _id: allocation.transaction, shop: shopId, customer: transaction.customer,
+      type: { $in: DEBT_TX_TYPES },
+    }).session(session);
+    if (seen.has(key) || !debt || debt.status === 'reversed' || !(allocation.amount > 0)
+      || money(debt.outstanding + allocation.amount) > money(debt.amount)) {
+      throw new CreditRejection(409, 'ALLOCATION_UNAVAILABLE', 'The original debt changed. Review this customer account before reversing the payment.');
+    }
+    seen.add(key);
+    debts.push({ debt, amount: allocation.amount });
+  }
+  // Writing the sale serializes this correction with refunds/voids, including
+  // a fully-paid sale whose debt was read as paid by another transaction.
+  const saleIds = [...new Set(debts.filter(({ debt }) => debt.sale).map(({ debt }) => String(debt.sale)))].sort();
+  for (const saleId of saleIds) {
+    const lock = await Sale.updateOne(
+      { _id: saleId, shop: shopId, status: 'completed' },
+      { $inc: { creditRevision: 1 } }, { session },
+    );
+    if (!lock.matchedCount) {
+      throw new CreditRejection(409, 'SALE_ALREADY_CORRECTED', 'A sale paid by this repayment has been voided or refunded, or has a refund pending. This repayment cannot be reversed.');
+    }
+  }
+
   const customer = await Customer.findOneAndUpdate(
     { _id: transaction.customer, shop: shopId },
     {
@@ -611,15 +646,8 @@ export const reverseRepayment = async ({ shop, transaction, user, session, reaso
     throw new CreditRejection(404, 'CUSTOMER_NOT_FOUND', 'Customer not found.');
   }
 
-  for (const allocation of transaction.allocations ?? []) {
-    const debt = await CreditTransaction.findOne({
-      _id: allocation.transaction,
-      shop: shopId,
-    }).session(session);
-    // A debt that was itself reversed since keeps its reversal — re-opening it
-    // would resurrect a cancelled sale.
-    if (!debt || debt.status === 'reversed') continue;
-    debt.outstanding = money(debt.outstanding + allocation.amount);
+  for (const { debt, amount } of debts) {
+    debt.outstanding = money(debt.outstanding + amount);
     debt.status = 'outstanding';
     await debt.save({ session });
   }

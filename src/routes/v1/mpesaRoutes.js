@@ -26,7 +26,9 @@ const router = express.Router();
 router.post('/callback/:token', verifyMpesaCallbackToken, handleCallback);
 
 // Transaction Reversal (refund) result + queue-timeout callbacks — same secret gate.
+router.post('/reversal-result/:token/:saleId/:attemptId', verifyMpesaCallbackToken, handleReversalResult);
 router.post('/reversal-result/:token', verifyMpesaCallbackToken, handleReversalResult);
+router.post('/reversal-result-timeout/:token/:saleId/:attemptId', verifyMpesaCallbackToken, handleReversalTimeout);
 router.post('/reversal-result-timeout/:token', verifyMpesaCallbackToken, handleReversalTimeout);
 
 // B2C payout (e.g. agent commissions) result + queue-timeout callbacks — same secret gate.
