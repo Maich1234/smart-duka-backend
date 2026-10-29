@@ -1,3 +1,4 @@
+import { presentSale } from '../services/saleVisibility.js';
 import Quotation from '../models/Quotation.js';
 import Customer from '../models/Customer.js';
 import Product from '../models/Product.js';
@@ -474,7 +475,7 @@ export const convertQuotation = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      data: { ...saleObj, quotationId: quotation._id },
+      data: { ...presentSale(saleObj, req.user), quotationId: quotation._id },
       message: creditResult
         ? `Sale recorded on ${creditCustomerName}'s account.`
         : 'Quotation converted to a sale.',
