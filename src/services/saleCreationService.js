@@ -58,19 +58,18 @@ export const createSaleTransaction = async ({
 }) => {
   const shop = user.shop._id;
 
-  // Credit is behaviour, not a label: once the owner switches the module on,
-  // the till may take credit whether or not they ever added the button to
-  // their own list. (Before the module existed, `credit` was merely one of the
-  // suggested buttons in salePaymentMethods.js, recording a sale and nothing
+  // Credit is behaviour, not just a label. The module and the owner's enabled
+  // payment list must both permit it. Before the module existed, `credit`
+  // was one of the suggested buttons in salePaymentMethods.js, recording a sale and nothing
   // else — shops that used it that way keep working exactly as before while
-  // the module is off. See creditSale below.)
+  // the module is off. See creditSale below.
   const creditSettings = resolveCreditSettings(user.shop);
   const isCreditSale = paymentMethod === CREDIT_METHOD_KEY && creditSettings.enabled;
 
   // The shop's own button list is the authority on what's a valid method —
   // Joi only checked the key's shape, since it can't see the shop.
   const allowedMethods = enabledMethodKeys(user.shop);
-  if (!allowedMethods.includes(paymentMethod) && !isCreditSale) {
+  if (!allowedMethods.includes(paymentMethod)) {
     // Coded so clients can react (refetch the shop's till buttons, drop the
     // stale selection) rather than just surfacing the message — this fires
     // whenever an owner removes/disables a method after it was already
