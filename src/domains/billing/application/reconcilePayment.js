@@ -2,6 +2,7 @@ import { getPaymentProvider } from '../infra/payments/index.js';
 import { paystackAmountMismatch } from '../domain/fraud.js';
 import { applySuccessfulPayment } from './applySuccessfulPayment.js';
 import { cleanupFailedSeatPayment } from './seatCleanup.js';
+import { recordPaymentOutcome } from './recordPaymentOutcome.js';
 
 // M-Pesa result codes, plus Paystack's own textual transaction statuses —
 // distinct alphabets, no collision risk sharing one set.
@@ -29,6 +30,14 @@ export async function reconcilePayment(payment, { receiptHint } = {}) {
     return { payment, changed: false };
   }
 
+  // A previous authenticated callback already confirmed the money. Repair
+  // activation directly; provider downtime must not strand that confirmation.
+  if (payment.status === 'success' && (payment.provider !== 'bank' || payment.providerConfirmedAt)) {
+    await applySuccessfulPayment(payment);
+    return { payment, changed: true };
+  }
+  if (!payment.providerRef) return { payment, changed: false };
+
   const provider = getPaymentProvider(payment.provider);
   if (!provider.queryStatus) {
     return { payment, changed: false };
@@ -42,35 +51,29 @@ export async function reconcilePayment(payment, { receiptHint } = {}) {
     return { payment, changed: false };
   }
 
-  if (result.success) {
-    const mismatch = paystackAmountMismatch(payment, result.amountKobo);
-    if (mismatch) {
-      payment.status = 'failed';
-      payment.resultCode = result.resultCode;
-      payment.errorMessage = mismatch;
-      await payment.save();
-      console.error('[Subscriptions] reconcilePayment', mismatch, 'payment', String(payment._id));
-      return { payment, changed: true };
+  if (result.success || (result.resultCode && DEFINITIVE_FAILURE_CODES.has(result.resultCode))) {
+    const mismatch = result.success ? paystackAmountMismatch(payment, result.amountKobo, result.currency) : null;
+    const status = result.success && !mismatch ? 'success'
+      : CANCELLED_CODES.has(result.resultCode) ? 'cancelled' : 'failed';
+    const outcome = {
+      status,
+      resultCode: result.resultCode,
+      errorMessage: mismatch ?? (result.success ? null : result.resultDesc ?? 'Payment did not complete.'),
+      ...(status === 'success' && {
+        receipt: payment.receipt ?? receiptHint ?? null,
+        transactionDate: payment.transactionDate ?? new Date(),
+      }),
+    };
+    const recorded = await recordPaymentOutcome(payment._id, outcome);
+    if (!recorded.payment) return { payment, changed: false };
+    const needsActivation = recorded.payment.status === 'success' && !recorded.payment.periodEnd;
+    if (recorded.payment.status === 'success') {
+      if (needsActivation) await applySuccessfulPayment(recorded.payment);
+    } else if (recorded.changed) {
+      await cleanupFailedSeatPayment(recorded.payment);
     }
-
-    payment.status = 'success';
-    payment.resultCode = result.resultCode;
-    payment.errorMessage = null;
-    payment.receipt = payment.receipt ?? receiptHint ?? null;
-    payment.transactionDate = payment.transactionDate ?? new Date();
-    await payment.save();
-    await applySuccessfulPayment(payment);
-    return { payment, changed: true };
-  }
-
-  if (result.resultCode && DEFINITIVE_FAILURE_CODES.has(result.resultCode)) {
-    const status = CANCELLED_CODES.has(result.resultCode) ? 'cancelled' : 'failed';
-    payment.status = status;
-    payment.resultCode = result.resultCode;
-    payment.errorMessage = result.resultDesc ?? 'Payment did not complete.';
-    await payment.save();
-    await cleanupFailedSeatPayment(payment);
-    return { payment, changed: true };
+    payment.set(recorded.payment.toObject());
+    return { payment, changed: recorded.changed || needsActivation };
   }
 
   // Inconclusive (still processing on Safaricom's side, or the query itself
