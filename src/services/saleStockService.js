@@ -21,6 +21,23 @@ export async function restoreSaleStock(sale, session) {
     return doc;
   };
 
+  if (Array.isArray(sale.stockMovements)) {
+    for (const movement of sale.stockMovements) {
+      const product = await getProduct(movement.product);
+      if (!product) continue;
+      if (movement.variant) {
+        const variant = product.variants.id(movement.variant);
+        if (variant) variant.quantity += movement.quantity;
+      } else {
+        // Restore what was deducted even if tracking/type changed afterwards.
+        product.quantity += movement.quantity;
+      }
+    }
+    for (const doc of productCache.values()) await doc.save({ session });
+    return;
+  }
+
+  // Legacy sales have no exact movement snapshot. Keep their prior behavior.
   for (const item of sale.items) {
     if (!item.productId) continue; // a custom/service line — never touched inventory
     const product = await getProduct(item.productId);
