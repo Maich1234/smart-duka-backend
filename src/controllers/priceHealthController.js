@@ -9,7 +9,7 @@ export async function getProductPriceHistory(req, res) {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, message: 'Invalid product.' });
   const shop = req.user.shop._id;
   if (!await Product.exists({ _id: req.params.id, shop })) return res.status(404).json({ success: false, message: 'Product not found.' });
-  const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1), limit = 20;
+  const page = Math.max(1, Math.min(100000, Number.parseInt(req.query.page, 10) || 1)), limit = 20;
   const query = { shop, product: req.params.id };
   const [data, total] = await Promise.all([ProductPriceChange.find(query).sort({ createdAt: -1, _id: -1 }).skip((page - 1) * limit).limit(limit).lean(), ProductPriceChange.countDocuments(query)]);
   res.json({ success: true, data, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });

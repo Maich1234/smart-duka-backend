@@ -3,7 +3,7 @@ export function duplicateErrors(products, existing) {
   const maps = { name: new Map(), sku: new Map(), barcode: new Map() }, errors = [];
   const add = (key, value, who, incoming) => {
     const id = norm(value); if (!id) return;
-    if (maps[key].has(id) && incoming) errors.push(`${who}: ${key} "${value}" is already used by ${maps[key].get(id)}.`);
+    if (maps[key].has(id) && incoming) { if (errors.length < 2000) errors.push(`${String(who).slice(0, 160)}: ${key} "${String(value).slice(0, 160)}" is already used by ${String(maps[key].get(id)).slice(0, 160)}.`); }
     else maps[key].set(id, who);
   };
   for (const [incoming, list] of [[false, existing], [true, products]]) for (const p of list) {

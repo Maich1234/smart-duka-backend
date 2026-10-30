@@ -4,7 +4,7 @@ import QRCode from 'qrcode';
 import { signBookStamp, bookVerifyUrl } from '../utils/bookStamp.js';
 import { sanitize } from './books/renderers/pdf.js';
 
-const labels = { zero_or_missing_price: 'Selling price zero, negative or missing', below_cost: 'Selling below cost', minimum_below_cost: 'Allowed minimum below cost', cost_not_set: 'Cost not set', missing_variants: 'No variants' };
+const labels = { zero_or_missing_price: 'Selling price zero, negative or invalid', below_cost: 'Selling below cost', minimum_below_cost: 'Allowed minimum below cost', cost_not_set: 'Cost not set', missing_variants: 'No variants', invalid_stock_quantity: 'Invalid stock quantity', invalid_price_range: 'Invalid allowed price range' };
 /** A readable register, with variable-height rows and a mandatory verification QR. */
 export async function renderPriceHealthPdf(report, shop) {
   const totals = { affectedProducts: report.summary.affectedProducts, affectedPriceRows: report.summary.affectedPriceRows, potentialStockShortfall: report.summary.potentialLoss, affectedStockCostValue: report.summary.affectedStockCostValue, recordedGrossShortfall: report.realised.recordedLoss, estimatedGrossShortfall: report.realised.estimatedLoss, unknownCostLines: report.realised.unknownCostLines };
@@ -34,7 +34,7 @@ export async function renderPriceHealthPdf(report, shop) {
   if (!report.items.length) line('No current price issues found.');
   for (const row of report.items) {
     const title = `${row.name}${row.variantName ? ` / ${row.variantName}` : ''}`;
-    const text = [title, row.issues.map(i => labels[i] ?? i).join('; '), `Sell: ${amount(row.sellingPrice)} | Cost: ${amount(row.costPrice)} | Stock: ${row.stockQuantity} ${row.unitOfMeasure ?? 'unit'}`, `Shortfall per unit: ${amount(row.unitShortfall)} | Potential: ${amount(row.potentialLoss)}`, row.flexible ? `Flexible price minimum: ${amount(row.minPrice)}. Actual prices may differ.` : '', row.lastChange ? `Last pricing record: ${row.lastChange.actorName ?? 'Name unavailable'}, ${row.lastChange.source}, ${new Date(row.lastChange.createdAt).toISOString()}` : 'Price history: not recorded before tracking began.'].filter(Boolean).join('\n');
+    const text = [title, row.issues.map(i => labels[i] ?? i).join('; '), `Sell: ${amount(row.sellingPrice)} | Cost: ${amount(row.costPrice)} | Stock: ${row.stockKnown === false ? 'Unknown' : row.stockQuantity} ${row.unitOfMeasure ?? 'unit'}`, `Shortfall per unit: ${amount(row.unitShortfall)} | Potential: ${amount(row.potentialLoss)}`, row.flexible ? `Flexible price minimum: ${amount(row.minPrice)}. Actual prices may differ.` : '', row.lastChange ? `Last pricing record: ${row.lastChange.actorName ?? 'Name unavailable'}, ${row.lastChange.source}, ${new Date(row.lastChange.createdAt).toISOString()}` : 'Price history: not recorded before tracking began.'].filter(Boolean).join('\n');
     pdf.font('Report').fontSize(10); const h = pdf.heightOfString(text.split('\n').map(sanitize).join('\n'), { width: 515, lineGap: 3 }) + 24;
     ensure(h); line(text); pdf.moveTo(40, pdf.y).lineTo(555, pdf.y).strokeColor('#e2e8f0').stroke(); pdf.moveDown();
   }

@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { inflateRawSync } from 'node:zlib';
+import { canonicalSpreadsheetZip } from './spreadsheetArchive.js';
 import mongoose from 'mongoose';
 import Product from '../models/Product.js';
 import { createProductSchema } from '../validations/productValidation.js';
@@ -12,34 +12,15 @@ const headers = {
 };
 export const importError = message => Object.assign(new Error(message), { status: 400 });
 
-/** Validate compressed contents before SheetJS allocates XML buffers. No extraction. */
-function inspectZip(buf) {
-  let eocd = -1;
-  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
-  if (eocd < 0) throw importError('Invalid XLSX archive.');
-  const count = buf.readUInt16LE(eocd + 10), offset = buf.readUInt32LE(eocd + 16);
-  if (count > 500 || count === 0xffff || offset === 0xffffffff) throw importError('This spreadsheet is too complex. Use the DuQana template.');
-  let position = offset, total = 0;
-  for (let i = 0; i < count; i++) {
-    if (position + 46 > eocd || buf.readUInt32LE(position) !== 0x02014b50) throw importError('Invalid XLSX directory.');
-    const flags = buf.readUInt16LE(position + 8), method = buf.readUInt16LE(position + 10), compressed = buf.readUInt32LE(position + 20), size = buf.readUInt32LE(position + 24), local = buf.readUInt32LE(position + 42);
-    total += size;
-    if ((flags & 1) || ![0, 8].includes(method) || total > 25 * 1024 * 1024 || local + 30 > buf.length) throw importError('Spreadsheet is encrypted or exceeds the 25 MB expanded limit.');
-    if (buf.readUInt32LE(local) !== 0x04034b50) throw importError('Invalid XLSX entry.');
-    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
-    if (start + compressed > buf.length) throw importError('Truncated XLSX entry.');
-    try {
-      const bytes = method === 8 ? inflateRawSync(buf.subarray(start, start + compressed), { maxOutputLength: Math.max(1, Math.min(size, 25 * 1024 * 1024)) }) : buf.subarray(start, start + compressed);
-      if (bytes.length !== size) throw Error();
-    } catch { throw importError('Invalid or oversized compressed spreadsheet content.'); }
-    position += 46 + buf.readUInt16LE(position + 28) + buf.readUInt16LE(position + 30) + buf.readUInt16LE(position + 32);
-  }
-}
 export function template(format = 'xlsx') {
   const book = XLSX.utils.book_new();
   for (const [name, keys] of Object.entries(headers)) {
     const sheet = XLSX.utils.aoa_to_sheet([keys]);
     sheet['!cols'] = keys.map(() => ({ wch: 22 }));
+    // Excel must preserve leading zeros when the owner types an identifier.
+    const textColumns = keys.flatMap((key, index) => ['sku', 'barcode', 'parentSku', 'componentSku'].includes(key) ? [index] : []);
+    for (const c of textColumns) for (let r = 1; r <= MAX_ROWS; r++) sheet[XLSX.utils.encode_cell({ r, c })] = { t: 's', v: '', z: '@' };
+    sheet['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: MAX_ROWS, c: keys.length - 1 } });
     XLSX.utils.book_append_sheet(book, sheet, name);
   }
   XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
@@ -55,14 +36,14 @@ export function template(format = 'xlsx') {
     ['Import', 'Adds new products only. Does not update or delete existing products. Preview all errors before saving.'],
     ['Costs', 'Keep purchase costs accurate. Below-cost prices need explicit acknowledgement in the preview.'],
   ]), 'Instructions');
-  return XLSX.write(book, { type: 'buffer', bookType: format === 'xls' ? 'biff8' : 'xlsx' });
+  return XLSX.write(book, { type: 'buffer', bookType: format === 'xls' ? 'biff8' : 'xlsx', compression: true });
 }
 import { duplicateErrors } from './productDuplicates.js';
 export { duplicateErrors } from './productDuplicates.js';
 const norm = value => String(value ?? '').trim().toLowerCase();
 export function parseSpreadsheet(buffer, existing) {
   const zip = buffer.subarray(0, 2).toString() === 'PK';
-  if (zip) inspectZip(buffer);
+  if (zip) buffer = canonicalSpreadsheetZip(buffer);
   else if (buffer.subarray(0, 8).toString('hex') !== 'd0cf11e0a1b11ae1') throw importError('Choose an Excel .xls or .xlsx file.');
   let book;
   try { book = XLSX.read(buffer, { type: 'buffer', bookVBA: true, cellFormula: true, sheetRows: MAX_ROWS + 3 }); } catch { throw importError('Could not read the spreadsheet. Remove passwords and use the DuQana template.'); }
@@ -85,13 +66,15 @@ export function parseSpreadsheet(buffer, existing) {
   const rows = [], products = [], warnings = [], candidates = sheets.Products.map(({ data, row }) => ({ ...data, _id: new mongoose.Types.ObjectId(), _row: row }));
   const initialConflicts = duplicateErrors(candidates, existing);
   if (initialConflicts.length) return { products: [], rows: [{ row: 0, name: 'Duplicate names or identifiers', errors: initialConflicts.slice(0, 2000) }], warnings: [], canCommit: false };
-  const bySku = new Map([...existing, ...candidates].filter(p => p.sku).map(p => [norm(p.sku), p]));
+  const bySku = new Map(), ambiguousSkus = new Set();
+  for (const p of [...existing, ...candidates]) if (p.sku) { const key = norm(p.sku); if (bySku.has(key)) ambiguousSkus.add(key); bySku.set(key, p); }
   for (const source of candidates) {
     const { _id, _row, ...raw } = source; const errors = [];
     if (raw.productType === 'configurable') raw.variants = (sheets.Variants ?? []).filter(v => norm(v.data.parentSku) === norm(raw.sku) && raw.sku).map(v => { const { parentSku, ...data } = v.data; return data; });
     if (raw.productType === 'bundle') raw.bundleItems = (sheets.Bundles ?? []).filter(b => norm(b.data.parentSku) === norm(raw.sku) && raw.sku).map(b => {
-      const component = bySku.get(norm(b.data.componentSku));
-      if (!component || !['standard', 'weighted', 'refillable'].includes(component.productType ?? 'standard')) errors.push(`Bundles row ${b.row}: component must have a known SKU and be standard, weighted or refillable.`);
+      const key = norm(b.data.componentSku);
+      const component = ambiguousSkus.has(key) ? null : bySku.get(key);
+      if (!component || !['standard', 'weighted', 'refillable'].includes(component.productType ?? 'standard')) errors.push(`Bundles row ${b.row}: component must have one unique known SKU and be standard, weighted or refillable.`);
       return { product: String(component?._id ?? ''), quantity: b.data.quantity };
     });
     for (const [key, max] of [['name', 160], ['category', 100], ['description', 2000], ['sku', 128], ['barcode', 128]]) if (String(raw[key] ?? '').length > max) errors.push(`${key} cannot exceed ${max} characters.`);
@@ -105,12 +88,35 @@ export function parseSpreadsheet(buffer, existing) {
       const product = { ...result.value, _id };
       product.variants = (product.variants ?? []).map(v => ({ ...v, _id: new mongoose.Types.ObjectId() }));
       products.push(product);
-      for (const price of product.productType === 'configurable' ? product.variants : [product]) if (price.sellingPrice < price.costPrice || (product.minPrice != null && product.minPrice < price.costPrice)) warnings.push(`Row ${_row}, ${product.name}: selling price or allowed minimum is below cost.`);
+
     }
     rows.push({ row: _row, name: String(raw.name ?? '').slice(0, 160), productType: String(raw.productType ?? 'standard').slice(0, 30), sellingPrice: typeof raw.sellingPrice === 'number' ? raw.sellingPrice : String(raw.sellingPrice ?? '').slice(0, 80), costPrice: typeof raw.costPrice === 'number' ? raw.costPrice : String(raw.costPrice ?? '').slice(0, 80), quantity: typeof raw.quantity === 'number' ? raw.quantity : String(raw.quantity ?? '0').slice(0, 80), errors });
   }
   for (const name of ['Variants', 'Bundles']) for (const row of sheets[name] ?? []) if (!candidates.some(p => p.sku && norm(p.sku) === norm(row.data.parentSku) && p.productType === (name === 'Variants' ? 'configurable' : 'bundle'))) rows.push({ row: row.row, name, errors: ['parentSku must match an imported parent with the correct product type.'] });
+  const catalogue = new Map([...existing, ...products].map(p => [String(p._id), p]));
+  const existingIds = new Set(existing.map(p => String(p._id))), componentCosts = new Map();
+  const sourceRows = new Map(candidates.map(p => [String(p._id), p._row])), previewRows = new Map(rows.map(row => [row.row, row]));
+  for (const product of products) {
+    const row = sourceRows.get(String(product._id)), preview = previewRows.get(row);
+    if (product.productType === 'configurable') preview.details = product.variants.map(v => `${v.name}: sell ${v.sellingPrice}, cost ${v.costPrice}, stock ${v.quantity}. SKU ${v.sku || 'not set'}, barcode ${v.barcode || 'not set'}.`);
+    let prices = product.productType === 'configurable' ? product.variants : [product];
+    if (product.productType === 'bundle') {
+      let cost = 0, known = true;
+      preview.details = [];
+      for (const item of product.bundleItems) {
+        const component = catalogue.get(String(item.product)), value = component?.costPrice;
+        preview.details.push(`${String(component?.name ?? 'Unknown component').slice(0, 160)}: ${item.quantity} units at cost ${Number.isFinite(value) ? value : 'unknown'} each.`);
+        if (!Number.isFinite(value) || value <= 0) known = false;
+        else cost += value * item.quantity;
+        if (existingIds.has(String(item.product))) componentCosts.set(String(item.product), Number.isFinite(value) ? value : null);
+      }
+      if (!known) warnings.push(`Row ${row}, ${product.name}: a bundle component cost is unknown. Review before saving.`);
+      preview.costPrice = known ? cost : null;
+      prices = known ? [{ sellingPrice: product.sellingPrice, costPrice: cost }] : [];
+    }
+    for (const price of prices) if (price.sellingPrice < price.costPrice || (product.minPrice != null && product.minPrice < price.costPrice)) warnings.push(`Row ${row}, ${product.name}: selling price or allowed minimum is below cost.`);
+  }
   const duplicates = duplicateErrors(products, existing);
   if (duplicates.length) rows.push({ row: 0, name: 'Duplicate identifiers', errors: duplicates });
-  return { products, rows, warnings: [...new Set(warnings)], canCommit: rows.every(r => !r.errors.length) };
+  return { products, rows, componentCosts: [...componentCosts].map(([product, costPrice]) => ({ product, costPrice })), warnings: [...new Set(warnings)], canCommit: rows.every(r => !r.errors.length) };
 }

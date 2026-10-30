@@ -4,6 +4,7 @@ const schema = new mongoose.Schema({
   owner: { type: mongoose.Schema.Types.ObjectId, required: true },
   products: { type: [mongoose.Schema.Types.Mixed], required: true },
   rows: { type: [mongoose.Schema.Types.Mixed], required: true },
+  componentCosts: { type: [mongoose.Schema.Types.Mixed], default: [] },
   warnings: { type: [String], default: [] },
   status: { type: String, enum: ['preview', 'committed'], default: 'preview' },
   committedAt: Date,

@@ -3,8 +3,8 @@ import ProductPriceChange from '../models/ProductPriceChange.js';
 const states = product => {
   if (!product) return new Map();
   const p = product.toObject ? product.toObject() : product;
-  const rows = new Map([['base', { sellingPrice: p.sellingPrice, costPrice: p.costPrice, minPrice: p.minPrice ?? null, maxPrice: p.maxPrice ?? null, productType: p.productType ?? 'standard', allowPriceOverride: p.allowPriceOverride ?? false, bundleItems: (p.bundleItems ?? []).map(b => ({ product: String(b.product), quantity: b.quantity })) }]]);
-  for (const v of p.variants ?? []) rows.set(String(v._id), { name: v.name, sellingPrice: v.sellingPrice, costPrice: v.costPrice });
+  const rows = new Map([['base', { unitOfMeasure: p.unitOfMeasure ?? 'unit', sellingPrice: p.sellingPrice, costPrice: p.costPrice, minPrice: p.minPrice ?? null, maxPrice: p.maxPrice ?? null, productType: p.productType ?? 'standard', allowPriceOverride: p.allowPriceOverride ?? false, bundleItems: (p.bundleItems ?? []).map(b => ({ product: String(b.product), quantity: b.quantity })) }]]);
+  for (const v of p.variants ?? []) rows.set(String(v._id), { name: v.name, unitOfMeasure: p.unitOfMeasure ?? 'unit', sellingPrice: v.sellingPrice, costPrice: v.costPrice });
   return rows;
 };
 
