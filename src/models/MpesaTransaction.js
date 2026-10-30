@@ -22,7 +22,7 @@ const mpesaTransactionSchema = new mongoose.Schema({
   accountReference: { type: String },
   status: {
     type: String,
-    enum: ['pending', 'success', 'failed', 'cancelled', 'timeout'],
+    enum: ['initiating', 'pending', 'success', 'failed', 'cancelled', 'timeout'],
     default: 'pending',
     index: true,
   },
