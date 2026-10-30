@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { enabledMethodKeys, MPESA_METHOD_KEY } from '../constants/salePaymentMethods.js';
 import PaymentConfig from '../models/PaymentConfig.js';
 import MpesaTransaction from '../models/MpesaTransaction.js';
 import Sale from '../models/Sale.js';
@@ -59,6 +60,16 @@ export const initiatePayment = async (req, res) => {
           message: `Duplicate request — transaction already ${existing.status}.`,
         });
       }
+    }
+
+    // Recovering an existing request above must remain possible after removal.
+    // A fresh request, however, must respect the owner's enabled till methods.
+    if (!enabledMethodKeys(req.user.shop).includes(MPESA_METHOD_KEY)) {
+      return res.status(400).json({
+        success: false,
+        code: 'PAYMENT_METHOD_UNAVAILABLE',
+        message: 'M-Pesa is no longer enabled in this shop\'s payment methods. Refresh the till and choose an available method.',
+      });
     }
 
     // ── 2. Load and validate M-Pesa configuration ──────────────────────────
