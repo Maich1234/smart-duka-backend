@@ -1,4 +1,4 @@
-import { uploadSpreadsheet, downloadImportTemplate, previewProductImport, commitProductImport } from '../../controllers/productImportController.js';
+import { uploadSpreadsheet, getProductImport, downloadImportTemplate, previewProductImport, commitProductImport } from '../../controllers/productImportController.js';
 import rateLimit from 'express-rate-limit';
 import { getProductPriceHealth, getProductPriceHistory, downloadPriceHealth } from '../../controllers/priceHealthController.js';
 import express from 'express';
@@ -23,8 +23,9 @@ router.use(protect);
 router.get('/', staffOrOwner, getProducts);
 // Must precede '/:id' — otherwise Express matches "categories" as an id.
 router.get('/categories', staffOrOwner, getProductCategories);
-const importLimiter = rateLimit({ windowMs: 60000, limit: 5, keyGenerator: req => String(req.user._id), standardHeaders: true, legacyHeaders: false });
+const importLimiter = rateLimit({ windowMs: 60000, limit: 5, keyGenerator: req => String(req.user._id), standardHeaders: true, legacyHeaders: false, message: { success: false, code: 'IMPORT_RATE_LIMITED', message: 'Too many import attempts. Wait one minute, then retry this preview.' } });
 router.get('/import/template', ownerOnly, downloadImportTemplate);
+router.get('/import/:batchId', ownerOnly, getProductImport);
 router.post('/import/preview', ownerOnly, requirePaidShop, importLimiter, uploadSpreadsheet, previewProductImport);
 router.post('/import/:batchId/commit', ownerOnly, requirePaidShop, importLimiter, commitProductImport);
 router.get('/price-health/pdf', ownerOnly, downloadPriceHealth);

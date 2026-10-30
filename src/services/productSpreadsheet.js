@@ -44,7 +44,7 @@ const norm = value => String(value ?? '').trim().toLowerCase();
 export function parseSpreadsheet(buffer, existing) {
   const zip = buffer.subarray(0, 2).toString() === 'PK';
   if (zip) buffer = canonicalSpreadsheetZip(buffer);
-  else if (buffer.subarray(0, 8).toString('hex') !== 'd0cf11e0a1b11ae1') throw importError('Choose an Excel .xls or .xlsx file.');
+  else if (buffer.subarray(0, 8).toString('hex') !== 'd0cf11e0a1b11ae1') throw importError('This file is not a readable Excel workbook. Open the spreadsheet and save it as .xls or .xlsx; changing its name is not enough.');
   let book;
   try { book = XLSX.read(buffer, { type: 'buffer', bookVBA: true, cellFormula: true, sheetRows: MAX_ROWS + 3 }); } catch { throw importError('Could not read the spreadsheet. Remove passwords and use the DuQana template.'); }
   if (book.vbaraw || book.Workbook?.Sheets?.some(s => s.Hidden === 2) || book.SheetNames.some(name => book.Sheets[name]['!type'] === 'macro')) throw importError('Macro-enabled or hidden executable sheets are not accepted.');
@@ -70,8 +70,11 @@ export function parseSpreadsheet(buffer, existing) {
   for (const p of [...existing, ...candidates]) if (p.sku) { const key = norm(p.sku); if (bySku.has(key)) ambiguousSkus.add(key); bySku.set(key, p); }
   for (const source of candidates) {
     const { _id, _row, ...raw } = source; const errors = [];
-    if (raw.productType === 'configurable') raw.variants = (sheets.Variants ?? []).filter(v => norm(v.data.parentSku) === norm(raw.sku) && raw.sku).map(v => { const { parentSku, ...data } = v.data; return data; });
-    if (raw.productType === 'bundle') raw.bundleItems = (sheets.Bundles ?? []).filter(b => norm(b.data.parentSku) === norm(raw.sku) && raw.sku).map(b => {
+    if (raw.trackInventory === undefined && ['service', 'bundle', 'configurable'].includes(raw.productType)) raw.trackInventory = false;
+    const variantRows = (sheets.Variants ?? []).filter(v => norm(v.data.parentSku) === norm(raw.sku) && raw.sku);
+    const bundleRows = (sheets.Bundles ?? []).filter(b => norm(b.data.parentSku) === norm(raw.sku) && raw.sku);
+    if (raw.productType === 'configurable') raw.variants = variantRows.map(v => { const { parentSku, ...data } = v.data; return data; });
+    if (raw.productType === 'bundle') raw.bundleItems = bundleRows.map(b => {
       const key = norm(b.data.componentSku);
       const component = ambiguousSkus.has(key) ? null : bySku.get(key);
       if (!component || !['standard', 'weighted', 'refillable'].includes(component.productType ?? 'standard')) errors.push(`Bundles row ${b.row}: component must have one unique known SKU and be standard, weighted or refillable.`);
@@ -81,7 +84,16 @@ export function parseSpreadsheet(buffer, existing) {
     for (const variant of raw.variants ?? []) for (const key of ['name', 'sku', 'barcode']) if (String(variant[key] ?? '').length > 160) errors.push(`Variant ${key} cannot exceed 160 characters.`);
     if (Object.values(raw).some(v => typeof v === 'string' && v.length > 4000)) errors.push('Text cells cannot exceed 4,000 characters.');
     const result = createProductSchema.validate(raw, { abortEarly: false, convert: true });
-    errors.push(...(result.error?.details.map(d => d.message) ?? []));
+    const labels = { sellingPrice: 'Selling price (sellingPrice)', costPrice: 'Purchase cost (costPrice)', quantity: 'Stock quantity (quantity)', minPrice: 'Minimum price (minPrice)', maxPrice: 'Maximum price (maxPrice)', productType: 'Product type (productType)' };
+    errors.push(...(result.error?.details.map(d => {
+      const child = d.path[0] === 'variants' ? variantRows[d.path[1]] : d.path[0] === 'bundleItems' ? bundleRows[d.path[1]] : null;
+      const prefix = child ? `${d.path[0] === 'variants' ? 'Variants' : 'Bundles'} row ${child.row}: ` : '';
+      const field = d.path[d.path.length - 1];
+      if (d.type === 'string.base' && ['sku', 'barcode'].includes(field)) return `${prefix}${field === 'sku' ? 'SKU' : 'Barcode'} must be text. Format the cell as Text and re-enter any leading zeros before uploading again.`;
+      const message = d.message.replace(/^"[^"]+"/, labels[field] ?? String(field));
+      return prefix + message + (d.type === 'number.base' ? '. Use a plain number without currency symbols or units.' : '');
+    }) ?? []));
+    if (raw.productType === 'configurable') for (const child of variantRows) if (child.data.costPrice == null) errors.push(`Variants row ${child.row}: purchase cost (costPrice) is required.`);
     if (!result.error) { const modelError = new Product({ ...result.value, shop: new mongoose.Types.ObjectId() }).validateSync(); if (modelError) errors.push(...Object.values(modelError.errors).map(e => e.message)); }
     if (String(raw.name ?? '').length > 160 || String(raw.description ?? '').length > 2000) errors.push('Name is limited to 160 characters and description to 2,000.');
     if (!errors.length) {
@@ -114,7 +126,11 @@ export function parseSpreadsheet(buffer, existing) {
       preview.costPrice = known ? cost : null;
       prices = known ? [{ sellingPrice: product.sellingPrice, costPrice: cost }] : [];
     }
-    for (const price of prices) if (price.sellingPrice < price.costPrice || (product.minPrice != null && product.minPrice < price.costPrice)) warnings.push(`Row ${row}, ${product.name}: selling price or allowed minimum is below cost.`);
+    for (const price of prices) {
+      if (price.sellingPrice <= 0) warnings.push(`Row ${row}, ${product.name}${price.name ? ` / ${price.name}` : ''}: selling price is zero. Confirm that this item should be free.`);
+      if (price.costPrice === 0 && product.productType !== 'service') warnings.push(`Row ${row}, ${product.name}${price.name ? ` / ${price.name}` : ''}: purchase cost is zero. Correct it if the cost is not known.`);
+      if (price.sellingPrice < price.costPrice || (product.minPrice != null && product.minPrice < price.costPrice)) warnings.push(`Row ${row}, ${product.name}${price.name ? ` / ${price.name}` : ''}: selling price or allowed minimum is below cost.`);
+    }
   }
   const duplicates = duplicateErrors(products, existing);
   if (duplicates.length) rows.push({ row: 0, name: 'Duplicate identifiers', errors: duplicates });

@@ -10,6 +10,7 @@ const finiteNumber = field => ({ $and: [{ $isNumber: field }, { $gte: [field, -N
 const safeNumber = field => ({ $cond: [finiteNumber(field), field, 0] });
 const positiveCost = field => ({ $and: [finiteNumber(field), { $gt: [field, 0] }] });
 const arrayOrEmpty = field => ({ $cond: [{ $isArray: field }, field, []] });
+const rowTracksStock = { $or: [{ $ne: [{ $ifNull: ['$rows.variantId', null] }, null] }, { $ne: ['$trackInventory', false] }] };
 const supplied = field => ({ $ne: [{ $ifNull: [field, null] }, null] });
 
 /** Owner-only financial data. Mongo facets count the full catalogue before paging. */
@@ -26,7 +27,7 @@ export async function getPriceHealth(shopId, { page = 1, limit = 20, days = 30 }
       componentCost: { $sum: { $map: { input: arrayOrEmpty('$bundleItems'), as: 'b', in: { $let: { vars: { c: { $arrayElemAt: [{ $filter: { input: '$components', as: 'c', cond: { $eq: ['$$c._id', '$$b.product'] } } }, 0] } }, in: { $multiply: [safeNumber('$$c.costPrice'), safeNumber('$$b.quantity')] } } } } } } } },
     { $set: { rows: { $cond: [{ $and: [{ $eq: ['$productType', 'configurable'] }, { $gt: [{ $size: arrayOrEmpty('$variants') }, 0] }] }, { $map: { input: arrayOrEmpty('$variants'), as: 'v', in: { key: { $toString: '$$v._id' }, variantId: '$$v._id', variantName: '$$v.name', sellingPrice: '$$v.sellingPrice', costPrice: '$$v.costPrice', quantity: '$$v.quantity' } } }, [{ key: 'base', sellingPrice: '$sellingPrice', costPrice: { $cond: [{ $eq: ['$productType', 'bundle'] }, { $cond: ['$componentCostKnown', '$componentCost', null] }, '$costPrice'] }, quantity: '$quantity' }]] } } },
     { $unwind: '$rows' },
-    { $set: { costKnown: { $or: [positiveCost('$rows.costPrice'), { $and: [{ $eq: ['$productType', 'service'] }, finiteNumber('$rows.costPrice'), { $gte: ['$rows.costPrice', 0] }] }] }, stockKnown: { $or: [{ $eq: ['$trackInventory', false] }, finiteNumber('$rows.quantity')] }, flexible: { $or: [{ $eq: ['$productType', 'variable'] }, { $and: [{ $eq: ['$productType', 'service'] }, '$allowPriceOverride'] }] } } },
+    { $set: { costKnown: { $or: [positiveCost('$rows.costPrice'), { $and: [{ $eq: ['$productType', 'service'] }, finiteNumber('$rows.costPrice'), { $gte: ['$rows.costPrice', 0] }] }] }, stockKnown: { $or: [{ $not: [rowTracksStock] }, finiteNumber('$rows.quantity')] }, flexible: { $or: [{ $eq: ['$productType', 'variable'] }, { $and: [{ $eq: ['$productType', 'service'] }, '$allowPriceOverride'] }] } } },
     { $set: { issues: { $concatArrays: [
       { $cond: [{ $and: [{ $eq: ['$productType', 'configurable'] }, { $eq: [{ $size: arrayOrEmpty('$variants') }, 0] }] }, ['missing_variants'], []] },
       { $cond: [{ $or: [{ $not: [finiteNumber('$rows.sellingPrice')] }, { $lte: ['$rows.sellingPrice', 0] }] }, ['zero_or_missing_price'], []] },
@@ -42,7 +43,7 @@ export async function getPriceHealth(shopId, { page = 1, limit = 20, days = 30 }
     ] } } },
     { $match: { 'issues.0': { $exists: true } } },
     { $set: { unitShortfall: { $cond: [{ $and: ['$costKnown', finiteNumber('$rows.sellingPrice')] }, { $max: [0, { $subtract: ['$rows.costPrice', '$rows.sellingPrice'] }] }, null] },
-      stockQuantity: { $cond: [{ $eq: ['$trackInventory', false] }, 0, { $max: [0, safeNumber('$rows.quantity')] }] } } },
+      stockQuantity: { $cond: [{ $not: [rowTracksStock] }, 0, { $max: [0, safeNumber('$rows.quantity')] }] } } },
     { $set: { potentialLoss: { $cond: [{ $or: [{ $eq: ['$productType', 'bundle'] }, { $not: ['$stockKnown'] }, { $eq: ['$unitShortfall', null] }] }, null, { $multiply: ['$unitShortfall', '$stockQuantity'] }] },
       stockCostValue: { $cond: [{ $eq: ['$productType', 'bundle'] }, 0, { $multiply: [{ $cond: ['$costKnown', '$rows.costPrice', 0] }, '$stockQuantity'] }] } } },
     { $facet: {

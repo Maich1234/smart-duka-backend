@@ -1,3 +1,4 @@
+import { PUBLIC_WEB_URL } from '../../../utils/publicWebUrl.js';
 import { getPriceHealth } from '../../priceHealthService.js';
 import { buildBusinessSnapshot } from '../../intelligence/businessSnapshotBuilder.js';
 import { generateDailySummary } from '../../dailySummaryService.js';
@@ -65,6 +66,7 @@ export const toolExecutors = {
       found: true,
       topics: matches.map((topic) => ({
         title: topic.title,
+        url: `${PUBLIC_WEB_URL}/help/${topic.slug}`,
         summary: topic.summary,
         content: topic.sections
           .map((section) =>
@@ -72,6 +74,8 @@ export const toolExecutors = {
               section.heading,
               ...(section.paragraphs ?? []),
               ...(section.bullets ?? []).map((b) => `- ${b}`),
+              ...(section.table?.rows ?? []).map(row => row.map((cell, i) => `${section.table.columns[i]}: ${cell}`).join('; ')),
+              ...(section.links ?? []).map(link => `${link.label}: ${link.href}`),
               section.example ? `Example: ${section.example}` : null,
             ]
               .filter(Boolean)

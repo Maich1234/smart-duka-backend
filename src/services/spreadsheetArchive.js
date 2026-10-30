@@ -31,7 +31,10 @@ export function canonicalSpreadsheetZip(buf) {
     const nameSize = buf.readUInt16LE(p + 28), extraSize = buf.readUInt16LE(p + 30), commentSize = buf.readUInt16LE(p + 32);
     const next = p + 46 + nameSize + extraSize + commentSize;
     expanded += size;
-    if (next > end || !nameSize || buf.readUInt16LE(p + 34) || (flags & 0x2041) || ![0, 8].includes(method) || expanded > 25 * 1024 * 1024 || local + 30 > directory) throw bad('Spreadsheet is encrypted, invalid or exceeds the 25 MB expanded limit.');
+    if (flags & 0x2041) throw bad('This workbook is encrypted. Remove its password protection or copy the values into a fresh DuQana template.');
+    if (expanded > 25 * 1024 * 1024) throw bad('The workbook expands beyond 25 MB. Split it into smaller files before uploading.');
+    if (![0, 8].includes(method)) throw bad('This workbook uses unsupported compression. Save a fresh copy as XLSX and retry.');
+    if (next > end || !nameSize || buf.readUInt16LE(p + 34) || local + 30 > directory) throw bad('The workbook contains a damaged entry. Save a fresh copy as XLSX and retry.');
     const nameBytes = buf.subarray(p + 46, p + 46 + nameSize), name = nameBytes.toString('utf8');
     if (name.includes('\0') || name.includes('\\') || name.startsWith('/') || name.split('/').some(part => part === '.' || part === '..') || names.has(name.toLowerCase())) throw bad('Invalid or repeated XLSX entry name.');
     names.add(name.toLowerCase());
