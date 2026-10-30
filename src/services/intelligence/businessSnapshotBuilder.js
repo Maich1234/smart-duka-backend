@@ -1,3 +1,4 @@
+import { getPriceHealth } from '../priceHealthService.js';
 import Shop from '../../models/Shop.js';
 import DailySummary from '../../models/DailySummary.js';
 import { generateDailySummary } from '../dailySummaryService.js';
@@ -10,7 +11,7 @@ import { detectSalesAnomaly } from './salesAnomalyService.js';
 // a schema change can't otherwise crash the Insights screen against
 // pre-update cached data (see utils/aiInsightCache.ts on the mobile app).
 // v2: added health.confidence/sufficient/requirements.
-const SNAPSHOT_VERSION = 2;
+const SNAPSHOT_VERSION = 3;
 const TREND_WINDOW_DAYS = 30;
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -35,7 +36,7 @@ export const buildBusinessSnapshot = async (shopId) => {
   const today = todayStr();
 
   const [shop, todaySummary, trailingSummaries] = await Promise.all([
-    Shop.findById(shopId).select('name address country').lean(),
+    Shop.findById(shopId).select('name address country currency').lean(),
     generateDailySummary(shopId, today),
     DailySummary.find({ shop: shopId, date: { $lt: today } })
       .sort({ date: -1 })
@@ -46,12 +47,14 @@ export const buildBusinessSnapshot = async (shopId) => {
   const recentSummaries = [todaySummary, ...trailingSummaries];
   const health = calculateHealthScore(recentSummaries);
 
-  const [depletion, anomaly] = await Promise.all([
+  const [depletion, anomaly, priceHealth] = await Promise.all([
     getDepletionAnalytics(shopId, { windowDays: 30 }),
     detectSalesAnomaly(shopId),
+    getPriceHealth(shopId, { limit: 10 }),
   ]);
 
   const alerts = [];
+  if (priceHealth.summary.affectedPriceRows || priceHealth.realised.belowCostSaleLines) alerts.push({ type: 'price_health', severity: 'critical', message: `${priceHealth.summary.affectedPriceRows} product/variant prices need review. Potential gross shortfall at current prices: ${priceHealth.summary.potentialLoss}. Recorded below-cost sales shortfall over the last 30 days: ${priceHealth.realised.recordedLoss}. Missing costs are excluded; bundle stock is not counted twice.` });
   if (anomaly) {
     alerts.push({
       type: 'sales_anomaly',
@@ -74,6 +77,7 @@ export const buildBusinessSnapshot = async (shopId) => {
       name: shop?.name ?? null,
       address: shop?.address ?? null,
       country: shop?.country ?? null,
+      currency: shop?.currency ?? 'KES',
     },
     today: {
       revenue: todaySummary.totals.revenue,
@@ -86,6 +90,7 @@ export const buildBusinessSnapshot = async (shopId) => {
       week: sumRange(recentSummaries, 7),
       month: sumRange(recentSummaries, 30),
     },
+    priceHealth,
     inventory: {
       stockValue: todaySummary.inventory.stockValue,
       lowStockCount: todaySummary.inventory.lowStockCount,
@@ -96,6 +101,6 @@ export const buildBusinessSnapshot = async (shopId) => {
     staff: todaySummary.staffPerformance,
     health,
     alerts,
-    insights: todaySummary.insights,
+    insights: [...(priceHealth.summary.affectedPriceRows ? [`Review ${priceHealth.summary.affectedPriceRows} product/variant pricing alerts before the next sale.`] : []), ...todaySummary.insights],
   };
 };
