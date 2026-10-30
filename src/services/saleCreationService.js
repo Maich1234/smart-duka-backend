@@ -66,18 +66,6 @@ export const createSaleTransaction = async ({
   const creditSettings = resolveCreditSettings(user.shop);
   const isCreditSale = paymentMethod === CREDIT_METHOD_KEY && creditSettings.enabled;
 
-  // The shop's own button list is the authority on what's a valid method —
-  // Joi only checked the key's shape, since it can't see the shop.
-  const allowedMethods = enabledMethodKeys(user.shop);
-  if (!allowedMethods.includes(paymentMethod)) {
-    // Coded so clients can react (refetch the shop's till buttons, drop the
-    // stale selection) rather than just surfacing the message — this fires
-    // whenever an owner removes/disables a method after it was already
-    // selected on someone else's till but before their poll/focus refetch
-    // caught up.
-    throw new SaleRejection(400, `'${paymentMethod}' is not one of this shop's payment methods.`, 'PAYMENT_METHOD_UNAVAILABLE');
-  }
-
   // ── Credit preconditions ────────────────────────────────────────────────
   // Everything cheap and shop-independent is settled here, before a
   // transaction is opened: permission, a named customer, and that the customer
@@ -143,6 +131,16 @@ export const createSaleTransaction = async ({
         throw new SaleRejection(400, 'This M-Pesa receipt has already been linked to a sale.');
       }
     }
+  }
+
+  // A removed method cannot start a new sale. A previously confirmed M-Pesa
+  // payment is settlement of money already received, not a new payment attempt.
+  // Only a successful shop-scoped transaction qualifies, never unverified text.
+  // Amount/status and exclusive sale ownership are checked again atomically below.
+  const allowedMethods = enabledMethodKeys(user.shop);
+  const settlingConfirmedPayment = paymentMethod === MPESA_METHOD_KEY && mpesaTx?.status === 'success';
+  if (!allowedMethods.includes(paymentMethod) && !settlingConfirmedPayment) {
+    throw new SaleRejection(400, `'${paymentMethod}' is not one of this shop's payment methods.`, 'PAYMENT_METHOD_UNAVAILABLE');
   }
 
   const session = await mongoose.startSession();
@@ -282,11 +280,8 @@ export const createSaleTransaction = async ({
         totalAmount,
         totalCommission,
         paymentMethod,
-        paymentMethodLabel: isCreditSale && !allowedMethods.includes(paymentMethod)
-          // The shop never added a Credit button, so there is no label of
-          // theirs to snapshot. Name it plainly rather than leaving the
-          // receipt blank.
-          ? 'Credit'
+        paymentMethodLabel: settlingConfirmedPayment && !allowedMethods.includes(paymentMethod)
+          ? 'M-Pesa'
           : methodLabel(user.shop, paymentMethod),
         staff: user._id,
         ...(saleCustomer ? { customer: saleCustomer._id, customerName: saleCustomer.name } : {}),
