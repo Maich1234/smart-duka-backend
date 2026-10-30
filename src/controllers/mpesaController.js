@@ -231,43 +231,46 @@ export const handleCallback = async (req, res) => {
   try {
     const parsed = parseSTKCallback(req.body);
 
-    const transaction = await MpesaTransaction.findOne({
-      checkoutRequestId: parsed.checkoutRequestId,
-    });
-
+    if (!parsed.checkoutRequestId) return;
+    const transaction = await MpesaTransaction.findOne({ checkoutRequestId: parsed.checkoutRequestId });
     if (!transaction) {
       console.error('[M-Pesa Callback] Unknown checkoutRequestId:', parsed.checkoutRequestId);
       return;
     }
-
     if (!['pending', 'initiating', 'timeout'].includes(transaction.status)) return;
 
-    transaction.callbackPayload = req.body;
-    transaction.callbackReceivedAt = new Date();
-    transaction.resultCode = String(parsed.resultCode);
-
-    if (parsed.success) {
-      transaction.status = 'success';
-      transaction.mpesaReceiptNumber = parsed.mpesaReceiptNumber;
-      transaction.transactionDate = new Date();
-      transaction.errorMessage = null;
-    } else {
-      const code = String(parsed.resultCode);
-      if (code === '1032') {
-        transaction.status = 'cancelled';
-      } else if (code === '1037' || code === '1001') {
-        transaction.status = 'timeout';
-      } else {
-        transaction.status = 'failed';
-      }
-      transaction.errorMessage = parsed.resultDesc;
+    // Never accept a success that does not reconcile with the requested amount
+    // or lacks a provider receipt. A mismatch remains unresolved for investigation.
+    if (parsed.success && (
+      !parsed.mpesaReceiptNumber ||
+      !Number.isFinite(Number(parsed.amount)) ||
+      Number(parsed.amount) !== Math.ceil(transaction.amount)
+    )) {
+      console.error('[M-Pesa Callback] Success amount or receipt mismatch:', parsed.checkoutRequestId);
+      return;
     }
 
-    await transaction.save();
+    const nextStatus = parsed.success ? 'success'
+      : String(parsed.resultCode) === '1032' ? 'cancelled'
+      : ['1037', '1001'].includes(String(parsed.resultCode)) ? 'timeout' : 'failed';
+    const updated = await MpesaTransaction.findOneAndUpdate(
+      { _id: transaction._id, status: { $in: ['pending', 'initiating', 'timeout'] } },
+      { $set: {
+        status: nextStatus,
+        callbackPayload: req.body,
+        callbackReceivedAt: new Date(),
+        resultCode: String(parsed.resultCode),
+        ...(parsed.success
+          ? { mpesaReceiptNumber: parsed.mpesaReceiptNumber, transactionDate: new Date(), errorMessage: null }
+          : { errorMessage: parsed.resultDesc }),
+      } },
+      { new: true },
+    );
+    if (!updated) return;
 
     logAudit({
-      shopId: transaction.shop,
-      action: `mpesa.callback.${transaction.status}`,
+      shopId: updated.shop,
+      action: `mpesa.callback.${updated.status}`,
       entityType: 'MpesaTransaction',
       entityId: transaction._id,
       details: { resultCode: parsed.resultCode, mpesaReceiptNumber: parsed.mpesaReceiptNumber },
