@@ -1,3 +1,4 @@
+import { ensureLaunchPricing } from '../services/launchPricingService.js';
 import { verifyBookStamp } from '../utils/bookStamp.js';
 import Sale from '../models/Sale.js';
 import Rating from '../models/Rating.js';
@@ -47,12 +48,13 @@ export const getPlatformStats = async (req, res) => {
  * total — a per-staff plan's `monthlyPrice` already *is* its starting price.
  */
 export const getPublicPlans = async (req, res) => {
+  await ensureLaunchPricing();
   const plans = await SubscriptionPlan.find({ active: true })
     .sort({ displayOrder: 1 })
     .select('slug name tagline description billingType monthlyPrice monthlyCharge minUsers unlimitedUsers maxStaff extraStaffPrice trialDays currency highlights badge')
     .lean();
 
-  res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
+  res.set('Cache-Control', 'no-store');
   res.json({ success: true, data: { plans } });
 };
 
