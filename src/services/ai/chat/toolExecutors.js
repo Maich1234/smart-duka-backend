@@ -1,3 +1,4 @@
+import { getPriceHealth } from '../../priceHealthService.js';
 import { buildBusinessSnapshot } from '../../intelligence/businessSnapshotBuilder.js';
 import { generateDailySummary } from '../../dailySummaryService.js';
 import { getSalesTrendSeries } from '../../salesTrendService.js';
@@ -27,6 +28,7 @@ const clamp = (value, min, max, fallback) => {
  * misbehaving model passing e.g. windowDays: 99999999.
  */
 export const toolExecutors = {
+  get_price_health: (shopId, args) => getPriceHealth(shopId, { days: clamp(args?.days, 1, 90, 30), limit: 10 }),
   get_business_snapshot: (shopId) => buildBusinessSnapshot(shopId),
 
   get_daily_summary: (shopId, args) => generateDailySummary(shopId, validDate(args?.date) ?? todayStr()),

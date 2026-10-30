@@ -44,7 +44,7 @@ const documentIdFrom = (token) =>
  * editing a figure in a PDF editor makes the printed document disagree with
  * its own stamp.
  */
-export function signBookStamp({ shopId, shopName, key, title, from, to, generatedAt, totals }) {
+export function signBookStamp({ shopId, shopName, key, title, from, to, generatedAt, totals, currency = 'KES' }) {
   const payload = {
     p: PURPOSE,
     s: String(shopId),
@@ -55,6 +55,7 @@ export function signBookStamp({ shopId, shopName, key, title, from, to, generate
     e: to,
     g: generatedAt,
     v: totals,
+    c: currency,
   };
   const token = jwt.sign(payload, secret(), { noTimestamp: true });
   return { token, documentId: documentIdFrom(token) };
@@ -74,6 +75,7 @@ export function verifyBookStamp(token) {
       to: decoded.e,
       generatedAt: decoded.g,
       totals: decoded.v ?? {},
+      currency: decoded.c ?? 'KES',
       documentId: documentIdFrom(token),
     };
   } catch {

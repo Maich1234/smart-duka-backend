@@ -6,7 +6,7 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 
 /** Cheap digest of the numbers Gemini's explanation actually depends on — not a timestamp, since DailySummary.generatedAt bumps on every unrelated read. */
 const fingerprintOf = (snapshot) =>
-  `${snapshot.today.revenue}:${snapshot.today.transactions}:${snapshot.today.expenses}:${snapshot.today.profit}`;
+  `${snapshot.today.revenue}:${snapshot.today.transactions}:${snapshot.today.expenses}:${snapshot.today.profit}:${snapshot.priceHealth?.digest ?? ""}`;
 
 /**
  * GET /ai/insight — the BusinessSnapshot plus a Gemini-generated explanation

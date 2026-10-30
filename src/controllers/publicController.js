@@ -216,10 +216,11 @@ export const verifyBookDocument = async (req, res) => {
       period: { from: attested.from, to: attested.to },
       generatedAt: attested.generatedAt,
       totals: attested.totals,
+      currency: attested.currency,
       // Stated in the payload rather than left to the client, so every
       // surface repeats the same limit on what this confirms.
       assurance:
-        'Confirms this document was produced by DuQana from the shop\'s own records and has not been altered. It is not an audit or an accountant\'s opinion.',
+        'Confirms DuQana issued this signed summary from the shop\'s records. Compare its figures with the PDF. This does not validate every line of a separately edited file or provide an independent audit.',
     },
   });
 };

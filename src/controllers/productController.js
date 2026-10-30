@@ -1,3 +1,7 @@
+import { lockCatalogue } from '../services/catalogueLock.js';
+import { duplicateErrors, findDuplicateCandidates } from '../services/productDuplicates.js';
+import mongoose from 'mongoose';
+import { recordProductPriceChange } from '../services/productPriceHistoryService.js';
 import Product from '../models/Product.js';
 import { logAudit } from '../services/auditLogService.js';
 import { getActiveShift } from '../services/shiftService.js';
@@ -157,7 +161,19 @@ export const createProduct = async (req, res) => {
     }
   }
 
-  const product = await Product.create({ ...req.body, shop: req.user.shop._id });
+  const session = await mongoose.startSession();
+  let product;
+  try {
+    await session.withTransaction(async () => {
+      await lockCatalogue(req.user.shop._id, session);
+      const conflicts = duplicateErrors([req.body], await findDuplicateCandidates(req.body, req.user.shop._id, session));
+      if (conflicts.length) throw Object.assign(new Error(conflicts[0]), { status: 409 });
+      const bundleError = await validateBundleItems(req.body.bundleItems, req.user.shop._id);
+      if (bundleError) throw Object.assign(new Error(bundleError), { status: 400 });
+      [product] = await Product.create([{ ...req.body, shop: req.user.shop._id }], { session });
+      await recordProductPriceChange({ after: product, actor: req.user, source: 'created', session });
+    });
+  } finally { await session.endSession(); }
   const data = product.toObject();
   res.status(201).json({ success: true, data: req.user.role === 'staff' ? sanitizeForStaff(data, showsCommissionTo(req.user)) : data });
 };
@@ -247,7 +263,17 @@ export const updateProduct = async (req, res) => {
       { $literal: product.variants.map(variant => ({ id: variant._id, quantity: variant.quantity })) },
     ] };
   }
-  const updatedProduct = await Product.findOneAndUpdate(guard, req.body, { new: true, runValidators: true });
+  const session = await mongoose.startSession();
+  let updatedProduct;
+  try {
+    await session.withTransaction(async () => {
+      await lockCatalogue(req.user.shop._id, session);
+      const conflicts = duplicateErrors([{ ...product.toObject(), ...req.body }], await findDuplicateCandidates({ ...product.toObject(), ...req.body }, req.user.shop._id, session, product._id));
+      if (conflicts.length) throw Object.assign(new Error(conflicts[0]), { status: 409 });
+      updatedProduct = await Product.findOneAndUpdate(guard, req.body, { new: true, runValidators: true, session });
+      if (updatedProduct) await recordProductPriceChange({ before: product, after: updatedProduct, actor: req.user, source: 'product_edit', session });
+    });
+  } finally { await session.endSession(); }
   if (!updatedProduct) return res.status(409).json({ success: false, code: 'PRODUCT_CHANGED', message: 'This product changed while you were editing. Refresh its details and try again.' });
   const data = updatedProduct.toObject();
   res.json({ success: true, data: req.user.role === 'staff' ? sanitizeForStaff(data, showsCommissionTo(req.user)) : data });
@@ -269,7 +295,14 @@ export const deleteProduct = async (req, res) => {
     return res.status(400).json({ success: false, message: 'Cannot delete product with existing sales history' });
   }
 
-  await product.deleteOne();
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      await lockCatalogue(req.user.shop._id, session);
+      if (await Product.exists({ shop: req.user.shop._id, 'bundleItems.product': product._id }).session(session)) throw Object.assign(new Error('Remove this product from its bundles before deleting it.'), { status: 409 });
+      await Product.deleteOne({ _id: product._id, shop: req.user.shop._id }, { session });
+    });
+  } finally { await session.endSession(); }
   res.json({ success: true, message: 'Product deleted successfully' });
 };
 

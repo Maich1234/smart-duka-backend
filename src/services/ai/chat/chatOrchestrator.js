@@ -112,7 +112,7 @@ export const runChatTurn = async ({ shopId, conversation, userText }) => {
     // nothing: chats.create() is synchronous and does no network I/O.
     const { chat, response: firstResponse } = await withResolvedModel(async (model) => {
       const session = createChatSession({ model, config: baseConfig, history: priorHistory });
-      return { chat: session, response: await session.sendMessage({ message: userText }) };
+      return { chat: session, response: await session.sendMessage({ message: userText, ...(/price|pricing|below cost|zero price|loss|bei|hasara/i.test(userText) ? { config: { ...baseConfig, toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['get_price_health'] } } } } : {}) }) };
     });
 
     const toolsUsed = [];

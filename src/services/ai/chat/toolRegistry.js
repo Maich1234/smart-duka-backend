@@ -7,6 +7,7 @@ import { Type } from '@google/genai';
  * scoping (see toolExecutors.js, which always injects shopId server-side).
  */
 export const TOOL_DECLARATIONS = [
+  { name: 'get_price_health', description: 'Current zero/missing/below-cost product and variant prices, weighted-average costs, stock value affected, potential stock shortfall, recorded versus estimated gross below-cost sales shortfall, missing-cost coverage, and recorded last price editors. Not net business loss. Includes top 10 issue rows; counts cover the full shop. Historical editors may be unknown. Call for pricing errors, losses, or who changed prices.', parameters: { type: Type.OBJECT, properties: { days: { type: Type.INTEGER, description: 'Trailing sales window 1 to 90 days, default 30.' } }, required: [] } },
   {
     name: 'get_business_snapshot',
     description:

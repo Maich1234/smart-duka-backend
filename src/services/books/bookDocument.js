@@ -108,6 +108,7 @@ export function buildBookDocument({
     to: period.to,
     generatedAt,
     totals,
+    currency: shop?.currency ?? 'KES',
   });
 
   return {

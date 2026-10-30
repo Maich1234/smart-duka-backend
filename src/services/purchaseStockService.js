@@ -1,3 +1,4 @@
+import { recordProductPriceChange } from './productPriceHistoryService.js';
 import Product from '../models/Product.js';
 import InventoryMovement from '../models/InventoryMovement.js';
 import { allocateAdditionalCosts, landedUnitCost, round2 } from './purchaseCostAllocation.js';
@@ -74,7 +75,7 @@ export const resolvePurchaseTarget = (product, item) => {
  * Writes one InventoryMovement per line as the durable stock-history record.
  * Must run inside the caller's mongoose transaction.
  */
-export async function applyPurchaseReceiptStock(purchase, session) {
+export async function applyPurchaseReceiptStock(purchase, session, actor = purchase.staff) {
   const shop = purchase.shop;
   const getProduct = makeProductCache(shop, session);
   const touched = new Set();
@@ -86,12 +87,14 @@ export async function applyPurchaseReceiptStock(purchase, session) {
   );
 
   const movements = [];
+  const priceBefore = new Map();
 
   for (let i = 0; i < purchase.items.length; i++) {
     const item = purchase.items[i];
     const product = await getProduct(item.productId);
     if (!product) continue; // deleted since the purchase was recorded — best-effort, mirrors restoreSaleStock
 
+    if (!priceBefore.has(String(product._id))) priceBefore.set(String(product._id), product.toObject());
     const target = resolvePurchaseTarget(product, item);
     touched.add(product._id.toString());
 
@@ -120,7 +123,9 @@ export async function applyPurchaseReceiptStock(purchase, session) {
   }
 
   for (const id of touched) {
-    await (await getProduct(id)).save({ session });
+    const changedProduct = await getProduct(id);
+    await changedProduct.save({ session });
+    await recordProductPriceChange({ before: priceBefore.get(id), after: changedProduct, actor, source: 'purchase', reference: purchase._id, session });
   }
   if (movements.length) {
     await InventoryMovement.insertMany(movements, { session });

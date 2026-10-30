@@ -10,6 +10,7 @@ export const buildContext = (snapshot) => ({
   today: snapshot.today,
   trend: snapshot.trend,
   inventory: snapshot.inventory,
+  priceHealth: snapshot.priceHealth,
   health: snapshot.health,
   alerts: snapshot.alerts,
   insights: snapshot.insights,
