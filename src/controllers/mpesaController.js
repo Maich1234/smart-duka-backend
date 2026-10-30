@@ -31,10 +31,17 @@ export const initiatePayment = async (req, res) => {
     // either path never fires a second STK push at the customer.
     const idempotencyKey = req.headers['idempotency-key'] ?? req.headers['x-idempotency-key'];
 
+    if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim()) {
+      return res.status(400).json({ success: false, code: 'IDEMPOTENCY_KEY_REQUIRED', message: 'A unique payment request key is required. Refresh checkout and try again.' });
+    }
+
     // ── 1. Idempotency check — return cached result for duplicate requests ──
     if (idempotencyKey) {
       const existing = await MpesaTransaction.findOne({ shop: shopId, idempotencyKey });
       if (existing) {
+        if (existing.status === 'initiating') {
+          return res.status(202).json({ success: true, idempotent: true, data: { transactionId: existing._id, status: 'initiating' }, message: 'Payment request is being processed. Do not send another request.' });
+        }
         if (existing.status === 'pending') {
           return res.status(200).json({
             success: true,
@@ -98,7 +105,30 @@ export const initiatePayment = async (req, res) => {
       });
     }
 
-    // ── 3. Send STK Push to Safaricom ──────────────────────────────────────
+    // Reserve the idempotency key atomically BEFORE contacting Safaricom.
+    // Never resend for the same key, even when provider acknowledgement is uncertain.
+    let transaction;
+    try {
+      transaction = await MpesaTransaction.create({
+        shop: shopId,
+        phoneNumber: normalizeKenyanPhone(phoneNumber),
+        amount,
+        accountReference: accountReference || 'DuQana',
+        requestedBy: req.user._id,
+        idempotencyKey,
+        status: 'initiating',
+      });
+    } catch (err) {
+      if (err.code !== 11000) throw err;
+      const existing = await MpesaTransaction.findOne({ shop: shopId, idempotencyKey });
+      if (!existing) throw err;
+      return res.status(202).json({
+        success: true, idempotent: true,
+        data: { transactionId: existing._id, checkoutRequestId: existing.checkoutRequestId ?? null, status: existing.status },
+        message: 'A payment attempt with this key already exists. Check its status rather than sending another prompt.',
+      });
+    }
+
     let stkResult;
     try {
       stkResult = await initiateSTKPush({
@@ -110,49 +140,22 @@ export const initiatePayment = async (req, res) => {
         callbackUrl: CALLBACK_URL,
       });
     } catch (err) {
+      // Network failures can occur AFTER Safaricom has accepted a request.
+      // An uncertain outcome must never automatically trigger another STK.
+      await MpesaTransaction.updateOne({ _id: transaction._id, status: 'initiating' }, {
+        $set: { status: 'timeout', errorMessage: 'Payment initiation was not confirmed. Check M-Pesa before making another payment.' },
+      });
       const message = parseMpesaError(err, mpesaConfig.environment);
       return res.status(503).json({
-        success: false,
-        message,
-        ...(mpesaConfig.environment !== 'production' && { detail: err.message }),
+        success: false, code: 'MPESA_INITIATION_UNCONFIRMED', transactionId: transaction._id,
+        message: message + ' The result is uncertain; check the transaction before starting a new payment.',
       });
     }
 
-    // ── 4. Record the pending transaction ──────────────────────────────────
-    let transaction;
-    try {
-      transaction = await MpesaTransaction.create({
-        shop: shopId,
-        checkoutRequestId: stkResult.checkoutRequestId,
-        merchantRequestId: stkResult.merchantRequestId,
-        phoneNumber: normalizeKenyanPhone(phoneNumber),
-        amount,
-        accountReference: accountReference || 'DuQana',
-        status: 'pending',
-        requestedBy: req.user._id,
-        ...(idempotencyKey && { idempotencyKey }),
-      });
-    } catch (err) {
-      // Race condition: two simultaneous requests with the same idempotency key both
-      // passed the check above, but the second one lost the unique index race.
-      // Recover by returning the record the first request created.
-      if (err.code === 11000 && idempotencyKey) {
-        const existing = await MpesaTransaction.findOne({ shop: shopId, idempotencyKey });
-        if (existing) {
-          return res.status(200).json({
-            success: true,
-            idempotent: true,
-            data: {
-              transactionId: existing._id,
-              checkoutRequestId: existing.checkoutRequestId,
-              status: existing.status,
-            },
-            message: 'Payment request already sent. Keep waiting for customer PIN.',
-          });
-        }
-      }
-      throw err;
-    }
+    // Conditional update prevents overwriting a callback that arrived quickly.
+    await MpesaTransaction.updateOne({ _id: transaction._id, status: 'initiating' }, {
+      $set: { status: 'pending', checkoutRequestId: stkResult.checkoutRequestId, merchantRequestId: stkResult.merchantRequestId },
+    });
 
     logAudit({
       shopId,
@@ -193,11 +196,11 @@ export const getTransactionStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Transaction not found' });
     }
 
-    if (transaction.status === 'pending') {
+    if (transaction.status === 'pending' || transaction.status === 'initiating') {
       const ageMs = Date.now() - new Date(transaction.createdAt).getTime();
+      // Age alone does not prove a failed payment. Keep it unresolved until a provider result arrives.
       if (ageMs > 2 * 60 * 1000) {
-        transaction.status = 'timeout';
-        await transaction.save();
+        return res.json({ success: true, data: { transactionId: transaction._id, status: transaction.status, amount: transaction.amount, phoneNumber: transaction.phoneNumber, errorMessage: 'Confirmation is delayed. Check M-Pesa before retrying.' } });
       }
     }
 
@@ -237,7 +240,7 @@ export const handleCallback = async (req, res) => {
       return;
     }
 
-    if (transaction.status !== 'pending') return;
+    if (!['pending', 'initiating', 'timeout'].includes(transaction.status)) return;
 
     transaction.callbackPayload = req.body;
     transaction.callbackReceivedAt = new Date();
