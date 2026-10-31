@@ -1,3 +1,4 @@
+import { ensureLaunchPricing } from '../services/launchPricingService.js';
 import { verifyBookStamp } from '../utils/bookStamp.js';
 import Sale from '../models/Sale.js';
 import Rating from '../models/Rating.js';
@@ -47,12 +48,13 @@ export const getPlatformStats = async (req, res) => {
  * total — a per-staff plan's `monthlyPrice` already *is* its starting price.
  */
 export const getPublicPlans = async (req, res) => {
+  await ensureLaunchPricing();
   const plans = await SubscriptionPlan.find({ active: true })
     .sort({ displayOrder: 1 })
     .select('slug name tagline description billingType monthlyPrice monthlyCharge minUsers unlimitedUsers maxStaff extraStaffPrice trialDays currency highlights badge')
     .lean();
 
-  res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=60');
+  res.set('Cache-Control', 'no-store');
   res.json({ success: true, data: { plans } });
 };
 
@@ -214,10 +216,11 @@ export const verifyBookDocument = async (req, res) => {
       period: { from: attested.from, to: attested.to },
       generatedAt: attested.generatedAt,
       totals: attested.totals,
+      currency: attested.currency,
       // Stated in the payload rather than left to the client, so every
       // surface repeats the same limit on what this confirms.
       assurance:
-        'Confirms this document was produced by DuQana from the shop\'s own records and has not been altered. It is not an audit or an accountant\'s opinion.',
+        'Confirms DuQana issued this signed summary from the shop\'s records. Compare its figures with the PDF. This does not validate every line of a separately edited file or provide an independent audit.',
     },
   });
 };

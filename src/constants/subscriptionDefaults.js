@@ -1,7 +1,6 @@
-// Default subscription plans, inserted only when the plans collection is
-// empty (see ensureDefaultPlans in subscriptionController). After that the
-// database — edited from the super-admin page — is the single source of
-// truth; changing these constants does NOT update live pricing.
+// Initial plan content and the versioned launch pricing rollout. Existing IDs
+// and entitlements are preserved by launchPricingService; the revision marker
+// prevents subsequent cold starts from overriding future admin price changes.
 
 export const DEFAULT_PLANS = [
   {
@@ -106,7 +105,7 @@ DEFAULT_PLANS.splice(1, 0, {
 // Marketing copy for the yearly billing option — shown on the pricing screen.
 export const YEARLY_OFFER = {
   title: 'Annual Billing',
-  perks: ['2 months free', 'Priority support', 'Early access to new features'],
+  perks: ['Compare the total and savings before paying', 'The monthly charge applies to each billed month'],
 };
 
 // The earned launch offer shown after onboarding completes. The headline is

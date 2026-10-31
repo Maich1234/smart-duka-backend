@@ -125,7 +125,7 @@ export const createPurchase = async (req, res) => {
       }], { session });
 
       if (!requiresApproval) {
-        await applyPurchaseReceiptStock(purchase, session);
+        await applyPurchaseReceiptStock(purchase, session, req.user);
       }
     });
 
@@ -308,7 +308,7 @@ export const updatePurchase = async (req, res) => {
       if (purchaseDate) purchase.purchaseDate = purchaseDate;
 
       if (purchase.status === 'completed') {
-        await applyPurchaseReceiptStock(purchase, session);
+        await applyPurchaseReceiptStock(purchase, session, req.user);
         purchase.inventoryUpdated = true;
       }
 
@@ -390,7 +390,7 @@ export const approvePurchase = async (req, res) => {
       if (!purchase) throw new PurchaseLineError('Purchase not found', 404);
       if (purchase.status !== 'pending_approval') throw new PurchaseLineError('This purchase is not awaiting approval.');
 
-      await applyPurchaseReceiptStock(purchase, session);
+      await applyPurchaseReceiptStock(purchase, session, req.user);
       purchase.status = 'completed';
       purchase.inventoryUpdated = true;
       await purchase.save({ session });

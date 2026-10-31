@@ -11,7 +11,7 @@ const isValidShape = (obj) =>
 
 /** Deterministic fallback built from the snapshot's own insights — used whenever Gemini's output can't be trusted. */
 const fallbackFrom = (snapshot) => ({
-  summary: snapshot.insights[0] ?? 'No notable changes today.',
+  summary: snapshot.priceHealth && (snapshot.priceHealth.summary.affectedPriceRows || snapshot.priceHealth.realised.belowCostSaleLines) ? `${snapshot.priceHealth.summary.affectedProducts} products need price review. Potential stock shortfall: ${snapshot.priceHealth.currency} ${snapshot.priceHealth.summary.potentialLoss}. Recorded gross shortfall over ${snapshot.priceHealth.window.days} days: ${snapshot.priceHealth.currency} ${snapshot.priceHealth.realised.recordedLoss}; estimated shortfall: ${snapshot.priceHealth.currency} ${snapshot.priceHealth.realised.estimatedLoss}. ${snapshot.priceHealth.realised.unknownCostLines} sale lines have unknown costs. These figures are not net business losses.` : snapshot.insights[0] ?? 'No notable changes today.',
   priority: snapshot.alerts.some((a) => a.severity === 'critical') ? 'high' : snapshot.alerts.length ? 'medium' : 'low',
   actions: snapshot.insights.slice(0, 3),
 });

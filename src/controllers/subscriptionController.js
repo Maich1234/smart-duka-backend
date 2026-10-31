@@ -1,10 +1,11 @@
+import { ensureLaunchPricing } from '../services/launchPricingService.js';
 import { randomUUID } from 'node:crypto';
 import SubscriptionPlan from '../models/SubscriptionPlan.js';
 import Subscription from '../models/Subscription.js';
 import SubscriptionPayment from '../models/SubscriptionPayment.js';
 import Promotion from '../models/Promotion.js';
 import PlatformConfig from '../models/PlatformConfig.js';
-import { DEFAULT_PLANS, YEARLY_OFFER, LAUNCH_OFFER } from '../constants/subscriptionDefaults.js';
+import { YEARLY_OFFER, LAUNCH_OFFER } from '../constants/subscriptionDefaults.js';
 import {
   getBillableUserCount,
   pickPlanForStaffCount,
@@ -63,14 +64,8 @@ function paymentStartData(payment) {
   };
 }
 
-/** Seeds the default Starter/Growth/Business plans the first time the API is hit. */
-async function ensureDefaultPlans() {
-  const count = await SubscriptionPlan.estimatedDocumentCount();
-  if (count === 0) await SubscriptionPlan.insertMany(DEFAULT_PLANS);
-}
-
 async function getActivePlans() {
-  await ensureDefaultPlans();
+  await ensureLaunchPricing();
   return SubscriptionPlan.find({ active: true }).sort({ displayOrder: 1 }).lean();
 }
 

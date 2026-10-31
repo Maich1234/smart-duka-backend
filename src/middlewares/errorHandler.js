@@ -41,6 +41,7 @@ const errorHandler = (err, req, res, next) => {
   const exposeMessage = err.status || process.env.NODE_ENV !== 'production';
   res.status(status).json({
     success: false,
+    ...(err.publicCode ? { code: err.publicCode } : {}),
     message: (exposeMessage && err.message) || 'Something went wrong on our end. Please try again or contact support.',
   });
 };
