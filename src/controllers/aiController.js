@@ -24,10 +24,14 @@ export const getBusinessInsight = async (req, res) => {
 
     const existing = await DailySummary.findOne({ shop: shopId, date }).select('aiInsight');
     const cached = existing?.aiInsight;
-    const isFresh = cached?.fingerprint === fingerprint;
+    // Keep a short outage cache to avoid repeated provider calls, but allow
+    // Gemini to recover even when today's business figures have not changed.
+    const fallbackFresh = cached?.source !== 'fallback'
+      || Date.now() - new Date(cached.generatedAt).getTime() < 60_000;
+    const isFresh = cached?.fingerprint === fingerprint && fallbackFresh;
 
     const insight = isFresh
-      ? { summary: cached.summary, priority: cached.priority, actions: cached.actions, health: cached.health, source: 'cache' }
+      ? { summary: cached.summary, priority: cached.priority, actions: cached.actions, health: cached.health, source: cached.source === 'fallback' ? 'fallback' : 'cache' }
       : await explainSnapshot(snapshot);
 
     if (!isFresh) {
@@ -40,6 +44,7 @@ export const getBusinessInsight = async (req, res) => {
               priority: insight.priority,
               actions: insight.actions,
               health: insight.health,
+              source: insight.source,
               fingerprint,
               generatedAt: new Date(),
             },

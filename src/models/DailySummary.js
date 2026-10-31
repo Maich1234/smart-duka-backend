@@ -86,6 +86,7 @@ const dailySummarySchema = new mongoose.Schema({
     priority: { type: String, enum: ['low', 'medium', 'high'] },
     actions: [{ type: String }],
     health: { type: Number },
+    source: { type: String, enum: ['gemini', 'fallback'] },
     fingerprint: { type: String },
     generatedAt: { type: Date },
   },
