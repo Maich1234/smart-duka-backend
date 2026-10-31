@@ -4,6 +4,11 @@ import mongoose from 'mongoose';
 // Passing bufferCommands in connect() options only applies to the connection
 // object, not to schemas already instantiated at import time.
 mongoose.set('bufferCommands', false);
+// With buffering disabled, model compilation must not create collections
+// before connectDB has supplied a driver DB. Otherwise Model.init() caches
+// a rejected promise for the lifetime of this serverless instance.
+// Operations that need a collection before a transaction create it explicitly.
+mongoose.set('autoCreate', false);
 
 // Index builds are a development convenience, not a deploy step. Left on (the
 // mongoose default), every cold start re-issues createIndexes for every model

@@ -21,7 +21,10 @@ async function applyRevision() {
     throw new Error('Launch pricing has not been applied in production. Preview cannot update shared plans.');
   }
   // Initialize collections before opening the transaction, including on empty DBs.
-  await Promise.all([SubscriptionPlan.init(), PricingRevision.init()]);
+  // Called after the request's connection middleware. Model.init() runs at
+  // import time, before that connection exists, and is not a collection-setup
+  // boundary when automatic creation is disabled.
+  await Promise.all([SubscriptionPlan.createCollection(), PricingRevision.createCollection()]);
   const session = await mongoose.startSession();
   try {
     await session.withTransaction(async () => {
