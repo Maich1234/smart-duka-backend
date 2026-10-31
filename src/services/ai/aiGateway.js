@@ -12,6 +12,15 @@ import { formatResponse } from './responseFormatter.js';
 export const explainSnapshot = async (snapshot) => {
   const context = buildContext(snapshot);
   const prompt = buildPrompt(context);
-  const rawText = await generateText(prompt);
+  let rawText;
+  try {
+    rawText = await generateText(prompt);
+  } catch (err) {
+    // The financial snapshot is already calculated. A provider outage must
+    // not discard it or turn a working business report into a server error.
+    console.warn('[AI] Explanation unavailable; returning calculated summary.', { status: err?.status ?? err?.code ?? 'unknown' });
+    const fallback = formatResponse('', snapshot);
+    return { ...fallback, summary: `AI is temporarily unavailable. ${fallback.summary}` };
+  }
   return formatResponse(rawText, snapshot);
 };
