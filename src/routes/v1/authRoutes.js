@@ -22,12 +22,15 @@ import {
   mintWebviewToken,
   endImpersonation,
 } from '../../controllers/auth/index.js';
+import { requestContactChange, confirmContactChange } from '../../controllers/auth/contactChange.js';
 import { protect, ownerOnly } from '../../middlewares/auth.js';
 import validate from '../../middlewares/validate.js';
 import { createRateLimitStore } from '../../utils/rateLimitStore.js';
 import {
   loginSchema,
   changePasswordSchema,
+  requestContactChangeSchema,
+  confirmContactChangeSchema,
   registerSchema,
   forgotPasswordSchema,
   verifyOTPSchema,
@@ -66,6 +69,13 @@ const codeVerifyLimiter = rateLimit({
   store: createRateLimitStore('code-verify'),
   message: { success: false, message: 'Too many verification attempts. Please wait before trying again.' },
 });
+const contactChangeLimiter = rateLimit({
+  ...limiterDefaults,
+  windowMs: 15 * 60 * 1000,
+  max: 12,
+  store: createRateLimitStore('contact-change'),
+  message: { success: false, message: 'Too many contact change requests. Try again later.' },
+});
 const registerLimiter = rateLimit({
   ...limiterDefaults,
   windowMs: 60 * 60 * 1000,
@@ -95,6 +105,8 @@ router.post('/logout', logout);
 
 router.get('/profile', protect, getProfile);
 router.put('/profile', protect, updateProfile);
+router.post('/contact-change/request', protect, contactChangeLimiter, validate(requestContactChangeSchema), requestContactChange);
+router.post('/contact-change/confirm', protect, contactChangeLimiter, validate(confirmContactChangeSchema), confirmContactChange);
 router.post('/change-password', protect, validate(changePasswordSchema), changePassword);
 router.post('/resend-verification', protect, resendVerificationEmail);
 router.post('/device-token', protect, registerDeviceToken);

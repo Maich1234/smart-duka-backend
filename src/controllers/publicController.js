@@ -87,6 +87,7 @@ export const getPublicReceipt = async (req, res) => {
 };
 
 export const getPublicQuotation = async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const quotationId = verifyQuotationToken(req.params.token);
   if (!quotationId) {
     return res.status(400).json({ success: false, message: 'Invalid or unrecognized quotation code' });
@@ -107,7 +108,7 @@ export const getPublicQuotation = async (req, res) => {
       shopLogoUrl: quotation.shop?.logoUrl,
       currency: quotation.shop?.currency,
       template: quotation.shop?.quotationTemplate,
-      customerSnapshot: quotation.customerSnapshot,
+      customerSnapshot: { name: quotation.customerSnapshot?.name },
       items: quotation.items.map((i) => ({
         name: i.name,
         description: i.description,
@@ -133,6 +134,7 @@ export const getPublicQuotation = async (req, res) => {
  * shop fields toPdfData reads, plus quotationTemplate for template choice.
  */
 export const getPublicQuotationPdf = async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const quotationId = verifyQuotationToken(req.params.token);
   if (!quotationId) {
     return res.status(400).json({ success: false, message: 'Invalid or unrecognized quotation code' });
@@ -144,7 +146,7 @@ export const getPublicQuotationPdf = async (req, res) => {
   }
 
   const buffer = await renderQuotationPdf(
-    toPdfData(quotation, quotation.shop),
+    { ...toPdfData(quotation, quotation.shop, req.params.token), customerSnapshot: { name: quotation.customerSnapshot?.name } },
     quotation.shop.quotationTemplate || 'classic',
   );
   res.set('Content-Type', 'application/pdf');

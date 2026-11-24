@@ -18,19 +18,22 @@ const INTENTIONAL_REVOCATION_REASONS = new Set([
   'superseded_by_new_device',
   'admin_force_logout',
   'password_change',
+  'contact_change',
+  'account_deleted',
 ]);
 
 /** Issues a new refresh token for a user. Returns the RAW token (only time it exists in plaintext). */
-export const issueRefreshToken = async (userId, device = {}) => {
+export const issueRefreshToken = async (userId, device = {}, sessionId = crypto.randomUUID(), transaction = null) => {
   const raw = crypto.randomBytes(48).toString('hex');
-  await RefreshToken.create({
+  await RefreshToken.create([{
     user: userId,
+    sessionId,
     tokenHash: hashToken(raw),
     expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
     deviceId: device.deviceId ?? null,
     deviceName: device.deviceName ?? null,
     platform: device.platform ?? null,
-  });
+  }], { session: transaction });
   return raw;
 };
 
@@ -44,7 +47,7 @@ export class RefreshTokenError extends Error {
 
 /**
  * Validates + rotates a refresh token: the presented token is revoked and a
- * replacement issued atomically enough for the single-client mobile flow.
+ * replacement is issued in the same MongoDB transaction.
  * Reuse of an already-revoked token usually means the token leaked — but it
  * can also mean a device was deliberately superseded (new login elsewhere,
  * admin force-logout, password change) and is now retrying its old refresh
@@ -57,46 +60,51 @@ export const rotateRefreshToken = async (raw) => {
   const tokenHash = hashToken(raw);
   const now = new Date();
 
-  // Atomic claim: only one concurrent request can rotate a given token.
-  const doc = await RefreshToken.findOneAndUpdate(
-    { tokenHash, revokedAt: null, expiresAt: { $gt: now } },
-    { $set: { revokedAt: now, revokedReason: 'rotated' } }
-  );
-
-  if (!doc) {
-    const spent = await RefreshToken.findOne({ tokenHash });
-    if (spent) {
-      if (INTENTIONAL_REVOCATION_REASONS.has(spent.revokedReason)) {
-        // Expected: this device was deliberately signed out elsewhere.
-        // Don't touch any other session — in particular, not the new one
-        // that superseded it.
-        throw new RefreshTokenError('Session expired. Please sign in again.', 'SESSION_REVOKED_ELSEWHERE');
-      }
-      // Replay of an organically-rotated (or already-replayed) token — kill
-      // the whole session family.
-      await RefreshToken.updateMany(
-        { user: spent.user, revokedAt: null },
-        { $set: { revokedAt: now, revokedReason: 'token_reuse_detected' } }
-      );
+  let rotated;
+  await RefreshToken.db.transaction(async (transaction) => {
+    rotated = null;
+    const doc = await RefreshToken.findOneAndUpdate(
+      { tokenHash, revokedAt: null, expiresAt: { $gt: now } },
+      { $set: { revokedAt: now, revokedReason: 'rotated' } },
+      { session: transaction },
+    );
+    if (!doc) return null;
+    const sessionId = doc.sessionId || crypto.randomUUID();
+    if (!doc.sessionId) {
+      await RefreshToken.updateOne({ _id: doc._id }, { $set: { sessionId } }, { session: transaction });
     }
-    throw new RefreshTokenError('Session expired. Please sign in again.');
-  }
-
-  const newRaw = await issueRefreshToken(doc.user, {
-    deviceId: doc.deviceId,
-    deviceName: doc.deviceName,
-    platform: doc.platform,
+    const refreshToken = await issueRefreshToken(doc.user, {
+      deviceId: doc.deviceId,
+      deviceName: doc.deviceName,
+      platform: doc.platform,
+    }, sessionId, transaction);
+    rotated = { userId: doc.user, refreshToken, sessionId };
   });
-  return { userId: doc.user, refreshToken: newRaw };
+  if (rotated) return rotated;
+
+  const spent = await RefreshToken.findOne({ tokenHash });
+  if (spent?.revokedAt && spent.expiresAt > now) {
+    if (INTENTIONAL_REVOCATION_REASONS.has(spent.revokedReason)) {
+      throw new RefreshTokenError('Session expired. Please sign in again.', 'SESSION_REVOKED_ELSEWHERE');
+    }
+    await revokeAllSessions(spent.user, 'token_reuse_detected');
+  }
+  throw new RefreshTokenError('Session expired. Please sign in again.');
 };
 
 /** Best-effort revocation on logout. Unknown tokens are ignored. */
 export const revokeRefreshToken = async (raw, reason = 'manual_logout') => {
   if (!raw || typeof raw !== 'string') return;
-  await RefreshToken.updateOne(
-    { tokenHash: hashToken(raw), revokedAt: null },
-    { $set: { revokedAt: new Date(), revokedReason: reason } }
-  );
+  await RefreshToken.db.transaction(async (transaction) => {
+    const doc = await RefreshToken.findOne({ tokenHash: hashToken(raw) }).session(transaction);
+    if (!doc) return;
+    const identity = doc.sessionId ? { sessionId: doc.sessionId } : { _id: doc._id };
+    await RefreshToken.updateMany(
+      { ...identity, $or: [{ revokedAt: null }, { revokedReason: 'rotated' }] },
+      { $set: { revokedAt: new Date(), revokedReason: reason } },
+      { session: transaction },
+    );
+  });
 };
 
 /**
@@ -105,9 +113,12 @@ export const revokeRefreshToken = async (raw, reason = 'manual_logout') => {
  * always set alongside revokedAt so a stale device's next rotate attempt can
  * tell this was intentional (see rotateRefreshToken).
  */
-export const revokeAllSessions = async (userId, reason) => {
-  await RefreshToken.updateMany(
-    { user: userId, revokedAt: null },
-    { $set: { revokedAt: new Date(), revokedReason: reason } }
+export const revokeAllSessions = async (userId, reason, session = null) => {
+  const revoke = (transaction) => RefreshToken.updateMany(
+    { user: userId, $or: [{ revokedAt: null }, { revokedReason: 'rotated' }] },
+    { $set: { revokedAt: new Date(), revokedReason: reason } },
+    { session: transaction },
   );
+  if (session) return revoke(session);
+  return RefreshToken.db.transaction(revoke);
 };

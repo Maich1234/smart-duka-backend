@@ -15,6 +15,23 @@ export const loginSchema = Joi.object({
   device: deviceSchema.optional(),
 }).unknown(false);
 
+const contactField = Joi.string().valid('email', 'phone').required();
+
+export const requestContactChangeSchema = Joi.object({
+  field: contactField,
+  destination: Joi.when('field', {
+    is: 'email',
+    then: Joi.string().trim().lowercase().email().max(254).required(),
+    otherwise: Joi.string().trim().pattern(/^\+[1-9]\d{7,14}$/).required(),
+  }),
+  currentPassword: Joi.string().max(128).required(),
+});
+
+export const confirmContactChangeSchema = Joi.object({
+  field: contactField,
+  code: Joi.string().pattern(/^\d{6}$/).required(),
+});
+
 export const changePasswordSchema = Joi.object({
   currentPassword: Joi.string().required(),
   newPassword: Joi.string().min(6).required(),
