@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import User from '../../models/User.js';
+import SupportSession from '../../models/SupportSession.js';
 import { logAudit } from '../../services/auditLogService.js';
 
 // 15 minutes, no refresh token issued — a bounded support window that dies on
@@ -26,8 +27,12 @@ export const mintImpersonationToken = async (req, res) => {
     return res.status(403).json({ success: false, message: 'Account deactivated' });
   }
 
+  const session = await SupportSession.create({
+    user: user._id,
+    expiresAt: new Date(Date.now() + IMPERSONATION_TOKEN_TTL_SECONDS * 1000),
+  });
   const token = jwt.sign(
-    { id: user._id, impersonation: true, adminId },
+    { id: user._id, impersonation: true, adminId, sessionId: session._id },
     process.env.JWT_SECRET,
     { expiresIn: IMPERSONATION_TOKEN_TTL_SECONDS }
   );

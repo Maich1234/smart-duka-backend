@@ -1,19 +1,13 @@
 import jwt from 'jsonwebtoken';
 
-/**
- * Signs a long-lived, stateless token identifying a quotation for the public
- * share page. No expiry on the token itself — a quotation past its
- * validUntil is still viewable, just shown with an "expired" notice; that's
- * a display concern for the page, not a token concern. Mirrors
- * receiptToken.js exactly.
- */
+/** Public quotation links expire 30 days after issue, including legacy links. */
 export const signQuotationToken = (quotationId) => {
-  return jwt.sign({ quotationId: quotationId.toString() }, process.env.RECEIPT_TOKEN_SECRET);
+  return jwt.sign({ quotationId: quotationId.toString() }, process.env.RECEIPT_TOKEN_SECRET, { expiresIn: '30d' });
 };
 
 export const verifyQuotationToken = (token) => {
   try {
-    const decoded = jwt.verify(token, process.env.RECEIPT_TOKEN_SECRET);
+    const decoded = jwt.verify(token, process.env.RECEIPT_TOKEN_SECRET, { maxAge: '30d' });
     return decoded.quotationId;
   } catch {
     return null;

@@ -14,7 +14,7 @@
  */
 import 'dotenv/config';
 import { readdir } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import mongoose from 'mongoose';
 
@@ -24,7 +24,7 @@ const MODELS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..',
 async function registerAllModels() {
   const files = (await readdir(MODELS_DIR)).filter((f) => f.endsWith('.js'));
   // Importing a model file is what registers its schema with mongoose.
-  await Promise.all(files.map((f) => import(path.join(MODELS_DIR, f))));
+  await Promise.all(files.map((f) => import(pathToFileURL(path.join(MODELS_DIR, f)).href)));
   return files.length;
 }
 

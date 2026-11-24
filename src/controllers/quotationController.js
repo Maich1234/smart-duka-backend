@@ -141,9 +141,9 @@ function present(quotation) {
 }
 
 /** Shapes a quotation + its shop into renderQuotationPdf's input — shared with publicController.js's getPublicQuotationPdf. */
-export const toPdfData = (quotation, shop) => ({
+export const toPdfData = (quotation, shop, shareToken = signQuotationToken(quotation._id)) => ({
   quoteNumber: quotation.quoteNumber,
-  verifyUrl: `${PUBLIC_WEB_URL}/q/${signQuotationToken(quotation._id)}`,
+  verifyUrl: `${PUBLIC_WEB_URL}/q/${shareToken}`,
   shopName: shop.name,
   shopPhone: shop.phone,
   shopAddress: shop.address,

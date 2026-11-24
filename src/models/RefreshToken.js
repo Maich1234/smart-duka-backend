@@ -6,6 +6,7 @@ import mongoose from 'mongoose';
 // token is treated as theft and revokes every session for that user.
 const refreshTokenSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  sessionId: { type: String, index: true },
   tokenHash: { type: String, required: true, unique: true },
   expiresAt: { type: Date, required: true },
   revokedAt: { type: Date, default: null },
@@ -21,7 +22,7 @@ const refreshTokenSchema = new mongoose.Schema({
   // theft (cascade-revoke everything) or as an expected stale-device retry.
   revokedReason: {
     type: String,
-    enum: ['rotated', 'manual_logout', 'superseded_by_new_device', 'admin_force_logout', 'password_change', 'token_reuse_detected', null],
+    enum: ['rotated', 'manual_logout', 'superseded_by_new_device', 'admin_force_logout', 'password_change', 'contact_change', 'token_reuse_detected', null],
     default: null,
   },
 });

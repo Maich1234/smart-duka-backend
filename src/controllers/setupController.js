@@ -9,7 +9,10 @@ import { getSetupStatus } from '../services/setupStatusService.js';
  * shop it names.
  */
 export const getEmbeddedSetupStatus = async (req, res) => {
-  const shopId = verifyWebviewToken(req.query.token);
+  const authorization = req.get('Authorization');
+  const scopedToken = authorization?.startsWith('Bearer ') ? authorization.slice(7) : req.query.token;
+  const shopId = verifyWebviewToken(scopedToken);
+  res.set('Cache-Control', 'no-store');
   if (!shopId) {
     return res.status(401).json({ success: false, message: 'Invalid or expired link. Reopen the Setup Guide from the app.' });
   }

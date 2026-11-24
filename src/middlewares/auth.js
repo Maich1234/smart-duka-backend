@@ -1,5 +1,7 @@
 import jwt from 'jsonwebtoken';
+import RefreshToken from '../models/RefreshToken.js';
 import User from '../models/User.js';
+import SupportSession from '../models/SupportSession.js';
 
 export const protect = async (req, res, next) => {
   let token;
@@ -15,9 +17,23 @@ export const protect = async (req, res, next) => {
       if (!user.isActive) {
         return res.status(401).json({ success: false, message: 'Account deactivated. Please contact owner.' });
       }
+      if (!decoded.impersonation && (typeof decoded.sessionId !== 'string' || !await RefreshToken.exists({
+        user: user._id, sessionId: decoded.sessionId, revokedAt: null, expiresAt: { $gt: new Date() },
+      }))) {
+        return res.status(401).json({ success: false, message: 'Session expired. Please sign in again.' });
+      }
       req.user = user;
       if (decoded.impersonation) {
-        req.impersonation = { adminId: decoded.adminId };
+        const endingSession = req.method === 'POST' && req.baseUrl === '/api/v1/auth' && req.path === '/impersonation/end';
+        if (!endingSession && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+          return res.status(403).json({ success: false, message: 'Support sessions are read-only.' });
+        }
+        if (!decoded.sessionId || !await SupportSession.exists({
+          _id: decoded.sessionId, user: user._id, endedAt: null, expiresAt: { $gt: new Date() },
+        })) {
+          return res.status(401).json({ success: false, message: 'Support session expired.' });
+        }
+        req.impersonation = { adminId: decoded.adminId, sessionId: decoded.sessionId };
       }
       next();
     } catch (error) {
