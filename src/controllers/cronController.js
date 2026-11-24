@@ -401,6 +401,7 @@ export const subscriptionPaymentReconcile = async (req, res) => {
   const candidates = await SubscriptionPayment.find({
     status: { $in: ['pending', 'timeout', 'success'] },
     createdAt: { $lt: cutoff },
+    duplicateOf: null,
     $or: [{ periodEnd: { $exists: false } }, { periodEnd: null }],
   });
 

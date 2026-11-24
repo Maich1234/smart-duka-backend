@@ -32,6 +32,7 @@ export async function activateFreeSubscription({
     staffCount,
     amount: 0,
     seatAdjustmentIds,
+    checkoutPeriodKey: subscription.currentPeriodEnd?.toISOString() ?? 'initial',
     additionalCharge: price.additionalCharge ?? 0,
     currency: price.currency,
     provider: 'free',
