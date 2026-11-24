@@ -7,14 +7,23 @@ import { PUBLIC_WEB_URL } from '../../../utils/publicWebUrl.js';
 export const SUBSCRIPTION_PAGE_URL = `${PUBLIC_WEB_URL}/owner/subscription`;
 
 /**
- * The subscription STK callback needs its own public URL. Prefer the
- * dedicated env var; otherwise derive it from the sale-payment callback URL.
+ * The dedicated subscription callback takes priority over the sales fallback.
+ * Both can already include the subscription segment.
  */
 export function getSubscriptionCallbackUrl() {
-  if (process.env.SUBSCRIPTION_MPESA_CALLBACK_URL) return process.env.SUBSCRIPTION_MPESA_CALLBACK_URL;
-  const saleCallback = process.env.MPESA_CALLBACK_URL;
-  if (saleCallback?.includes('/mpesa/callback')) {
-    return saleCallback.replace('/mpesa/callback', '/subscriptions/mpesa/callback');
+  const dedicated = process.env.SUBSCRIPTION_MPESA_CALLBACK_URL?.trim();
+  const base = dedicated || process.env.MPESA_CALLBACK_URL?.trim();
+  if (!base) return null;
+
+  try {
+    const url = new URL(base);
+    if (url.protocol !== 'https:' || url.search || url.hash || url.username || url.password) return null;
+    const callbackPath = /\/(?:subscriptions\/)*mpesa\/callback\/?$/;
+    if (!callbackPath.test(url.pathname)) return dedicated ? url.toString() : null;
+
+    url.pathname = url.pathname.replace(callbackPath, '/subscriptions/mpesa/callback');
+    return url.toString();
+  } catch {
+    return null;
   }
-  return null;
 }
