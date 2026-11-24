@@ -60,8 +60,8 @@ export async function applySuccessfulPayment(payment) {
       if (!lock.matchedCount) throw new Error('Payment shop is no longer available.');
       const current = await SubscriptionPayment.findById(payment._id).session(session);
       if (!current) throw new Error('Payment is no longer available.');
-      if (current.periodEnd) {
-        committed = { periodStart: current.periodStart, periodEnd: current.periodEnd, applied: false };
+      if (current.periodEnd || current.duplicateOf) {
+        committed = { periodStart: current.periodStart, periodEnd: current.periodEnd, duplicateOf: current.duplicateOf, applied: false };
         return;
       }
       if (current.status !== 'success') throw new Error('Only a confirmed successful payment can activate a subscription.');
@@ -70,6 +70,22 @@ export async function applySuccessfulPayment(payment) {
       }
       const subscription = await Subscription.findOne({ _id: current.subscription, shop: current.shop }).session(session);
       if (!subscription) throw new Error('Payment subscription is no longer available.');
+
+      if (current.checkoutPeriodKey) {
+        const winner = await SubscriptionPayment.findOne({
+          _id: { $ne: current._id },
+          subscription: current.subscription,
+          checkoutPeriodKey: current.checkoutPeriodKey,
+          periodEnd: { $ne: null },
+        }).session(session);
+        if (winner) {
+          current.duplicateOf = winner._id;
+          current.paymentReviewEvents = [...new Set([...(current.paymentReviewEvents ?? []), 'subscription.duplicate_charge'])];
+          await current.save({ session });
+          committed = { duplicateOf: winner._id, applied: false };
+          return;
+        }
+      }
 
       if (current.promotion) {
         const claimed = await claimPromotionRedemption(current.promotion, session);
@@ -114,5 +130,6 @@ export async function applySuccessfulPayment(payment) {
   // Keep caller responses accurate without retaining a completed session.
   payment.periodStart = committed.periodStart;
   payment.periodEnd = committed.periodEnd;
+  payment.duplicateOf = committed.duplicateOf;
   if (committed.applied) await rewardReferrerIfFirstConversion(payment.shop);
 }

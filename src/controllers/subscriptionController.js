@@ -27,7 +27,7 @@ import { logAudit } from '../services/auditLogService.js';
 import { cleanupFailedSeatPayment } from '../domains/billing/application/seatCleanup.js';
 import { applySuccessfulPayment } from '../domains/billing/application/applySuccessfulPayment.js';
 import { recordPaymentOutcome } from '../domains/billing/application/recordPaymentOutcome.js';
-import { findUnfinishedCheckout, reserveSubscriptionCheckout } from '../domains/billing/application/reserveSubscriptionCheckout.js';
+import { findUnfinishedCheckout, isCheckoutReleased, reserveSubscriptionCheckout, subscriptionCheckoutCutoff } from '../domains/billing/application/reserveSubscriptionCheckout.js';
 import { activateFreeSubscription } from '../domains/billing/application/activateFreeSubscription.js';
 import { reconcilePayment } from '../domains/billing/application/reconcilePayment.js';
 import { paystackAmountMismatch } from '../domains/billing/domain/fraud.js';
@@ -43,6 +43,12 @@ const shopIdOf = (req) => req.user.shop._id ?? req.user.shop;
 // The provider can confirm money before activation commits. Keep the client
 // waiting instead of displaying a finished receipt while access is still locked.
 function paymentClientState(payment) {
+  if (payment.duplicateOf) {
+    return { status: 'success', duplicateOf: payment.duplicateOf, errorMessage: 'An extra payment was received and flagged for review.' };
+  }
+  if (isCheckoutReleased(payment)) {
+    return { status: 'timeout', checkoutReleased: true, errorMessage: 'We could not confirm this payment. You can try again while we continue checking this attempt.' };
+  }
   if (payment.status === 'success' && payment.purpose !== 'seat_addition' && !payment.periodEnd) {
     return { status: 'pending', errorMessage: 'Payment confirmed. We are finishing your subscription activation.' };
   }
@@ -680,6 +686,7 @@ export const initiatePayment = async (req, res) => {
         checkoutPublicKey: provider.key === 'bank' ? config.publicKey : undefined,
         phoneNumber,
         status: 'pending',
+        checkoutPeriodKey: subscription.currentPeriodEnd?.toISOString() ?? 'initial',
         initiationState: 'starting',
         promotion: promotion?._id ?? null,
         promoCode: promotion?.code ?? null,
@@ -785,8 +792,29 @@ export const initiatePayment = async (req, res) => {
 /** GET /subscriptions/checkout — owner recovery across browsers and sessions. */
 export const getUnfinishedCheckout = async (req, res) => {
   try {
-    const payment = await findUnfinishedCheckout(shopIdOf(req));
-    return res.json({ success: true, data: { checkout: payment ? paymentStartData(payment) : null } });
+    const shop = shopIdOf(req);
+    const [payment, olderPayment] = await Promise.all([
+      findUnfinishedCheckout(shop),
+      SubscriptionPayment.findOne({
+        shop,
+        purpose: { $ne: 'seat_addition' },
+        $or: [
+          { status: { $in: ['pending', 'timeout'] }, createdAt: { $lte: subscriptionCheckoutCutoff() } },
+          { duplicateOf: { $ne: null }, amount: { $gt: 0 } },
+        ],
+      }).sort({ createdAt: -1 }),
+    ]);
+    return res.json({
+      success: true,
+      data: {
+        checkout: payment ? paymentStartData(payment) : null,
+        olderPayment: olderPayment ? {
+          paymentId: olderPayment._id,
+          reference: olderPayment.receipt || olderPayment._id,
+          ...paymentClientState(olderPayment),
+        } : null,
+      },
+    });
   } catch (err) {
     console.error('[Subscriptions] checkout recovery failed:', err.message);
     return res.status(503).json({ success: false, message: 'Could not check your previous payment. Please try again.' });
@@ -913,8 +941,7 @@ export const handleMpesaCallback = async (req, res) => {
 /**
  * POST /subscriptions/paystack/webhook — Paystack's webhook, public (no
  * JWT). Same guarded outcome + idempotent-activation shape as
- * handleMpesaCallback; only `charge.success` is acted on, everything else
- * (refunds, transfers, etc.) is accepted and ignored.
+ * handleMpesaCallback. Failed charges are confirmed through Paystack's API.
  */
 export const handlePaystackWebhook = async (req, res) => {
   try {
@@ -933,7 +960,17 @@ export const handlePaystackWebhook = async (req, res) => {
     }
 
     const parsed = provider.parseCallback(req.body);
-    if (req.body?.event !== 'charge.success') {
+    if (req.body?.event === 'charge.failed') {
+      const reference = parsed.providerRef;
+      if (typeof reference !== 'string' || !reference.trim()) return res.status(200).json({ received: true });
+      const payment = await SubscriptionPayment.findOne({ provider: 'bank', providerRef: reference });
+      if (payment) {
+        await reconcilePayment(payment);
+        if (['pending', 'timeout'].includes(payment.status)) return res.status(503).json({ received: false });
+      }
+      return res.status(200).json({ received: true });
+    }
+    if (req.body?.event !== 'charge.success' || !parsed.success) {
       return res.status(200).json({ received: true });
     }
 

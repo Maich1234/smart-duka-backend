@@ -26,7 +26,7 @@ export async function reconcilePayment(payment, { receiptHint } = {}) {
   // payments never set it (there's no period to extend), so they're
   // considered resolved once their status says success.
   const alreadyResolved = payment.purpose === 'seat_addition' ? payment.status === 'success' : !!payment.periodEnd;
-  if (alreadyResolved) {
+  if (alreadyResolved || payment.duplicateOf) {
     return { payment, changed: false };
   }
 

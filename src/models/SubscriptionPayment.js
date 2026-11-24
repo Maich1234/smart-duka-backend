@@ -56,6 +56,8 @@ const subscriptionPaymentSchema = new mongoose.Schema({
   // Set only after validating a provider confirmation, before activation.
   providerConfirmedAt: { type: Date },
   // The service period this payment covers, set when the charge succeeds.
+  checkoutPeriodKey: { type: String },
+  duplicateOf: { type: mongoose.Schema.Types.ObjectId, ref: 'SubscriptionPayment' },
   periodStart: { type: Date },
   periodEnd: { type: Date },
   promotion: {
@@ -74,6 +76,7 @@ const subscriptionPaymentSchema = new mongoose.Schema({
   errorMessage: { type: String },
   // Raw webhook payload for audit trail.
   callbackPayload: { type: mongoose.Schema.Types.Mixed },
+  paymentReviewEvents: { type: [String], default: undefined },
   callbackReceivedAt: { type: Date },
   requestedBy: {
     type: mongoose.Schema.Types.ObjectId,
