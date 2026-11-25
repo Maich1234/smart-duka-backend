@@ -900,7 +900,10 @@ export const handleMpesaCallback = async (req, res) => {
     } else {
       candidate = await SubscriptionPayment.findOne({ provider: 'mpesa', providerRef: parsed.providerRef });
     }
-    if (!candidate) return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+    if (!candidate) {
+      console.info('[Subscriptions Callback] No matching payment', { hasPaymentId: Boolean(req.params.paymentId) });
+      return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+    }
     const { payment, changed } = await recordPaymentOutcome(candidate._id, {
       status,
       providerRef: parsed.providerRef,
