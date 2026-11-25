@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import Shop from '../../../models/Shop.js';
 import SubscriptionPayment from '../../../models/SubscriptionPayment.js';
 
-const CHECKOUT_WAIT_MS = 15 * 60 * 1000;
+const CHECKOUT_WAIT_MS = 3 * 60 * 1000;
 export const subscriptionCheckoutCutoff = () => new Date(Date.now() - CHECKOUT_WAIT_MS);
 
 export function isCheckoutReleased(payment) {
