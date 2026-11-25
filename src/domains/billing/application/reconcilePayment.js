@@ -48,7 +48,7 @@ export async function reconcilePayment(payment, { receiptHint } = {}) {
     result = await provider.queryStatus({ checkoutRequestId: payment.providerRef });
   } catch (err) {
     console.error('[Subscriptions] reconcilePayment query failed:', err.message);
-    return { payment, changed: false };
+    return { payment, changed: false, verificationUnavailable: true };
   }
 
   if (result.success || (result.resultCode && DEFINITIVE_FAILURE_CODES.has(result.resultCode))) {

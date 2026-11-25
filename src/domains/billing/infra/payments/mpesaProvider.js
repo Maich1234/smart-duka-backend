@@ -37,6 +37,9 @@ export default {
     const config = await this.getConfig();
     const result = await initiateSTKPush({
       config,
+      transactionType: process.env.SUBSCRIPTION_MPESA_TRANSACTION_TYPE === 'CustomerBuyGoodsOnline'
+        ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline',
+      receivingShortcode: process.env.SUBSCRIPTION_MPESA_PARTY_B?.trim() || config.shortcode,
       phoneNumber,
       amount,
       accountReference: reference || 'DUKANA',

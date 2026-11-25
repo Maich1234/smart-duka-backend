@@ -87,8 +87,22 @@ export async function verifyTransaction({ reference, secretKey }) {
  * on the internet POSTing a fake `charge.success` — never process a webhook
  * body without checking this first.
  */
-export function verifyWebhookSignature({ rawBody, signature, secretKey }) {
-  if (!rawBody || !signature) return false;
+export function verifyWebhookSignature({ rawBody, signature, secretKey, signedHeader, signingSecret }) {
+  if (!rawBody) return false;
+  if (signingSecret) {
+    if (typeof signedHeader !== 'string') return false;
+    const parts = signedHeader.split(',').map(part => part.trim());
+    const times = parts.filter(part => part.startsWith('t='));
+    if (times.length !== 1 || !/^t=\d{1,12}$/.test(times[0])) return false;
+    const timestamp = times[0].slice(2);
+    if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false;
+    const expected = crypto.createHmac('sha512', signingSecret).update(timestamp + '.').update(rawBody).digest();
+    return parts.some(part => {
+      const match = /^v1=whk_[A-Za-z0-9_-]+:([a-f0-9]{128})$/.exec(part);
+      return Boolean(match && crypto.timingSafeEqual(expected, Buffer.from(match[1], 'hex')));
+    });
+  }
+  if (!signature) return false;
   const expected = crypto.createHmac('sha512', secretKey).update(rawBody).digest('hex');
   const expectedBuf = Buffer.from(expected, 'utf8');
   const signatureBuf = Buffer.from(String(signature), 'utf8');

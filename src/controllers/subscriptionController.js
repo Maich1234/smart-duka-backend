@@ -728,6 +728,13 @@ export const initiatePayment = async (req, res) => {
       });
       if (!charge?.providerRef) throw new Error('Provider did not return a payment reference.');
     } catch (err) {
+      if (err.notDispatched) {
+        const { payment: rejected } = await recordPaymentOutcome(payment._id, {
+          status: 'failed',
+          errorMessage: err.userMessage ?? err.message,
+        });
+        return res.status(200).json({ success: true, data: paymentStartData(rejected ?? payment) });
+      }
       console.error('[Subscriptions] provider initiation uncertain:', err.message);
       // A network error is not proof that the provider did nothing. Keep the
       // intent and return its ID; never automatically repeat the dispatch.
@@ -876,6 +883,9 @@ export const getPaymentStatus = async (req, res) => {
  * comfortably covers the single DB round trip this now takes before replying.
  */
 export const handleMpesaCallback = async (req, res) => {
+  if (!req.body?.Body?.stkCallback || typeof req.body.Body.stkCallback !== 'object') {
+    return res.status(400).json({ ResultCode: 1, ResultDesc: 'Invalid STK callback payload.' });
+  }
   try {
     const provider = getPaymentProvider('mpesa');
     const parsed = provider.parseCallback(req.body);
@@ -885,8 +895,6 @@ export const handleMpesaCallback = async (req, res) => {
       status = 'success';
     } else if (parsed.resultCode === '1032') {
       status = 'cancelled';
-    } else if (parsed.resultCode === '1037' || parsed.resultCode === '1001') {
-      status = 'timeout';
     } else {
       status = 'failed';
     }
@@ -965,7 +973,13 @@ export const handlePaystackWebhook = async (req, res) => {
       console.error('[Paystack Webhook] Not configured:', err.message);
       return res.status(200).json({ received: true });
     }
-    if (!verifyWebhookSignature({ rawBody: req.rawBody, signature, secretKey: config.secretKey })) {
+    if (!verifyWebhookSignature({
+      rawBody: req.rawBody,
+      signature,
+      secretKey: config.secretKey,
+      signedHeader: req.headers['paystack-signature'],
+      signingSecret: process.env.PAYSTACK_WEBHOOK_SIGNING_SECRET,
+    })) {
       console.error('[Paystack Webhook] Invalid signature');
       return res.status(401).json({ message: 'Invalid signature' });
     }
@@ -1033,13 +1047,16 @@ export const recheckPayment = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Payment not found' });
     }
 
-    await reconcilePayment(payment);
+    const { verificationUnavailable } = await reconcilePayment(payment);
 
     return res.json({
       success: true,
       data: {
         paymentId: payment._id,
         ...paymentClientState(payment),
+        ...(verificationUnavailable && payment.status === 'pending' && !isCheckoutReleased(payment) && {
+          errorMessage: 'We could not check with the payment provider. Your payment is still unconfirmed.',
+        }),
         provider: payment.provider,
         amount: payment.amount,
         additionalCharge: payment.additionalCharge ?? 0,
