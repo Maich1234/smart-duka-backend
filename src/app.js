@@ -44,7 +44,16 @@ app.use(async (req, res, next) => {
 });
 
 app.use(cors());
-app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+morgan.token('safe-url', req => {
+  const url = req.originalUrl || req.url || '';
+  return url.replace(
+    /^(\/api\/v1\/(?:subscriptions\/)*mpesa\/(?:callback|reversal-result(?:-timeout)?|b2c-result(?:-timeout)?))(?:[/?].*)$/i,
+    '$1/[redacted]',
+  );
+});
+app.use(morgan(process.env.NODE_ENV === 'production'
+  ? ':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version" :status :res[content-length] ":user-agent"'
+  : ':method :safe-url :status :response-time ms - :res[content-length]'));
 // 1 MB cap — largest legitimate payload is a product with variants (~ a few
 // KB); anything bigger is abuse or a client bug.
 // rawBody is kept alongside the parsed body for Paystack's webhook signature
