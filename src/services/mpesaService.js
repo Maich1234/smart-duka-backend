@@ -43,8 +43,8 @@ export function withMpesaCallbackSecret(baseUrl) {
   return `${baseUrl.replace(/\/+$/, '')}/${secret}`;
 }
 
-function getTimestamp() {
-  return new Date()
+function getTimestamp(offsetHours = 0) {
+  return new Date(Date.now() + offsetHours * 60 * 60 * 1000)
     .toISOString()
     .replace(/[-T:.Z]/g, '')
     .slice(0, 14);
@@ -107,23 +107,26 @@ async function getAccessToken(config) {
  * Sends an STK Push (Lipa Na M-Pesa Online) request to the customer's phone.
  * Returns the Safaricom CheckoutRequestID used for status polling.
  */
-export async function initiateSTKPush({ config, phoneNumber, amount, accountReference, transactionDesc, callbackUrl }) {
+export async function initiateSTKPush({
+  config, phoneNumber, amount, accountReference, transactionDesc, callbackUrl,
+  transactionType = 'CustomerPayBillOnline', receivingShortcode = config.shortcode,
+}) {
   const baseUrl = getBaseUrl(config.environment);
   let accessToken;
   try {
     accessToken = await getAccessToken(config);
   } catch (error) {
     console.warn('[M-Pesa STK] OAuth failed', { environment: config.environment, error: stkDiagnosticText(error.message) });
-    throw error;
+    throw Object.assign(new Error('M-Pesa could not authenticate the request. No prompt was sent.'), { notDispatched: true });
   }
 
   let passkey;
   try {
     passkey = decrypt(config.passkey);
   } catch (err) {
-    throw new Error('Failed to decrypt M-Pesa Passkey. Please re-save your M-Pesa configuration in Profile → Payments.');
+    throw Object.assign(new Error('M-Pesa could not load the passkey. No prompt was sent.'), { notDispatched: true });
   }
-  const timestamp = getTimestamp();
+  const timestamp = getTimestamp(3);
   const password = buildPassword(config.shortcode, passkey, timestamp);
   const phone = normalizeKenyanPhone(phoneNumber);
 
@@ -131,10 +134,10 @@ export async function initiateSTKPush({ config, phoneNumber, amount, accountRefe
     BusinessShortCode: config.shortcode,
     Password: password,
     Timestamp: timestamp,
-    TransactionType: 'CustomerPayBillOnline',
+    TransactionType: transactionType,
     Amount: Math.ceil(amount),
     PartyA: phone,
-    PartyB: config.shortcode,
+    PartyB: receivingShortcode,
     PhoneNumber: phone,
     CallBackURL: callbackUrl,
     AccountReference: accountReference || 'DuQana',
@@ -179,7 +182,14 @@ export async function initiateSTKPush({ config, phoneNumber, amount, accountRefe
 
   if (!response.ok || data.ResponseCode !== '0') {
     const errMsg = data.errorMessage || data.ResponseDescription || data.ResultDesc || `HTTP ${response.status}`;
-    throw new Error(`{"errorMessage":"${errMsg}","responseCode":"${data.ResponseCode ?? response.status}"}`);
+    const rejected = Boolean(data.errorCode || (data.ResponseCode != null && String(data.ResponseCode) !== '0')) &&
+      response.status < 500 && ![408, 409, 425, 429].includes(response.status);
+    throw Object.assign(new Error(JSON.stringify({
+      errorMessage: stkDiagnosticText(errMsg), responseCode: data.ResponseCode ?? response.status,
+    })), {
+      notDispatched: rejected,
+      userMessage: rejected ? stkDiagnosticText(errMsg) : undefined,
+    });
   }
 
   return {
@@ -197,7 +207,7 @@ export async function querySTKStatus({ config, checkoutRequestId }) {
   const baseUrl = getBaseUrl(config.environment);
   const accessToken = await getAccessToken(config);
   const passkey = decrypt(config.passkey);
-  const timestamp = getTimestamp();
+  const timestamp = getTimestamp(3);
   const password = buildPassword(config.shortcode, passkey, timestamp);
 
   const body = {
@@ -214,9 +224,18 @@ export async function querySTKStatus({ config, checkoutRequestId }) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15_000),
   });
 
-  const data = await response.json();
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data) {
+    console.warn('[M-Pesa STK] Status query rejected', {
+      httpStatus: response.status,
+      checkoutRef: stkReference(checkoutRequestId),
+      code: stkDiagnosticText(data?.errorCode ?? data?.fault?.detail?.errorcode),
+    });
+    throw new Error(`M-Pesa status query failed (HTTP ${response.status}).`);
+  }
   return data;
 }
 
