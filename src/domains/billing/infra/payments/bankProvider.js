@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { getConfig, verifyTransaction } from '../paystackService.js';
+import { getConfig, logPaystackResult, verifyTransaction } from '../paystackService.js';
 
 /**
  * Card / bank transfer payments via Paystack, restricted to non-card
@@ -34,6 +34,7 @@ export default {
     const providerRef = reference && reference !== 'DUKANA'
       ? reference
       : `DKN-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    logPaystackResult('Checkout reserved', { reference: providerRef });
     return {
       providerRef,
       publicKey: config.publicKey,
@@ -43,6 +44,7 @@ export default {
   /** Normalizes a Paystack `charge.success` webhook body. */
   parseCallback(body) {
     const data = body?.data ?? {};
+    logPaystackResult('Authenticated webhook received', { ...data, event: body?.event });
     return {
       providerRef: data.reference,
       success: body?.event === 'charge.success' && data.status === 'success',

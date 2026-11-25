@@ -1,7 +1,23 @@
+import { createHash } from 'node:crypto';
 import { decrypt } from './encryptionService.js';
 
 const SANDBOX_BASE = 'https://sandbox.safaricom.co.ke';
 const PRODUCTION_BASE = 'https://api.safaricom.co.ke';
+
+function stkReference(value) {
+  if (typeof value !== 'string' || !value) return null;
+  return createHash('sha256').update(value).digest('hex').slice(0, 16);
+}
+
+function stkDiagnosticText(value) {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  return String(value)
+    .replace(/https?:\/\/\S+/gi, '[url]')
+    .replace(/\+?\d(?:[ .()-]*\d){6,}/g, '[number]')
+    .replace(/[A-Za-z0-9_+=/-]{24,}/g, '[redacted]')
+    .replace(/[\r\n\t]/g, ' ')
+    .slice(0, 240);
+}
 
 function getBaseUrl(environment) {
   return environment === 'production' ? PRODUCTION_BASE : SANDBOX_BASE;
@@ -54,6 +70,12 @@ async function getAccessToken(config) {
     throw new Error('Failed to decrypt M-Pesa credentials. The ENCRYPTION_KEY may have changed. Please re-save your M-Pesa configuration in Profile → Payments.');
   }
 
+  console.info('[M-Pesa] OAuth credentials loaded', {
+    environment: config.environment,
+    consumerKeyFingerprint: stkReference(consumerKey),
+    consumerSecretFingerprint: stkReference(consumerSecret),
+  });
+
   const credentials = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
 
   let response;
@@ -71,13 +93,12 @@ async function getAccessToken(config) {
   }
 
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`M-Pesa OAuth failed (${response.status}): ${body}`);
+    throw new Error(`M-Pesa OAuth failed (HTTP ${response.status}).`);
   }
 
   const data = await response.json();
   if (!data.access_token) {
-    throw new Error(`M-Pesa OAuth returned no access token: ${JSON.stringify(data)}`);
+    throw new Error('M-Pesa OAuth returned no access token.');
   }
   return data.access_token;
 }
@@ -88,7 +109,13 @@ async function getAccessToken(config) {
  */
 export async function initiateSTKPush({ config, phoneNumber, amount, accountReference, transactionDesc, callbackUrl }) {
   const baseUrl = getBaseUrl(config.environment);
-  const accessToken = await getAccessToken(config);
+  let accessToken;
+  try {
+    accessToken = await getAccessToken(config);
+  } catch (error) {
+    console.warn('[M-Pesa STK] OAuth failed', { environment: config.environment, error: stkDiagnosticText(error.message) });
+    throw error;
+  }
 
   let passkey;
   try {
@@ -114,6 +141,15 @@ export async function initiateSTKPush({ config, phoneNumber, amount, accountRefe
     TransactionDesc: transactionDesc || 'Sale Payment',
   };
 
+  console.info('[M-Pesa STK] Submitting request', {
+    environment: config.environment,
+    transactionType: body.TransactionType,
+    amount: body.Amount,
+    callbackConfigured: Boolean(callbackUrl),
+    callbackSecretConfigured: Boolean(process.env.MPESA_CALLBACK_SECRET),
+    passkeyFingerprint: stkReference(passkey),
+  });
+
   let response;
   try {
     response = await fetch(`${baseUrl}/mpesa/stkpush/v1/processrequest`, {
@@ -127,12 +163,19 @@ export async function initiateSTKPush({ config, phoneNumber, amount, accountRefe
     });
   } catch (err) {
     if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      console.warn('[M-Pesa STK] Submission timed out');
       throw new Error('ETIMEDOUT: STK Push request timed out after 20s');
     }
     throw new Error(`ECONNREFUSED: Could not connect to Safaricom API (${err.message})`);
   }
 
   const data = await response.json().catch(() => ({}));
+  console.info('[M-Pesa STK] Submission response', {
+    httpStatus: response.status,
+    code: stkDiagnosticText(data.ResponseCode ?? data.errorCode ?? data.fault?.detail?.errorcode),
+    description: stkDiagnosticText(data.ResponseDescription ?? data.errorMessage ?? data.ResultDesc ?? data.fault?.faultstring),
+    checkoutRef: stkReference(data.CheckoutRequestID),
+  });
 
   if (!response.ok || data.ResponseCode !== '0') {
     const errMsg = data.errorMessage || data.ResponseDescription || data.ResultDesc || `HTTP ${response.status}`;
@@ -363,7 +406,16 @@ export function parseReversalResult(callbackBody) {
  */
 export function parseSTKCallback(callbackBody) {
   const callback = callbackBody?.Body?.stkCallback;
-  if (!callback) throw new Error('Invalid callback structure');
+  if (!callback) {
+    console.warn('[M-Pesa STK] Callback missing Body.stkCallback');
+    throw new Error('Invalid callback structure');
+  }
+  console.info('[M-Pesa STK] Callback received', {
+    checkoutRef: stkReference(callback.CheckoutRequestID),
+    resultCode: stkDiagnosticText(callback.ResultCode),
+    resultDescription: stkDiagnosticText(callback.ResultDesc),
+    hasMetadata: Array.isArray(callback.CallbackMetadata?.Item),
+  });
 
   const resultCode = String(callback.ResultCode);
   const resultDesc = callback.ResultDesc;

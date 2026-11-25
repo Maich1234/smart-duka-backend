@@ -4,6 +4,24 @@ import { decrypt } from '../../../services/encryptionService.js';
 
 const BASE_URL = 'https://api.paystack.co';
 
+function fingerprint(value) {
+  return typeof value === 'string' && value
+    ? crypto.createHash('sha256').update(value).digest('hex').slice(0, 16)
+    : null;
+}
+
+export function logPaystackResult(operation, { reference, status, amount, currency, httpStatus, event } = {}) {
+  const code = value => typeof value === 'string' && /^[a-z_.]{1,40}$/i.test(value) ? value : null;
+  console.info('[Paystack] ' + operation, {
+    reference: fingerprint(reference),
+    status: code(status),
+    amountSubunits: Number.isFinite(amount) ? amount : null,
+    currency: typeof currency === 'string' && /^[A-Z]{3}$/.test(currency) ? currency : null,
+    httpStatus,
+    event: code(event),
+  });
+}
+
 /**
  * Reads DuQana's own Paystack account — platform-level, like the Daraja
  * credentials in mpesaProvider, never a shop's own config. Admin-managed
@@ -29,6 +47,11 @@ export async function getConfig() {
   } catch (err) {
     throw new Error('Failed to decrypt the Paystack secret key. The ENCRYPTION_KEY may have changed. Please re-save it in Platform Config.');
   }
+  console.info('[Paystack] Credentials loaded', {
+    publicKeyFingerprint: fingerprint(paystack.publicKey),
+    secretKeyFingerprint: fingerprint(secretKey),
+    mode: paystack.publicKey.startsWith('pk_live_') ? 'live' : paystack.publicKey.startsWith('pk_test_') ? 'test' : 'unknown',
+  });
   return { secretKey, publicKey: paystack.publicKey };
 }
 
@@ -50,6 +73,7 @@ export async function verifyTransaction({ reference, secretKey }) {
   }
 
   const body = await response.json().catch(() => null);
+  logPaystackResult('Verify response', { ...body?.data, reference, httpStatus: response.status });
   if (!response.ok || !body) {
     throw new Error(body?.message || `Paystack verify returned HTTP ${response.status}`);
   }

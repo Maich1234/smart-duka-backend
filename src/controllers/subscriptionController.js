@@ -528,6 +528,12 @@ export const initiatePayment = async (req, res) => {
   try {
     const shopId = shopIdOf(req);
     const { phoneNumber, billingCycle, planSlug, promoCode, provider: providerKey } = req.body;
+    console.info('[Subscriptions] Checkout requested', {
+      provider: ['mpesa', 'bank', 'card'].includes(providerKey) ? providerKey : providerKey ? 'unknown' : 'default',
+      billingCycle: ['monthly', 'quarterly', 'yearly'].includes(billingCycle) ? billingCycle : null,
+      hasPhone: Boolean(phoneNumber),
+      hasPromoCode: Boolean(promoCode),
+    });
     const rawKey = req.headers['idempotency-key'] ?? req.headers['x-idempotency-key'];
     if (rawKey != null && (typeof rawKey !== 'string' || !rawKey.trim() || rawKey.length > 128)) {
       return res.status(400).json({ success: false, message: 'Payment request key must be between 1 and 128 characters.' });
@@ -540,6 +546,7 @@ export const initiatePayment = async (req, res) => {
     if (idempotencyKey) {
       const existing = await SubscriptionPayment.findOne({ shop: shopId, idempotencyKey });
       if (existing) {
+        console.info('[Subscriptions] Reusing existing checkout', { provider: existing.provider, status: existing.status });
         return res.json({
           success: true,
           idempotent: true,
@@ -774,6 +781,7 @@ export const initiatePayment = async (req, res) => {
       req,
     }).catch(() => {});
 
+    console.info('[Subscriptions] Checkout response', { provider: payment.provider, status: paymentClientState(payment).status, hasProviderReference: Boolean(payment.providerRef) });
     return res.status(201).json({
       success: true,
       data: { ...paymentStartData(payment), planSlug: plan.slug },
@@ -900,7 +908,10 @@ export const handleMpesaCallback = async (req, res) => {
     } else {
       candidate = await SubscriptionPayment.findOne({ provider: 'mpesa', providerRef: parsed.providerRef });
     }
-    if (!candidate) return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+    if (!candidate) {
+      console.info('[Subscriptions Callback] No matching payment', { hasPaymentId: Boolean(req.params.paymentId) });
+      return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+    }
     const { payment, changed } = await recordPaymentOutcome(candidate._id, {
       status,
       providerRef: parsed.providerRef,
