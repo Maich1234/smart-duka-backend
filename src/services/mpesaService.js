@@ -70,6 +70,12 @@ async function getAccessToken(config) {
     throw new Error('Failed to decrypt M-Pesa credentials. The ENCRYPTION_KEY may have changed. Please re-save your M-Pesa configuration in Profile → Payments.');
   }
 
+  console.info('[M-Pesa] OAuth credentials loaded', {
+    environment: config.environment,
+    consumerKeyFingerprint: stkReference(consumerKey),
+    consumerSecretFingerprint: stkReference(consumerSecret),
+  });
+
   const credentials = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
 
   let response;
@@ -140,6 +146,8 @@ export async function initiateSTKPush({ config, phoneNumber, amount, accountRefe
     transactionType: body.TransactionType,
     amount: body.Amount,
     callbackConfigured: Boolean(callbackUrl),
+    callbackSecretConfigured: Boolean(process.env.MPESA_CALLBACK_SECRET),
+    passkeyFingerprint: stkReference(passkey),
   });
 
   let response;
