@@ -11,6 +11,7 @@ import {
   cancelSubscription,
   initiatePayment,
   getPaymentStatus,
+  getPaymentHistory,
   getUnfinishedCheckout,
   handleMpesaCallback,
   handlePaystackWebhook,
@@ -47,6 +48,7 @@ router.get('/me', protect, getMySubscription);
 // Lifecycle + payments — owner only.
 router.post('/trial', protect, ownerOnly, validate(activateTrialSchema), activateTrial);
 router.post('/cancel', protect, ownerOnly, cancelSubscription);
+router.get('/history', protect, ownerOnly, getPaymentHistory);
 router.get('/checkout', protect, ownerOnly, getUnfinishedCheckout);
 router.post('/pay', protect, ownerOnly, validate(initiatePaymentSchema), initiatePayment);
 router.get('/pay/:paymentId', protect, ownerOnly, getPaymentStatus);

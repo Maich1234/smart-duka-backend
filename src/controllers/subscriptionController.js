@@ -803,6 +803,39 @@ export const initiatePayment = async (req, res) => {
   }
 };
 
+export const getPaymentHistory = async (req, res) => {
+  const before = req.query.before;
+  if (before !== undefined && (typeof before !== 'string' || !/^[a-f\d]{24}$/i.test(before))) {
+    return res.status(400).json({ success: false, message: 'Invalid payment history cursor.' });
+  }
+  const failedBefore = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  const payments = await SubscriptionPayment.find({
+    shop: shopIdOf(req),
+    ...(before && { _id: { $lt: before } }),
+    $nor: [{
+      status: 'failed',
+      duplicateOf: null,
+      'paymentReviewEvents.0': { $exists: false },
+      $or: [
+        { updatedAt: { $lte: failedBefore } },
+        { updatedAt: null, createdAt: { $lte: failedBefore } },
+      ],
+    }],
+  }).sort({ _id: -1 }).limit(21)
+    .select('amount currency provider purpose status receipt providerRef createdAt periodEnd duplicateOf errorMessage paymentReviewEvents').lean();
+  const items = payments.slice(0, 20).map(payment => ({
+    paymentId: payment._id,
+    provider: payment.provider,
+    purpose: payment.purpose,
+    amount: payment.amount,
+    currency: payment.currency,
+    reference: payment.receipt ?? payment.providerRef ?? payment._id,
+    createdAt: payment.createdAt,
+    status: payment.duplicateOf || payment.paymentReviewEvents?.length ? 'review' : paymentClientState(payment).status,
+  }));
+  return res.json({ success: true, data: { items, next: payments.length > 20 ? items.at(-1).paymentId : null } });
+};
+
 /** GET /subscriptions/checkout — owner recovery across browsers and sessions. */
 export const getUnfinishedCheckout = async (req, res) => {
   try {
