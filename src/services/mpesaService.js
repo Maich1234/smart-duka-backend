@@ -180,9 +180,9 @@ export async function initiateSTKPush({
     checkoutRef: stkReference(data.CheckoutRequestID),
   });
 
-  if (!response.ok || data.ResponseCode !== '0') {
+  if (!response.ok || String(data.ResponseCode) !== '0') {
     const errMsg = data.errorMessage || data.ResponseDescription || data.ResultDesc || `HTTP ${response.status}`;
-    const rejected = Boolean(data.errorCode || (data.ResponseCode != null && String(data.ResponseCode) !== '0')) &&
+    const rejected = !data.CheckoutRequestID && !data.MerchantRequestID && Boolean(data.errorCode || (data.ResponseCode != null && String(data.ResponseCode) !== '0')) &&
       response.status < 500 && ![408, 409, 425, 429].includes(response.status);
     throw Object.assign(new Error(JSON.stringify({
       errorMessage: stkDiagnosticText(errMsg), responseCode: data.ResponseCode ?? response.status,

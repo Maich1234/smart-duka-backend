@@ -33,7 +33,7 @@ export default {
    * Sends an STK Push to the shop owner's phone.
    * Returns { providerRef, merchantRequestId, phoneNumber }.
    */
-  async charge({ phoneNumber, amount, reference, description, callbackUrl }) {
+  async charge({ phoneNumber, amount, reference, callbackUrl }) {
     const config = await this.getConfig();
     const result = await initiateSTKPush({
       config,
@@ -43,7 +43,7 @@ export default {
       phoneNumber,
       amount,
       accountReference: reference || 'DUKANA',
-      transactionDesc: description || 'DuQana subscription',
+      transactionDesc: 'Subscription',
       callbackUrl,
     });
     return {

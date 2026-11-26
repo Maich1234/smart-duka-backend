@@ -722,7 +722,6 @@ export const initiatePayment = async (req, res) => {
         phoneNumber,
         amount: amountDue,
         reference: reservedRef ?? 'DUKANA',
-        description: `DuQana ${plan.name} (${billingCycle})`,
         callbackUrl: callbackUrl?.toString(),
         email: req.user.email,
       });

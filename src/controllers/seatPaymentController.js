@@ -132,7 +132,6 @@ export const initiateSeatPayment = async (req, res) => {
         phoneNumber,
         amount,
         reference: 'DUKANA',
-        description: `DuQana — add staff seat (${subscription.plan.name})`,
         callbackUrl,
       });
     } catch (err) {
